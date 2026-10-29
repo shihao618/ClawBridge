@@ -270,6 +270,72 @@ export function setUserActive(userId, ts = nowMs()) {
   run("UPDATE users SET status = 'active', updated_at = ? WHERE id = ?", ts, String(userId));
 }
 
+/**
+ * 彻底删除用户及其关联数据（调用方需先停止该用户监控）。
+ * 返回被删除用户、附件相对路径列表与清理统计；附件文件由调用方按路径删除。
+ */
+export function deleteUserCascade(userId, ts = nowMs()) {
+  const id = String(userId);
+  const user = get('SELECT id, display_name, wechat_user_id, status FROM users WHERE id = ?', id);
+  if (!user) return null;
+  const attachmentPaths = all('SELECT path FROM attachments WHERE user_id = ?', id).map((row) => row.path);
+  const summary = transaction(() => {
+    const cleared = {};
+    for (const table of ['user_groups', 'outbox', 'inbound_messages', 'attachments', 'app_rule_logs', 'events']) {
+      cleared[table] = Number(run(`DELETE FROM ${table} WHERE user_id = ?`, id).changes) || 0;
+    }
+    // 从定时任务目标中移除该用户（target_ids 为 JSON 数组）
+    let updatedTasks = 0;
+    for (const row of all('SELECT id, target_ids FROM scheduled_tasks')) {
+      let ids;
+      try {
+        ids = JSON.parse(row.target_ids ?? '[]');
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(ids) || !ids.map(String).includes(id)) continue;
+      run(
+        'UPDATE scheduled_tasks SET target_ids = ?, updated_at = ? WHERE id = ?',
+        JSON.stringify(ids.filter((item) => String(item) !== id)),
+        Number(ts),
+        row.id,
+      );
+      updatedTasks += 1;
+    }
+    // 从接口应用「指定用户」范围中移除该用户
+    let updatedRules = 0;
+    for (const row of all("SELECT id, scope_type, scope_ids FROM app_rules WHERE scope_type = 'users'")) {
+      let ids;
+      try {
+        ids = JSON.parse(row.scope_ids ?? '[]');
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(ids) || !ids.map(String).includes(id)) continue;
+      run(
+        'UPDATE app_rules SET scope_ids = ?, updated_at = ? WHERE id = ?',
+        JSON.stringify(ids.filter((item) => String(item) !== id)),
+        Number(ts),
+        row.id,
+      );
+      updatedRules += 1;
+    }
+    const deleted = Number(run('DELETE FROM users WHERE id = ?', id).changes) > 0;
+    run(
+      "INSERT INTO events (type, user_id, detail, created_at) VALUES ('user_delete', NULL, ?, ?)",
+      JSON.stringify({
+        deleted,
+        attachments: attachmentPaths.length,
+        updatedTasks,
+        updatedRules,
+      }),
+      Number(ts),
+    );
+    return { deleted, cleared, updatedTasks, updatedRules };
+  });
+  return { user, attachmentPaths, ...summary };
+}
+
 /** 最近绑定账号的 token 明文列表（供 get_bot_qrcode 的 local_token_list，最多 10 个）。 */
 export function getRecentBindingTokens(limit = 10) {
   const rows = all(

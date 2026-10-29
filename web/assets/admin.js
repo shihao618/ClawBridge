@@ -3537,6 +3537,7 @@ function buildUserRow(user) {
       actionButton('groups', user.id, '分组'),
       actionButton('unbind', user.id, '解绑', status === 'unbound', 'btn-danger-ghost'),
       actionButton('reconnect', user.id, '重连', false),
+      actionButton('delete', user.id, '删除', false, 'btn-danger-ghost'),
     ),
   );
 
@@ -3623,6 +3624,7 @@ function handleUserTableClick(event) {
   else if (action === 'keepalive') toggleUserKeepalive(user, button);
   else if (action === 'unbind') unbindUser(user);
   else if (action === 'reconnect') reconnectUser(user);
+  else if (action === 'delete') deleteUser(user);
 }
 
 function openSendMessageModal(target) {
@@ -3971,6 +3973,30 @@ async function reconnectUser(user) {
     await refreshAfterWrite({ overview: true, users: true });
   } catch (error) {
     toastError(error, '重连失败');
+  }
+}
+
+/** 彻底删除用户（不可恢复）：DELETE /api/admin/users/{id}。 */
+async function deleteUser(user) {
+  const name = user.displayName || user.id;
+  const confirmed = await confirmDialog({
+    title: '删除用户',
+    message:
+      `确定永久删除「${name}」吗？\n\n` +
+      '将删除：用户与绑定凭证、分组关系、消息记录、入站/出站媒体文件、接口应用日志，' +
+      '并从定时任务/接口应用的「指定用户」目标中移除。\n\n此操作不可恢复；如只想停止收发，请使用「解绑」。',
+    confirmText: '永久删除',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    const data = await apiFetch(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+    const attachments = Number(data && data.attachmentsDeleted) || 0;
+    toast(attachments > 0 ? `用户已删除（清理 ${attachments} 个附件文件）` : '用户已删除', 'success');
+    await refreshAfterWrite({ overview: true, users: true, messages: true, groups: true });
+  } catch (error) {
+    toastError(error, '删除用户失败');
   }
 }
 

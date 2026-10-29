@@ -476,6 +476,9 @@ test('后台脚本覆盖管理 API 契约与 CSRF 请求头', async () => {
   ]) {
     assert.ok(admin.includes(endpoint), `admin.js 应使用 ${endpoint}`);
   }
+  for (const token of ['deleteUser', '永久删除', 'method: \'DELETE\'']) {
+    assert.ok(admin.includes(token), `admin.js 应包含删除用户实现：${token}`);
+  }
   const common = await readAsset('common.js');
   assert.ok(common.includes('X-Requested-With'), 'common.js 应支持 CSRF 请求头');
   assert.ok(common.includes('ClawBridge-Admin'), '写请求应带 X-Requested-With: ClawBridge-Admin');

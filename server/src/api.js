@@ -1005,6 +1005,41 @@ export function createApp() {
     res.json({ ok: true, message: '已解绑（微信端授权需在手机微信中管理）' });
   });
 
+  // 彻底删除用户及其关联数据（不可恢复）：先停监控，再清理关联表 + 附件文件
+  app.delete('/api/admin/users/:id', auth.requireAdminWrite, async (req, res) => {
+    const row = mustGetUserRow(req.params.id);
+    await monitor.stop(row.id, { notify: false, reason: 'admin delete user' }).catch((err) => {
+      log.warn('删除用户时停止监控失败（继续删除）', { userId: row.id, message: err?.message });
+    });
+    const result = store.deleteUserCascade(row.id);
+    if (!result) throw notFound('用户不存在');
+    let attachmentsDeleted = 0;
+    for (const relativePath of result.attachmentPaths) {
+      try {
+        fs.rmSync(media.resolveMediaPath(relativePath), { force: true });
+        attachmentsDeleted += 1;
+      } catch (err) {
+        log.warn('删除用户附件文件失败（跳过）', { userId: row.id, path: relativePath, message: err?.message });
+      }
+    }
+    log.info('用户已彻底删除', {
+      userId: row.id,
+      attachmentsDeleted,
+      cleared: result.cleared,
+      updatedTasks: result.updatedTasks,
+      updatedRules: result.updatedRules,
+    });
+    res.json({
+      ok: true,
+      deleted: true,
+      userId: row.id,
+      attachmentsDeleted,
+      cleared: result.cleared,
+      updatedTasks: result.updatedTasks,
+      updatedRules: result.updatedRules,
+    });
+  });
+
   app.post('/api/admin/users/:id/reconnect', auth.requireAdminWrite, async (req, res) => {
     const row = mustGetUserRow(req.params.id);
     if (row.status !== 'active') throw conflict('用户未绑定或已解绑，请重新扫码绑定');

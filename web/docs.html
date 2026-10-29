@@ -426,6 +426,12 @@ curl -X POST http://localhost:10380/api/v1/messages \
                   <td>Cookie + CSRF 头</td>
                 </tr>
                 <tr>
+                  <td><span class="method method-delete">DELETE</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}</code></td>
+                  <td>彻底删除用户及关联数据/附件文件（不可恢复；只想停收发请用解绑）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
                   <td><span class="method method-post">POST</span></td>
                   <td><code class="endpoint-path">/api/admin/broadcast</code></td>
                   <td>向所有可推送用户广播（入队）</td>

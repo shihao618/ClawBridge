@@ -362,3 +362,36 @@ test('契约对齐：admin/v1 入队项包含 userId；outbox 首次成功 attem
   assert.equal(v1Status.json.status, 'sent');
   assert.equal(v1Status.json.attempts, 1);
 });
+
+test('DELETE /api/admin/users/:id：鉴权/CSRF/404 + 彻底删除', async () => {
+  const cookie = await loginCookie();
+  const csrf = { 'x-requested-with': 'ClawBridge-Admin' };
+  const result = store.upsertBoundUser({
+    wechatUserId: 'wx_delete_api_1',
+    displayName: 'API 待删除用户',
+    ilinkBotId: 'bot_delete_api_1@im.bot',
+    botToken: 'delete-api-token-1',
+    baseUrl: 'https://ilink.example.test',
+  });
+  const userId = result.user.id;
+  store.enqueueMessage({ userId, text: 'queued' });
+  store.saveInbound({ userId, wechatMessageId: 'wxm_delete_api_1', text: 'inbound' });
+
+  assertErrorShape(await request('DELETE', `/api/admin/users/${userId}`), 401, 'UNAUTHORIZED');
+  assertErrorShape(await request('DELETE', `/api/admin/users/${userId}`, { cookie }), 403, 'FORBIDDEN');
+  assertErrorShape(
+    await request('DELETE', '/api/admin/users/u_not_exists', { cookie, headers: csrf }),
+    404,
+    'NOT_FOUND',
+  );
+
+  const deleted = await request('DELETE', `/api/admin/users/${userId}`, { cookie, headers: csrf });
+  assert.equal(deleted.status, 200, deleted.text);
+  assert.equal(deleted.json.ok, true);
+  assert.equal(deleted.json.deleted, true);
+  assert.equal(deleted.json.userId, userId);
+  assert.equal(store.getUserRow(userId), undefined);
+  const db = (await import('../../server/src/db.js')).getDb();
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS c FROM outbox WHERE user_id = ?').get(userId).c), 0);
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS c FROM inbound_messages WHERE user_id = ?').get(userId).c), 0);
+});

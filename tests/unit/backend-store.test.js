@@ -371,3 +371,64 @@ test('events / stats / 绑定 token 列表', () => {
   assert.ok(tokens.length <= 10);
   assert.ok(tokens.every((token) => typeof token === 'string' && token.length > 0));
 });
+
+test('deleteUserCascade：删除用户并清理关联数据、定时任务/接口应用目标', () => {
+  const target = createUser({ displayName: '待删除用户' }).user;
+  const keep = createUser({ displayName: '保留用户' }).user;
+  const group = store.createGroup({ name: '删除测试组' });
+  store.replaceUserGroups(target.id, [group.id]);
+  store.enqueueMessage({ userId: target.id, text: 'queued message' });
+  store.saveInbound({ userId: target.id, wechatMessageId: 'wxm_delete_1', text: 'inbound text' });
+  store.addEvent({ type: 'test', userId: target.id });
+
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO attachments (id, direction, kind, mime, size, path, sha256, user_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run('att_delete_1', 'inbound', 'image', 'image/jpeg', 10, 'inbound/att_delete_1.jpg', 'hash', target.id, 'ready', Date.now());
+  db.prepare(
+    `INSERT INTO app_rules (id, name, scope_type, scope_ids, request_url, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run('rule_delete_1', '删除测试规则', 'users', JSON.stringify([target.id, keep.id]), 'https://example.com/x', Date.now(), Date.now());
+  const task = store.createScheduledTask({
+    name: '删除测试任务',
+    enabled: true,
+    scheduleType: 'interval',
+    intervalMs: 3_600_000,
+    targetType: 'users',
+    targetIds: [target.id, keep.id],
+    requestMethod: 'GET',
+    requestUrl: 'https://example.com/x',
+    requestHeadersEnc: null,
+    requestBodyTemplate: '',
+    responseType: 'json',
+    responsePath: '',
+    replyTemplate: 'hi',
+    fallbackText: '',
+    timeoutMs: 8000,
+    nextRunAt: 0,
+  });
+
+  const result = store.deleteUserCascade(target.id);
+  assert.equal(result.deleted, true);
+  assert.equal(result.user.id, target.id);
+  assert.deepEqual(result.attachmentPaths, ['inbound/att_delete_1.jpg']);
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS c FROM users WHERE id = ?').get(target.id).c), 0);
+  for (const table of ['user_groups', 'outbox', 'inbound_messages', 'attachments', 'app_rule_logs', 'events']) {
+    assert.equal(
+      Number(db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE user_id = ?`).get(target.id).c),
+      0,
+      `${table} 中不应再有被删用户数据`,
+    );
+  }
+  assert.ok(store.getUserRow(keep.id), '其它用户应保留');
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS c FROM user_groups WHERE group_id = ?').get(group.id).c), 0);
+  const ruleScope = JSON.parse(db.prepare('SELECT scope_ids FROM app_rules WHERE id = ?').get('rule_delete_1').scope_ids);
+  assert.deepEqual(ruleScope, [keep.id]);
+  const taskRow = store.getScheduledTaskRow(task.id);
+  assert.deepEqual(JSON.parse(taskRow.target_ids), [keep.id]);
+  const deleteEvent = db.prepare("SELECT * FROM events WHERE type = 'user_delete' ORDER BY id DESC LIMIT 1").get();
+  assert.ok(deleteEvent, '应写入 user_delete 事件');
+  assert.equal(deleteEvent.user_id, null);
+  assert.equal(store.deleteUserCascade('u_not_exists'), null);
+});

@@ -188,6 +188,14 @@ POST /api/admin/users/{id}/unbind
 
 POST /api/admin/users/{id}/reconnect
   → 200 { "ok": true, "monitorsRunning": true }    // 重启该账号的入站轮询（冷却中返回 409）
+
+DELETE /api/admin/users/{id}
+  → 200 { "ok": true, "deleted": true, "userId": "u_...",
+          "attachmentsDeleted": 2, "updatedTasks": 1, "updatedRules": 0,
+          "cleared": { "outbox": 3, "inbound_messages": 5, "attachments": 2, ... } }
+  语义：先停止该用户入站监控 → 事务内删除 users / user_groups / outbox /
+  inbound_messages / attachments / app_rule_logs / events → 从定时任务目标与接口应用
+  「指定用户」范围移除该用户 → 删除其附件文件。**不可恢复**；只想停止收发请用 unbind。
 ```
 
 ### 2.5 广播
