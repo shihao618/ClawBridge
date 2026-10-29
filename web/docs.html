@@ -1,0 +1,1818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="ClawBridge HTTP API 使用文档：推送 API 鉴权、curl 示例、端点总表、绑定状态机、错误码与环境变量。">
+  <meta name="theme-color" content="#07C160">
+  <title>ClawBridge · API 使用文档</title>
+  <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMwN0MxNjAiLz48cGF0aCBkPSJNMjIgMTZoMjBhMTAgMTAgMCAwIDEgMTAgMTB2OGExMCAxMCAwIDAgMS0xMCAxMEgzNGwtOSA4di04aC0zYTEwIDEwIDAgMCAxLTEwLTEwdi04YTEwIDEwIDAgMCAxIDEwLTEweiIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjI3IiBjeT0iMzAiIHI9IjMiIGZpbGw9IiMwN0MxNjAiLz48Y2lyY2xlIGN4PSIzOCIgY3k9IjMwIiByPSIzIiBmaWxsPSIjMDdDMTYwIi8+PC9zdmc+">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="page-docs">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="brand" href="/" aria-label="ClawBridge 首页">
+        <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <rect width="64" height="64" rx="14" fill="#07C160"></rect>
+          <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
+          <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
+          <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
+        </svg>
+        <span class="brand-name">ClawBridge</span>
+        <span class="brand-tag">API 文档</span>
+      </a>
+      <nav class="site-nav" aria-label="主导航">
+        <a class="nav-link" href="/">首页</a>
+        <a class="nav-link" href="/bind">扫码绑定</a>
+        <a class="nav-link nav-link-strong" href="/admin">管理后台</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="container-wide">
+    <div class="docs-layout">
+      <aside class="doc-sidebar">
+        <nav id="docs-nav" class="doc-nav" aria-label="文档目录">
+          <p class="doc-nav-title">目录</p>
+          <a class="doc-nav-link" href="#overview">概览</a>
+          <a class="doc-nav-link" href="#auth">鉴权与 API Key</a>
+          <a class="doc-nav-link" href="#push-api">推送 API</a>
+          <a class="doc-nav-link" href="#media">多媒体上传</a>
+          <a class="doc-nav-link" href="#endpoints">端点总表</a>
+          <a class="doc-nav-link" href="#bind-status">绑定状态机</a>
+          <a class="doc-nav-link" href="#admin-api">管理后台 API</a>
+          <a class="doc-nav-link" href="#groups-api">用户分组 API</a>
+          <a class="doc-nav-link" href="#inbound-api">入站消息 API</a>
+          <a class="doc-nav-link" href="#keepalive">消息保活</a>
+          <a class="doc-nav-link" href="#app-rules">接口应用</a>
+          <a class="doc-nav-link" href="#scheduled-tasks">定时通知</a>
+          <a class="doc-nav-link" href="#settings">运行配置</a>
+          <a class="doc-nav-link" href="#error-codes">错误码</a>
+          <a class="doc-nav-link" href="#env-vars">环境变量</a>
+          <a class="doc-nav-link" href="#security">安全说明</a>
+        </nav>
+      </aside>
+
+      <article class="doc-content">
+        <h1 class="doc-title">ClawBridge HTTP API 文档</h1>
+        <p class="doc-lead">
+          ClawBridge 提供扫码绑定、管理后台与对外消息推送 API。所有 API（静态页面与二维码 SVG 除外）返回 JSON；
+          时间字段统一为 <strong>Unix 毫秒整数</strong>；写接口接受 <code class="code-inline">Content-Type: application/json</code>。
+        </p>
+
+        <!-- 概览 -->
+        <section id="overview" class="doc-section">
+          <h2 class="doc-heading">概览</h2>
+          <p>
+            ClawBridge 是一个多用户微信 ClawBot 消息推送平台：用户通过公开绑定页扫码绑定微信后，
+            外部系统即可使用 API Key 通过推送 API 向指定用户或全体已绑定用户发送消息。
+          </p>
+          <div class="doc-cards">
+            <div class="doc-card">
+              <h3 class="doc-card-title">统一错误格式</h3>
+              <p>所有错误响应体均为：</p>
+              <div class="code-block"><pre><code>{ "error": { "code": "BAD_REQUEST", "message": "人类可读的错误信息" } }</code></pre></div>
+            </div>
+            <div class="doc-card">
+              <h3 class="doc-card-title">两类鉴权</h3>
+              <p>
+                推送 API 使用数据库管理的 API Token（<code class="code-inline">Authorization: Bearer</code> 或
+                <code class="code-inline">X-Api-Key</code>）；管理后台 API 使用登录 Cookie
+                <code class="code-inline">cb_session</code> <span class="muted">（HttpOnly，12 小时有效）</span>。
+              </p>
+            </div>
+            <div class="doc-card">
+              <h3 class="doc-card-title">异步投递</h3>
+              <p>
+                发消息接口只负责入队并返回 <code class="code-inline">202 Accepted</code>，由服务端按账号限流异步投递；
+                可通过查询接口获得最终投递状态。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 鉴权 -->
+        <section id="auth" class="doc-section">
+          <h2 class="doc-heading">鉴权与 API Key</h2>
+          <p>
+            推送 API 的 API Key 由数据库管理（AES 加密保存），首次启动自动生成并写入数据目录的
+            <code class="code-inline">api-token.txt</code>（Docker 默认挂载在
+            <code class="code-inline">/app/data</code>）；管理员可在后台「运行配置 → 安全」重新生成/重置，
+            无需再设置环境变量 <code class="code-inline">API_TOKEN</code>。
+            关闭「推送 API」开关后接口整体不可用。
+          </p>
+          <p>请求时使用以下任一请求头：</p>
+          <ul class="doc-list">
+            <li><code class="code-inline">Authorization: Bearer &lt;API_TOKEN&gt;</code></li>
+            <li><code class="code-inline">X-Api-Key: &lt;API_TOKEN&gt;</code></li>
+          </ul>
+          <p>
+            推送 API 按 API Key 限流（默认 <strong>60 次/分钟</strong>）；单条文本默认上限
+            <strong>4000 字符</strong>；<code class="code-inline">to</code> 数组支持 1–100 个用户 ID。
+          </p>
+        </section>
+
+        <!-- 推送 API -->
+        <section id="push-api" class="doc-section">
+          <h2 class="doc-heading">推送 API</h2>
+
+          <h3 class="doc-subheading">给指定用户发消息</h3>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/v1/messages</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/v1/messages \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"to":["u_abc","u_def"],"text":"您的订单已发货"}'</code></pre></div>
+          <p>请求体：</p>
+          <div class="code-block"><pre><code>{
+  "to": ["u_abc", "u_def"],   // 用户 id 数组（1..100）
+  "text": "您的订单已发货"
+}</code></pre></div>
+          <p>响应 <code class="code-inline">202</code>：</p>
+          <div class="code-block"><pre><code>{
+  "accepted": 2,
+  "queued": [
+    { "outboxId": "ob_1", "userId": "u_abc", "status": "queued" },
+    { "outboxId": "ob_2", "userId": "u_def", "status": "queued" }
+  ]
+}</code></pre></div>
+          <p class="doc-note">
+            未知或未绑定用户会返回 <code class="code-inline">404</code>，并在响应中列出
+            <code class="code-inline">unknownUserIds</code>；全部用户无效时不入队。
+          </p>
+
+          <h3 class="doc-subheading">广播</h3>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/v1/broadcast</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/v1/broadcast \
+  -H "X-Api-Key: $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"系统维护通知"}'</code></pre></div>
+          <p>请求体 <code class="code-inline">{ "text": "系统维护通知", "onlyBound": true }</code>；响应 <code class="code-inline">202</code>：</p>
+          <div class="code-block"><pre><code>{ "accepted": 3, "queued": [ { "outboxId": "ob_1", "userId": "u_abc", "status": "queued" } ] }</code></pre></div>
+
+          <h3 class="doc-subheading">查询投递状态</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/v1/messages/{outboxId}</code>
+          </div>
+          <div class="code-block"><pre><code>curl http://localhost:10380/api/v1/messages/ob_1 -H "Authorization: Bearer $API_TOKEN"
+
+{
+  "id": "ob_1",
+  "userId": "u_abc",
+  "status": "queued|sending|sent|failed",
+  "attempts": 1,
+  "error": "",
+  "serverMessageId": "…",
+  "createdAt": 1760000000000,
+  "sentAt": 1760000001000
+}</code></pre></div>
+
+          <h3 class="doc-subheading">用户列表（供外部系统发现收件人）</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/v1/users?status=active&amp;limit=100</code>
+          </div>
+          <div class="code-block"><pre><code>{
+  "items": [
+    { "id": "u_abc", "displayName": "张三", "status": "active",
+      "boundAt": 1760000000000, "hasContextToken": true }
+  ]
+}</code></pre></div>
+        </section>
+
+        <!-- 多媒体上传 -->
+        <section id="media" class="doc-section">
+          <h2 class="doc-heading">多媒体上传与发送</h2>
+          <p>
+            ClawBridge 支持发送<strong>图片、视频与普通文件</strong>，并可从微信接收图片/文件/视频/语音附件。
+            出站媒体采用「原始二进制上传 + mediaId 引用」的方式，不新增 multipart 依赖。
+          </p>
+
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">方向</th>
+                  <th scope="col">支持类型</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>出站（发送）</td>
+                  <td>图片 <code class="code-inline">image/*</code>、视频 <code class="code-inline">video/*</code>、普通文件（pdf/zip/docx…）</td>
+                  <td>可附带文字 caption（先发文字再发媒体）；按 MIME 自动路由</td>
+                </tr>
+                <tr>
+                  <td>入站（接收）</td>
+                  <td>图片、文件、视频、语音</td>
+                  <td>服务端自动从微信 CDN 下载并解密落盘，管理后台可预览/下载</td>
+                </tr>
+                <tr>
+                  <td>出站语音</td>
+                  <td><span class="badge badge-muted">暂不支持</span></td>
+                  <td>需要 SILK 转码依赖，接口返回 400 并说明原因</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="doc-subheading">1. 管理后台上传媒体（原始二进制）</h3>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/media</code>
+          </div>
+          <p>
+            请求体为文件<strong>原始二进制</strong>（非 multipart），<code class="code-inline">Content-Type</code>
+            使用文件 MIME；原始文件名通过 <code class="code-inline">X-File-Name</code> 传递
+            （需 <code class="code-inline">encodeURIComponent</code> 编码），并带 CSRF 头
+            <code class="code-inline">X-Requested-With: ClawBridge-Admin</code>。
+          </p>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/admin/media \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: image/png" \
+  -H "X-File-Name: %E5%9B%BE%E7%89%87.png" \
+  --data-binary @./图片.png</code></pre></div>
+          <p>响应 <code class="code-inline">201</code>：</p>
+          <div class="code-block"><pre><code>{
+  "media": { "id": "att_…", "kind": "image", "mime": "image/png",
+             "fileName": "图片.png", "size": 12345,
+             "url": "/api/admin/media/att_…" },
+  "limits": { "maxBytes": 26214400, "allowedImage": ["image/jpeg", "image/png"] }
+}</code></pre></div>
+          <p class="doc-note">
+            单文件上限 <code class="code-inline">MEDIA_MAX_BYTES</code>（默认 25MB），超过返回
+            <code class="code-inline">413</code>；缺少文件名或类型不支持返回
+            <code class="code-inline">400</code>；未登录返回 <code class="code-inline">401</code>。
+          </p>
+
+          <h3 class="doc-subheading">2. 发送带媒体的消息</h3>
+          <p>
+            先上传拿到 <code class="code-inline">mediaId</code>，再在发送接口请求体中引用：
+            <code class="code-inline">text</code> 与 <code class="code-inline">mediaId</code> 至少传一个；
+            有媒体时 <code class="code-inline">text</code> 作为 caption 先发送。
+          </p>
+          <div class="code-block"><pre><code># 管理后台：给指定用户发送图片
+curl -X POST http://localhost:10380/api/admin/users/u_abc/messages \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"看图","mediaId":"att_…"}'
+
+# 对外推送 API（API Key）：同样支持 mediaId，可对多个 to 共用同一个 mediaId
+curl -X POST http://localhost:10380/api/v1/messages \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"to":["u_abc"],"text":"报告","mediaId":"att_…"}'</code></pre></div>
+          <p>
+            响应 <code class="code-inline">202</code> 的 queued 项会附带媒体摘要
+            （<code class="code-inline">media.id / kind / fileName / size / url</code>）。
+            广播接口仍<strong>只支持文本</strong>。
+          </p>
+
+          <h3 class="doc-subheading">3. 对外 API 上传媒体</h3>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/v1/media</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/v1/media \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: video/mp4" \
+  -H "X-File-Name: demo.mp4" \
+  --data-binary @./demo.mp4</code></pre></div>
+
+          <h3 class="doc-subheading">4. 读取 / 下载媒体</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/media/{attId}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/v1/media/{attId}</code>
+          </div>
+          <p>
+            管理后台接口使用 Cookie 鉴权，可直接用于 <code class="code-inline">&lt;img&gt;</code> /
+            <code class="code-inline">&lt;video&gt;</code> 的 <code class="code-inline">src</code>（同源）；
+            v1 接口使用 API Key 鉴权。默认图片/视频 <code class="code-inline">inline</code>，
+            其他文件 <code class="code-inline">attachment</code>；加
+            <code class="code-inline">?download=1</code> 强制下载。响应支持 Range 请求（视频可拖动进度条）。
+          </p>
+
+          <h3 class="doc-subheading">5. 限制与出站行为</h3>
+          <ul class="doc-list">
+            <li>出站单文件上限 <code class="code-inline">MEDIA_MAX_BYTES</code> = 25MB；入站单文件上限 <code class="code-inline">INBOUND_MEDIA_MAX_BYTES</code> = 100MB。</li>
+            <li>图片/视频 MIME 白名单由 <code class="code-inline">MEDIA_ALLOWED_IMAGE_MIME</code> / <code class="code-inline">MEDIA_ALLOWED_VIDEO_MIME</code> 配置，未命中的按普通文件发送。</li>
+            <li>一条带 caption 的媒体消息在服务端会拆成 <strong>最多 2 次</strong> <code class="code-inline">sendmessage</code>（文字 + 媒体），每次都会消耗该账号的发送限流令牌。</li>
+            <li>媒体发送失败会按重试策略重新上传；附件文件缺失时该条消息直接标记 <code class="code-inline">failed</code>。</li>
+          </ul>
+          <p class="doc-note">
+            管理后台「发消息」弹窗已内置：选择文件 → 客户端大小校验（读取
+            <code class="code-inline">/api/admin/config</code> 的 <code class="code-inline">media.maxBytes</code>）→
+            图片/视频预览 → 上传进度 → 发送；消息记录与用户详情中会展示图片缩略图、视频播放器与文件下载链接。
+          </p>
+        </section>
+
+        <!-- 端点总表 -->
+        <section id="endpoints" class="doc-section">
+          <h2 class="doc-heading">端点总表</h2>
+          <div class="doc-toolbar">
+            <input
+              id="endpoint-filter"
+              class="input"
+              type="search"
+              autocomplete="off"
+              placeholder="筛选端点，例如 broadcast / admin / GET"
+              aria-label="筛选端点"
+            >
+            <span id="endpoint-count" class="muted"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="doc-table" id="endpoint-table">
+              <thead>
+                <tr>
+                  <th scope="col">方法</th>
+                  <th scope="col">路径</th>
+                  <th scope="col">说明</th>
+                  <th scope="col">鉴权</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/bind/sessions</code></td>
+                  <td>创建扫码绑定会话（按 IP 限流，返回二维码 SVG data URI）</td>
+                  <td>公开</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/bind/sessions/{sessionId}?token=…</code></td>
+                  <td>查询绑定状态（前端每 1s 轮询）</td>
+                  <td>会话 token</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/bind/sessions/{sessionId}/verify-code</code></td>
+                  <td>提交手机微信显示的配对数字</td>
+                  <td>会话 token（body）</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-delete">DELETE</span></td>
+                  <td><code class="endpoint-path">/api/bind/sessions/{sessionId}</code></td>
+                  <td>取消绑定会话，返回 204</td>
+                  <td>会话 token（body）</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/login</code></td>
+                  <td>管理员登录，成功后设置 Cookie <code class="code-inline">cb_session</code></td>
+                  <td>密码</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/logout</code></td>
+                  <td>退出登录，返回 204 并清除 Cookie</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/me</code></td>
+                  <td>当前登录身份 <code class="code-inline">{authenticated, expiresAt}</code></td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/overview</code></td>
+                  <td>统计数据（stats）与服务器信息（server）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/users</code></td>
+                  <td>用户列表，支持 status/q/limit/offset</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}</code></td>
+                  <td>用户详情，含最近入站与出站消息</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}/messages</code></td>
+                  <td>给指定用户发送消息（入队）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}/unbind</code></td>
+                  <td>解绑用户：停止轮询、清除凭证与 context_token</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}/reconnect</code></td>
+                  <td>重连用户入站监控（冷却中返回 409）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/broadcast</code></td>
+                  <td>向所有可推送用户广播（入队）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/messages</code></td>
+                  <td>消息记录，支持 direction/status/limit/offset/userId</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/config</code></td>
+                  <td>运行配置（脱敏）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/groups</code></td>
+                  <td>分组列表（按创建时间升序）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/groups</code></td>
+                  <td>新建分组（名称唯一）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-patch">PATCH</span></td>
+                  <td><code class="endpoint-path">/api/admin/groups/{id}</code></td>
+                  <td>编辑分组名称 / 描述 / 颜色</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-delete">DELETE</span></td>
+                  <td><code class="endpoint-path">/api/admin/groups/{id}</code></td>
+                  <td>删除分组（用户不受影响，仅解除关联）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/groups/{id}/messages</code></td>
+                  <td>按分组群发消息（文本/媒体，入队）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-put">PUT</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}/groups</code></td>
+                  <td>全量替换用户所属分组</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-patch">PATCH</span></td>
+                  <td><code class="endpoint-path">/api/admin/users/{id}/keepalive</code></td>
+                  <td>单用户消息保活开关（opt-in）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/groups/{id}/keepalive</code></td>
+                  <td>分组批量消息保活开关（返回 updated 数）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules</code></td>
+                  <td>接口应用规则列表（<code class="code-inline">?includeDisabled=1</code> 含禁用规则）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules</code></td>
+                  <td>新建接口应用规则</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules/{id}</code></td>
+                  <td>规则详情（Header 只返回名称列表）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-patch">PATCH</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules/{id}</code></td>
+                  <td>更新规则（支持部分字段，如仅 enabled）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-delete">DELETE</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules/{id}</code></td>
+                  <td>删除规则（运行日志保留）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules/{id}/test</code></td>
+                  <td>测试运行（dry-run：不发送、不写运行日志）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rule-logs</code></td>
+                  <td>运行日志（ruleId/status/userId/limit/offset）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks</code></td>
+                  <td>定时通知任务列表</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks</code></td>
+                  <td>新建定时任务</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}</code></td>
+                  <td>定时任务详情（Header 只返回名称）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-patch">PATCH</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}</code></td>
+                  <td>更新定时任务（支持部分字段，如仅 enabled）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-delete">DELETE</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}</code></td>
+                  <td>删除定时任务（运行日志保留）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}/test</code></td>
+                  <td>测试运行（dry-run：真实调用接口，不发送、不写日志）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}/run</code></td>
+                  <td>立即执行一次（真实发送、写日志、更新下次时间）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-task-logs</code></td>
+                  <td>定时任务运行日志（taskId/status/limit/offset）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/settings</code></td>
+                  <td>可后台修改的运行配置（分组/字段/默认值/envOnly）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-patch">PATCH</span></td>
+                  <td><code class="endpoint-path">/api/admin/settings</code></td>
+                  <td>保存运行配置修改（只提交变化字段，返回需重启字段）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/settings/reset</code></td>
+                  <td>恢复某分组为环境变量默认值</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/security/password</code></td>
+                  <td>修改管理密码（当前密码校验；存 DB scrypt 哈希）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/security/password/reset</code></td>
+                  <td>重置为随机密码（返回明文一次，写入 data/admin-password.txt）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/security/api-token/rotate</code></td>
+                  <td>重新生成 API Token（明文仅返回一次）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/security/api-token/reset</code></td>
+                  <td>重置 Token（生成新 Token，返回明文一次，写入 data/api-token.txt）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/system/restart</code></td>
+                  <td>重启容器（仅生产容器环境；202，重启后自动刷新页面）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/media</code></td>
+                  <td>管理后台上传媒体（原始二进制 + <code class="code-inline">X-File-Name</code>）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/media/{attId}</code></td>
+                  <td>读取/下载媒体（<code class="code-inline">?download=1</code>，支持 Range）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/v1/messages</code></td>
+                  <td>推送 API：给指定用户发消息</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/v1/broadcast</code></td>
+                  <td>推送 API：广播消息</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/v1/messages/{outboxId}</code></td>
+                  <td>推送 API：查询投递状态</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/v1/users</code></td>
+                  <td>推送 API：用户列表（供发现收件人）</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/v1/groups</code></td>
+                  <td>推送 API：分组列表（含用户数统计）</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/v1/groups/{groupId}/messages</code></td>
+                  <td>推送 API：按分组群发消息</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/v1/inbound/messages</code></td>
+                  <td>推送 API：拉取微信入站消息（cursor/wait 增量）</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/v1/media</code></td>
+                  <td>推送 API：上传媒体（原始二进制 + <code class="code-inline">X-File-Name</code>）</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/v1/media/{attId}</code></td>
+                  <td>推送 API：读取/下载媒体（支持 Range）</td>
+                  <td>API Key</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/health</code></td>
+                  <td>健康检查 <code class="code-inline">{status, version, uptimeMs}</code>（也兼容 <code class="code-inline">/api/health</code>）</td>
+                  <td>公开</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/</code> <code class="endpoint-path">/bind</code></td>
+                  <td>公开绑定页</td>
+                  <td>公开</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/admin</code></td>
+                  <td>管理后台（未登录展示登录表单）</td>
+                  <td>公开（页面）</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/docs</code></td>
+                  <td>本 API 文档页</td>
+                  <td>公开</td>
+                </tr>
+                <tr id="endpoint-empty" hidden>
+                  <td colspan="4" class="empty-cell"><span class="empty-text">没有匹配的端点</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="doc-note">
+            管理后台的所有写接口都需要请求头 <code class="code-inline">X-Requested-With: ClawBridge-Admin</code>（防 CSRF）。
+          </p>
+        </section>
+
+        <!-- 绑定状态机 -->
+        <section id="bind-status" class="doc-section">
+          <h2 class="doc-heading">绑定状态机</h2>
+          <p>
+            绑定页轮询 <code class="code-inline">GET /api/bind/sessions/{sessionId}?token=…</code> 获取
+            <code class="code-inline">status</code> 字段，可能取值如下：
+          </p>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">status</th>
+                  <th scope="col">说明</th>
+                  <th scope="col">前端行为</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code class="code-inline">waiting</code></td>
+                  <td>等待扫码</td>
+                  <td>展示二维码，继续轮询</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">scanned</code></td>
+                  <td>已扫码，等待手机确认</td>
+                  <td>提示「已扫码，请在手机上确认」</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">need_verifycode</code></td>
+                  <td>需要输入手机微信上显示的配对数字</td>
+                  <td>展示数字输入框，提交 verify-code</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">refreshing</code></td>
+                  <td>二维码过期，正在自动刷新（最多 3 次）</td>
+                  <td>提示正在刷新，等待新二维码</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">verify_blocked</code></td>
+                  <td>配对数字错误次数过多，正在刷新二维码</td>
+                  <td>提示刷新，等待重新扫码</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">confirmed</code></td>
+                  <td>绑定成功，返回 <code class="code-inline">user</code> 字段</td>
+                  <td>展示绑定成功与用户信息</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">already_bound</code></td>
+                  <td>该微信已绑定过本服务（binded_redirect），<code class="code-inline">user</code> 可能返回已有用户</td>
+                  <td>提示已绑定，无需重复绑定</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">expired</code> / <code class="code-inline">timeout</code> / <code class="code-inline">cancelled</code></td>
+                  <td>会话结束，需重新创建</td>
+                  <td>展示原因并提供「重新生成二维码」</td>
+                </tr>
+                <tr>
+                  <td><code class="code-inline">error</code></td>
+                  <td>协议/网络错误导致失败，<code class="code-inline">error</code> 字段给出原因</td>
+                  <td>展示错误原因，可重试</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="doc-note">
+            绑定会话有效期默认 10 分钟；<code class="code-inline">confirmed</code> 后会话仍可查询，保留 10 分钟。
+          </p>
+        </section>
+
+        <!-- 管理后台 API -->
+        <section id="admin-api" class="doc-section">
+          <h2 class="doc-heading">管理后台 API</h2>
+          <p>
+            登录成功后服务端通过 <code class="code-inline">Set-Cookie</code> 下发 HttpOnly Cookie
+            <code class="code-inline">cb_session</code>（SameSite=Lax，默认 12 小时有效），后续请求自动携带。
+            所有写接口（POST/DELETE）必须带 <code class="code-inline">X-Requested-With: ClawBridge-Admin</code>。
+          </p>
+          <div class="code-block"><pre><code># 登录
+curl -i -X POST http://localhost:10380/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"password":"你的管理密码"}'
+
+# 登录后携带 Cookie 查询概览
+curl http://localhost:10380/api/admin/overview -b "cb_session=…"
+
+# 给用户发消息（写接口需要 CSRF 头）
+curl -X POST http://localhost:10380/api/admin/users/u_abc/messages \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -b "cb_session=…" \
+  -d '{"text":"你好"}'</code></pre></div>
+          <p>
+            常用查询参数：
+            <code class="code-inline">GET /api/admin/users?status=active|unbound|paused|all&amp;q=&amp;limit=50&amp;offset=0</code>；
+            <code class="code-inline">GET /api/admin/messages?direction=inbound|outbound|all&amp;status=&amp;limit=50&amp;offset=0&amp;userId=</code>。
+          </p>
+        </section>
+
+        <!-- 用户分组 API -->
+        <section id="groups-api" class="doc-section">
+          <h2 class="doc-heading">用户分组 API</h2>
+          <p>
+            分组采用<strong>多对多标签</strong>：一个用户可属于多个分组。分组用于管理后台筛选用户、按分组群发消息；
+            删除分组不会删除用户，只会移除分组关联。分组对象（GroupView）字段：
+          </p>
+          <div class="code-block"><pre><code>{
+  "id": "grp_…", "name": "VIP客户", "description": "重点客户",
+  "color": "#07C160", "userCount": 3, "activeUserCount": 2,
+  "createdAt": 1760000000000, "updatedAt": 1760000000000
+}</code></pre></div>
+          <p>
+            用户对象（UserView）新增 <code class="code-inline">groups</code> 字段：
+            <code class="code-inline">[{ "id": "grp_…", "name": "VIP客户", "color": "#07C160" }]</code>。
+            管理端 <code class="code-inline">GET /api/admin/users</code>、
+            <code class="code-inline">GET /api/admin/users/{id}</code> 与
+            <code class="code-inline">GET /api/v1/users</code> 均会返回。
+          </p>
+
+          <h3 class="doc-subheading">1. 分组 CRUD（管理后台）</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/groups</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/groups</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-patch">PATCH</span>
+            <code class="endpoint-path">/api/admin/groups/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-delete">DELETE</span>
+            <code class="endpoint-path">/api/admin/groups/{id}</code>
+          </div>
+          <div class="code-block"><pre><code># 新建分组
+curl -X POST http://localhost:10380/api/admin/groups \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"VIP客户","description":"重点客户","color":"#07C160"}'
+
+# 编辑分组（至少一个字段）
+curl -X PATCH http://localhost:10380/api/admin/groups/grp_xxx \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"VIP客户（新）","color":"#2563EB"}'
+
+# 删除分组（用户不受影响）
+curl -X DELETE http://localhost:10380/api/admin/groups/grp_xxx \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin"</code></pre></div>
+          <p>
+            校验：<code class="code-inline">name</code> 1–40 字符、必填且全库唯一（重名
+            <code class="code-inline">409 CONFLICT</code>）；
+            <code class="code-inline">description</code> ≤ 200 字符；
+            <code class="code-inline">color</code> 为空或 <code class="code-inline">#RRGGBB</code>（非法
+            <code class="code-inline">400</code>）。
+          </p>
+
+          <h3 class="doc-subheading">2. 用户分组归属</h3>
+          <div class="endpoint-line">
+            <span class="method method-put">PUT</span>
+            <code class="endpoint-path">/api/admin/users/{id}/groups</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X PUT http://localhost:10380/api/admin/users/u_abc/groups \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"groupIds":["grp_a","grp_b"]}'
+# → 200 { "user": { ..., "groups": [ {id,name,color}, ... ] } }</code></pre></div>
+          <p>
+            语义：<strong>全量替换</strong>（<code class="code-inline">[]</code> 表示清空）；自动去重、忽略顺序；
+            用户不存在 <code class="code-inline">404</code>；<code class="code-inline">groupIds</code> 含不存在的分组返回
+            <code class="code-inline">400</code>（<code class="code-inline">details.unknownGroupIds</code>）。
+          </p>
+
+          <h3 class="doc-subheading">3. 筛选与按分组发送</h3>
+          <ul class="doc-list">
+            <li><code class="code-inline">GET /api/admin/users?groupId=grp_…</code>：仅返回属于该分组的用户。</li>
+            <li><code class="code-inline">GET /api/admin/messages?groupId=grp_…</code>：仅返回所属用户在该分组内的消息（入站/出站均适用）。</li>
+          </ul>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/groups/{id}/messages</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/admin/groups/grp_xxx/messages \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"VIP 专属通知","mediaId":"att_…"}'
+# → 202 { "queued":[ {outboxId,userId,status,media?}, ... ], "count": 3 }</code></pre></div>
+          <p>
+            目标 = 分组内 <code class="code-inline">status='active'</code> 且未冷却的用户；
+            <code class="code-inline">text</code> 与 <code class="code-inline">mediaId</code> 至少一个（媒体上传见
+            <a href="#media">多媒体上传</a>）；无可发送用户时返回 202 且
+            <code class="code-inline">count=0</code>。
+          </p>
+
+          <h3 class="doc-subheading">4. 对外 API（API Key）</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/v1/groups</code>
+          </div>
+          <div class="code-block"><pre><code>curl -s http://localhost:10380/api/v1/groups \
+  -H "Authorization: Bearer $API_TOKEN"
+# → { "items": [ {id,name,description,color,userCount,activeUserCount}, ... ] }</code></pre></div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/v1/groups/{groupId}/messages</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/v1/groups/grp_xxx/messages \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"系统维护通知"}'
+# → 202 { "accepted": 3, "queued": [ {outboxId,userId,status}, ... ] }</code></pre></div>
+          <p class="doc-note">
+            分组不存在返回 <code class="code-inline">404</code>；无可发送用户时
+            <code class="code-inline">accepted=0</code> 且 <code class="code-inline">queued=[]</code>。
+          </p>
+        </section>
+
+        <!-- 入站消息 API -->
+        <section id="inbound-api" class="doc-section">
+          <h2 class="doc-heading">入站消息 API</h2>
+          <p>
+            拉取式 REST 接口：获取微信用户发给 ClawBot 的入站消息（含附件元数据），支持
+            <code class="code-inline">since</code> / <code class="code-inline">cursor</code> 增量拉取与
+            <code class="code-inline">wait</code> 长轮询，便于外部系统集成。
+          </p>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/v1/inbound/messages</code>
+          </div>
+          <p>鉴权：<code class="code-inline">Authorization: Bearer &lt;API_TOKEN&gt;</code> 或 <code class="code-inline">X-Api-Key</code>。查询参数：</p>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">参数</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="code-inline">limit</code></td><td>1–200，默认 50</td></tr>
+                <tr><td><code class="code-inline">since</code></td><td>毫秒时间戳（可选，独占：只返回 <code class="code-inline">receivedAt &gt; since</code> 的消息）</td></tr>
+                <tr><td><code class="code-inline">cursor</code></td><td>不透明游标（可选，优先于 <code class="code-inline">since</code>；来自上次响应的 <code class="code-inline">nextCursor</code>）</td></tr>
+                <tr><td><code class="code-inline">userId</code></td><td>可选，只看某用户</td></tr>
+                <tr><td><code class="code-inline">groupId</code></td><td>可选，只看某分组内用户的消息（按用户当前分组归属）</td></tr>
+                <tr><td><code class="code-inline">wait</code></td><td>0–30 秒（可选，长轮询：无新消息时最多等待 N 秒，收到新消息立即返回）</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>响应 <code class="code-inline">200</code>（按 <code class="code-inline">(receivedAt, id)</code> 升序）：</p>
+          <div class="code-block"><pre><code>{
+  "items": [ {
+    "id": "in_…",
+    "userId": "u_…",
+    "displayName": "张三",
+    "groups": [ { "id": "grp_…", "name": "VIP客户", "color": "#07C160" } ],
+    "text": "你好（媒体消息为 [图片]/[视频]/[文件]/[语音] 占位）",
+    "itemTypes": "1",
+    "createdAt": 1760000000000,
+    "receivedAt": 1760000000123,
+    "attachments": [ {
+      "id": "att_…", "kind": "image", "mime": "image/jpeg",
+      "fileName": "", "size": 448642, "status": "ready",
+      "url": "/api/v1/media/att_…",
+      "downloadUrl": "/api/v1/media/att_…?download=1"
+    } ]
+  } ],
+  "nextCursor": "eyJ0IjoxNzYwMDAwMDAxMjMsImlkIjoiaW5fLi4uIn0",
+  "hasMore": false,
+  "serverTime": 1760000002000
+}</code></pre></div>
+          <ul class="doc-list">
+            <li><code class="code-inline">cursor</code> 编码为 base64url JSON：<code class="code-inline">{ "t": receivedAt, "id": "in_…" }</code>，服务端按字典序稳定翻页（同毫秒多条不会重复/遗漏）。</li>
+            <li><code class="code-inline">nextCursor</code>：还有更多数据时返回最后一条的游标；无数据时可能为 <code class="code-inline">null</code>。下次请求优先使用它。</li>
+            <li><code class="code-inline">wait &gt; 0</code> 且无新消息时，服务端每 500ms 重新查询，直到有新消息或超时；超时返回 <code class="code-inline">items=[]</code> 与传入的游标。</li>
+            <li>附件只返回元数据，文件内容通过 <code class="code-inline">GET /api/v1/media/{attId}</code> 读取（API Key 鉴权，支持 Range）。</li>
+            <li>鉴权失败 <code class="code-inline">401</code>；参数非法（limit/wait 越界、cursor 格式错误、since 非数字）返回 <code class="code-inline">400</code>。</li>
+          </ul>
+
+          <h3 class="doc-subheading">轮询示例（首次 + 增量长轮询）</h3>
+          <div class="code-block"><pre><code># 1) 首次拉取最近 50 条（升序）
+curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50" \
+  -H "Authorization: Bearer $API_TOKEN"
+
+# 2) 用 nextCursor 增量拉取；无新消息时长轮询最多 25 秒
+NEXT=$(curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50" \
+  -H "Authorization: Bearer $API_TOKEN" | jq -r '.nextCursor // empty')
+curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50&cursor=$NEXT&wait=25" \
+  -H "Authorization: Bearer $API_TOKEN"</code></pre></div>
+          <div class="code-block"><pre><code># 持续轮询（bash + jq）
+NEXT=""
+while true; do
+  URL="http://localhost:10380/api/v1/inbound/messages?limit=50&wait=25"
+  [ -n "$NEXT" ] && URL="$URL&cursor=$NEXT"
+  RESP=$(curl -s "$URL" -H "Authorization: Bearer $API_TOKEN")
+  echo "$RESP" | jq -c '.items[] | {id, userId, displayName, text, receivedAt}'
+  NEXT=$(echo "$RESP" | jq -r '.nextCursor // empty')
+done</code></pre></div>
+          <p class="doc-note">
+            管理后台消息记录也支持按分组筛选（<code class="code-inline">GET /api/admin/messages?groupId=…</code>），
+            并在用户行与消息行展示分组徽章。
+          </p>
+        </section>
+
+        <!-- 消息保活 -->
+        <section id="keepalive" class="doc-section">
+          <h2 class="doc-heading">消息保活（24h 会话保活）</h2>
+          <p>
+            微信 ClawBot 的主动下发依赖「用户最近一次主动消息」形成的约 <strong>24 小时会话窗口</strong>。
+            对<strong>开启保活</strong>的用户，ClawBridge 会在其最后一条入站消息即将满 24 小时时
+            （默认提前 1 小时）自动入队一条保活消息，提示用户回复以刷新会话窗口。
+          </p>
+          <ul class="doc-list">
+            <li><strong>opt-in</strong>：默认关闭；管理员可对单个用户或整个分组批量开启/关闭。</li>
+            <li><strong>每个会话窗口最多自动发送一次</strong>：发送后记录
+              <code class="code-inline">keepaliveLastSentAt</code>；用户回复消息后窗口重新计时，可再次触发。</li>
+            <li>仅在窗口仍然有效时发送（剩余时间 &gt; 0）；窗口已过期或从未有过入站消息的用户<strong>不会</strong>发送。</li>
+            <li>保活消息走现有 outbox 队列（<code class="code-inline">source=keepalive</code>），受每账号发送限流、
+              <code class="code-inline">-2</code>/<code class="code-inline">-14</code> 处理等与普通消息完全一致。</li>
+            <li>触发条件：用户 active、已开启保活、<code class="code-inline">lastInboundAt &gt; 0</code>、未冷却、
+              <code class="code-inline">keepaliveLastSentAt &lt; lastInboundAt</code>、
+              <code class="code-inline">now - lastInboundAt ∈ [window - lead, window)</code>。</li>
+          </ul>
+
+          <h3 class="doc-subheading">1. 单用户开关（管理后台）</h3>
+          <div class="endpoint-line">
+            <span class="method method-patch">PATCH</span>
+            <code class="endpoint-path">/api/admin/users/{id}/keepalive</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X PATCH http://localhost:10380/api/admin/users/u_xxxxxxxx/keepalive \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}'
+# → 200 { "user": { ..., "keepaliveEnabled": true, "keepaliveLastSentAt": 0 } }</code></pre></div>
+
+          <h3 class="doc-subheading">2. 分组批量开关</h3>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/groups/{id}/keepalive</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST http://localhost:10380/api/admin/groups/grp_xxxxxxxx/keepalive \
+  -b "cb_session=…" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}'
+# → 200 { "updated": 3, "group": { ...GroupView } }</code></pre></div>
+          <p>
+            错误：用户/分组不存在返回 <code class="code-inline">404</code>；<code class="code-inline">enabled</code>
+            非 boolean 返回 <code class="code-inline">400</code>；其余沿用统一错误格式。
+          </p>
+
+          <h3 class="doc-subheading">3. 相关数据字段</h3>
+          <ul class="doc-list">
+            <li><code class="code-inline">GET /api/admin/users</code>：UserView 增加
+              <code class="code-inline">keepaliveEnabled</code>（boolean）与
+              <code class="code-inline">keepaliveLastSentAt</code>（毫秒，0 表示从未发送）。</li>
+            <li><code class="code-inline">GET /api/admin/config</code>：新增
+              <code class="code-inline">keepalive: { enabled, windowMs, leadMs, tickMs, maxPerTick, text }</code>。</li>
+            <li><code class="code-inline">GET /api/admin/overview</code>：stats 新增
+              <code class="code-inline">keepaliveEnabledUsers</code> 与
+              <code class="code-inline">keepaliveSent24h</code>。</li>
+            <li><code class="code-inline">GET /api/admin/messages</code>：消息项新增
+              <code class="code-inline">source</code>
+              （<code class="code-inline">admin | api | broadcast | group | keepalive | system</code>），
+              管理后台对 <code class="code-inline">keepalive</code> 显示「保活」标签。</li>
+            <li><code class="code-inline">GET /api/v1/users</code>：items 增加只读
+              <code class="code-inline">keepaliveEnabled</code>，便于外部系统感知。</li>
+          </ul>
+
+          <h3 class="doc-subheading">4. 配置项（环境变量）</h3>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">变量</th>
+                  <th scope="col">默认</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="code-inline">KEEPALIVE_ENABLED</code></td><td><code class="code-inline">true</code></td><td>全局调度开关（false=完全不扫描，便于运维临时关闭）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_WINDOW_MS</code></td><td><code class="code-inline">86400000</code></td><td>会话窗口长度（24 小时）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_LEAD_MS</code></td><td><code class="code-inline">3600000</code></td><td>提前触发量（最后入站满 window-lead 时触发，默认提前 1 小时）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_TICK_MS</code></td><td><code class="code-inline">300000</code></td><td>扫描间隔（默认 5 分钟）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_TEXT</code></td><td><code class="code-inline">【消息通道保活】回复任意内容即可继续接收通知。</code></td><td>保活文本模板，支持 <code class="code-inline">{name}</code> 昵称占位</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_MAX_PER_TICK</code></td><td><code class="code-inline">100</code></td><td>单次扫描最多处理用户数（防御上限）</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="doc-note">
+            管理后台「用户管理」每行有「保活」开关，用户详情显示最近保活发送时间；「用户分组」每行有
+            「保活」行内开关（一键同步当前成员并持久化分组默认，之后加入该分组的成员自动开启；
+            分组编辑弹窗不再包含该开关）；「运行配置」展示保活全局开关、窗口、提前量、扫描间隔与文本。
+            真实环境上线默认不开启（<code class="code-inline">keepalive_enabled=0</code>），由管理员按需开启。
+          </p>
+        </section>
+
+        <!-- 接口应用 -->
+        <section id="app-rules" class="doc-section">
+          <h2 class="doc-heading">接口应用（关键词触发 → 外部 HTTP 接口 → 解析回复）</h2>
+          <p>
+            当<strong>指定范围</strong>的微信用户发来<strong>包含关键词</strong>的消息时，ClawBridge 可调用配置的
+            外部 HTTP 接口，把消息中的参数传给接口，解析接口返回并<strong>自动回复</strong>给该用户。
+            规则默认不启用，由管理员在后台按需创建与开启。
+          </p>
+
+          <h3 class="doc-subheading">1. 处理流程</h3>
+          <div class="code-block"><pre><code>入站消息（仅文本）→ 规则引擎（异步队列，不阻塞 getupdates）
+  → 规则启用？触发范围命中（all / users / groups）？
+  → 关键词 / 正则命中？冷却与每小时限额未超？
+  → 按 priority（数字越小越先）+ created_at 取第一条命中规则（一消息最多执行一条）
+  → 参数提取（none / trailing / regex / json / fulltext / multi）
+  → 渲染请求模板（URL / Headers / Body）→ 调用外部 HTTP（SSRF 防护 / 超时 / 响应大小限制）
+  → 解析响应（JSON 点路径或纯文本）→ 渲染回复模板（或兜底文案）
+  → 写 app_rule_logs（脱敏预览）
+  → 入队 outbox（source='rule'）→ 微信回复用户（复用限流 / -2 / -14 / context_token）</code></pre></div>
+          <p class="doc-note">
+            <code class="code-inline">APP_RULES_ENABLED=false</code> 时规则引擎不启动（不触发），但后台仍可管理规则。
+            规则默认不启用；一消息最多命中一条规则。
+          </p>
+
+          <h3 class="doc-subheading">2. 触发范围与匹配</h3>
+          <ul class="doc-list">
+            <li><code class="code-inline">scope_type</code>：<code class="code-inline">all</code>（全部用户）/
+              <code class="code-inline">users</code>（指定用户，<code class="code-inline">scope_ids</code> 为用户 id）/
+              <code class="code-inline">groups</code>（指定分组，用户属于任一分组即命中）。</li>
+            <li><code class="code-inline">match_mode</code>：
+              <code class="code-inline">contains</code>（消息包含任一关键词，大小写不敏感）、
+              <code class="code-inline">equals</code>（trim 后全等任一关键词）、
+              <code class="code-inline">regex</code>（<code class="code-inline">regex_pattern</code>，u flag，保存时校验合法性）。</li>
+            <li>关键词 <code class="code-inline">keywords</code>：1–10 个、每个 1–50 字；正则模式忽略关键词。</li>
+            <li>一消息命中多条规则时，按 <code class="code-inline">priority</code> 升序、同优先级按创建时间取第一条。</li>
+          </ul>
+
+          <h3 class="doc-subheading">3. 参数提取</h3>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">extraction_mode</th>
+                  <th scope="col">extraction_config</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="code-inline">none</code></td><td><code class="code-inline">{}</code></td><td><strong>不提取</strong>：消息中不需要参数，直接按模板调用接口（仍可使用内置变量）；不检查缺参</td></tr>
+                <tr><td><code class="code-inline">trailing</code></td><td><code class="code-inline">{"param":"arg"}</code></td><td>取第一个命中关键词之后的文本并 trim；为空视为缺参</td></tr>
+                <tr><td><code class="code-inline">regex</code></td><td><code class="code-inline">{"regex":"^查(?&lt;city&gt;\\S+)天气$"}</code></td><td>命名捕获组成为参数；无命名组时第一个捕获组命名为 <code class="code-inline">arg</code></td></tr>
+                <tr><td><code class="code-inline">json</code></td><td><code class="code-inline">{}</code></td><td>消息文本按 JSON 对象解析，顶层标量字段作为参数</td></tr>
+                <tr><td><code class="code-inline">fulltext</code></td><td><code class="code-inline">{"param":"text"}</code></td><td>整个消息文本 trim 作为参数</td></tr>
+                <tr><td><code class="code-inline">multi</code></td><td><code class="code-inline">{"extractors":[...],"required":["city","date"]}</code></td><td><strong>多参数组合</strong>：按顺序执行多个提取项（trailing/regex/json/fulltext）并合并参数；required 中的参数缺失视为缺参</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            内置变量：<code class="code-inline">{text}</code>（消息原文）、<code class="code-inline">{arg}</code>
+            （trailing/fulltext 主参数）、<code class="code-inline">{userId}</code>、<code class="code-inline">{name}</code>
+            （微信显示名）、<code class="code-inline">{now}</code>（毫秒时间戳）。
+            必需参数为空时不调用外部接口，直接回复 <code class="code-inline">fallback_text</code>（若配置），
+            日志记为 <code class="code-inline">failed</code>（<code class="code-inline">error=missing params</code>）。
+          </p>
+
+          <h3 class="doc-subheading">4. 请求模板与安全（SSRF）</h3>
+          <ul class="doc-list">
+            <li>请求方法 <code class="code-inline">GET</code> / <code class="code-inline">POST</code>；URL、Header 值、Body 支持
+              <code class="code-inline">{变量}</code> 占位（URL 中的变量做 URL 编码，Header/Body 原文替换并限制长度）。</li>
+            <li><code class="code-inline">request_body_template</code> 仅 POST 使用；GET 忽略 body。</li>
+            <li>Header 通过 <code class="code-inline">requestHeaders</code> 对象传入并<strong>加密落库</strong>；
+              读取接口只返回 <code class="code-inline">headerNames</code>（键名列表），不返回值。
+              更新时传 <code class="code-inline">requestHeaders</code> 即全量替换（<code class="code-inline">{}</code> 清空），不传则保持不变。</li>
+            <li><strong>SSRF 防护</strong>：仅允许 <code class="code-inline">http/https</code>、禁止 URL 携带 userinfo；
+              默认拒绝私网/环回/链路本地/组播/保留地址；域名会先解析 IP 再判断；
+              <code class="code-inline">APP_RULES_ALLOWED_HOSTS</code> 白名单中的主机允许访问内网；
+              重定向最多 3 跳且每跳重新校验；超时取
+              <code class="code-inline">min(timeout_ms, APP_RULE_TIMEOUT_MS)</code>；响应体超过
+              <code class="code-inline">APP_RULE_MAX_RESPONSE_BYTES</code> 判失败；失败不重试（避免重复副作用）。</li>
+            <li>日志/接口响应不记录完整 Header 值或敏感请求体，预览做脱敏与截断。</li>
+          </ul>
+
+          <h3 class="doc-subheading">5. 响应解析与回复</h3>
+          <ul class="doc-list">
+            <li><code class="code-inline">response_type=json</code>：按 <code class="code-inline">response_path</code>
+              （点路径，如 <code class="code-inline">data.answer</code>、<code class="code-inline">a.b.0.c</code>）取值；
+              路径为空时优先取 <code class="code-inline">reply</code> 字段，否则对整个对象 <code class="code-inline">JSON.stringify</code>。</li>
+            <li><code class="code-inline">response_type=text</code>：直接使用响应文本（trim、截断）。</li>
+            <li>回复模板 <code class="code-inline">reply_template</code>：支持 <code class="code-inline">{{路径}}</code>（如
+              <code class="code-inline">{{data.answer}}</code>）以及内置 <code class="code-inline">{{response}}</code>
+              （解析后的文本）与 <code class="code-inline">{{raw}}</code>（原始响应文本）；为空时直接使用解析结果。</li>
+            <li><strong>列表渲染</strong>：<code class="code-inline">{{count data.list}}</code> 输出数量；
+              <code class="code-inline">{{#each data.list}}</code> … <code class="code-inline">{{/each}}</code>
+              逐项渲染（内层 <code class="code-inline">{{字段}}</code>、<code class="code-inline">{{@index}}</code> 从 0、
+              <code class="code-inline">{{@number}}</code> 从 1，仅支持单层 each）。示例：</li>
+          </ul>
+          <div class="code-block"><pre><code>【未归寝】{{count data.data where CQZT=1}} 人
+{{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+{{/each}}【已归寝】{{count data.data where CQZT=2}} 人
+{{#each data.data where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+{{/each}}</code></pre></div>
+          <ul class="doc-list">
+            <li>空回复或接口失败时使用 <code class="code-inline">fallback_text</code>；回复文本按
+              <code class="code-inline">MAX_TEXT_LENGTH</code>（默认 4000）截断；
+              最终入队 outbox，<code class="code-inline">source='rule'</code>。</li>
+          </ul>
+
+          <h3 class="doc-subheading">6. 限流与去重</h3>
+          <ul class="doc-list">
+            <li>同一入站消息对同一规则最多执行一次（数据库唯一索引，getupdates 重放安全）。</li>
+            <li>同用户同规则冷却 <code class="code-inline">cooldown_ms</code>（默认 10000ms）；规则级
+              <code class="code-inline">max_calls_per_hour</code>（默认 60）与同用户级
+              <code class="code-inline">max_user_calls_per_hour</code>（默认 10）按最近 1 小时日志计数，超限跳过并写
+              <code class="code-inline">skipped</code> 日志。</li>
+            <li>执行并发 <code class="code-inline">APP_RULES_WORKER_CONCURRENCY</code>；队列上限
+              <code class="code-inline">APP_RULE_MAX_QUEUE</code>（满则丢弃并 warn 日志）。</li>
+          </ul>
+
+          <h3 class="doc-subheading">7. 管理端接口（Cookie + CSRF）</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/app-rules?includeDisabled=1</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/app-rules</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/app-rules/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-patch">PATCH</span>
+            <code class="endpoint-path">/api/admin/app-rules/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-delete">DELETE</span>
+            <code class="endpoint-path">/api/admin/app-rules/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/app-rules/{id}/test</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/app-rule-logs</code>
+          </div>
+
+          <h3 class="doc-subheading">8. 创建 / 更新规则（请求体）</h3>
+          <div class="code-block"><pre><code>{
+  "name": "查天气", "enabled": true, "priority": 100,
+  "scope": { "type": "groups", "ids": ["grp_xxx"] },
+  "matchMode": "contains", "keywords": ["查天气"], "regexPattern": "",
+  "extraction": { "mode": "trailing", "config": { "param": "arg" } },
+  "request": { "method": "GET",
+               "url": "https://api.example.com/weather?city={arg}",
+               "headers": { "Authorization": "Bearer xxx" },
+               "bodyTemplate": "" },
+  "response": { "type": "json", "path": "data",
+                "template": "{{data.answer}}", "fallbackText": "暂时无法查询" },
+  "timeoutMs": 8000, "cooldownMs": 10000, "maxCallsPerHour": 60, "maxUserCallsPerHour": 10
+}</code></pre></div>
+          <p>
+            校验：<code class="code-inline">name</code> 1–60；<code class="code-inline">scope.type</code> ∈
+            all/users/groups（users/groups 时 ids 非空且存在）；<code class="code-inline">matchMode</code> 合法；
+            关键词 1–10 个（每个 1–50 字）或合法正则；<code class="code-inline">extraction</code> 配置合法；
+            URL 为 http(s)；<code class="code-inline">timeoutMs</code> 1000–30000、
+            <code class="code-inline">cooldownMs</code> 0–3600000、每小时上限 1–10000；
+            <code class="code-inline">response.type</code> ∈ json/text。错误 400/404。
+          </p>
+
+          <h3 class="doc-subheading">9. curl 示例</h3>
+          <div class="code-block"><pre><code># 新建规则
+curl -X POST http://localhost:10380/api/admin/app-rules \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"查天气","priority":100,"scope":{"type":"all","ids":[]},
+       "matchMode":"contains","keywords":["查天气"],
+       "extraction":{"mode":"trailing","config":{"param":"arg"}},
+       "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}"},
+       "response":{"type":"json","path":"data.answer","template":"天气：{{response}}",
+                   "fallbackText":"暂时无法查询"}}'
+
+# 测试运行（dry-run：不发送、不写日志）
+curl -X POST http://localhost:10380/api/admin/app-rules/rule_xxxxxxxx/test \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"查天气 北京","userId":"u_xxxxxxxx"}'
+
+# 运行日志（支持 ruleId/status/userId/limit/offset）
+curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status=success&limit=20&offset=0" \
+  -H "Cookie: cb_session=$ADMIN_COOKIE"</code></pre></div>
+          <p class="doc-note">
+            管理后台「接口应用」区块支持：规则列表（启用开关 / 范围 / 请求 / 最近运行 / 24h 成功·失败·跳过 /
+            编辑·测试·日志·删除）、分组式规则表单（基本信息 / 触发范围 / 触发条件 / 参数提取 / 请求 / 响应 /
+            限制）、测试运行弹窗（展示参数、实际请求、HTTP 状态、耗时、响应预览、将回复文本，且不会发给用户）
+            与运行日志（状态筛选 + 分页）。
+          </p>
+        </section>
+
+        <!-- 定时通知 -->
+        <section id="scheduled-tasks" class="doc-section">
+          <h2 class="doc-heading">定时通知（Scheduled Notifications）</h2>
+          <p>
+            定时通知按<strong>时间计划</strong>主动调用外部 HTTP 接口，把解析结果通过微信推送给<strong>指定用户或指定分组</strong>，
+            无需用户先发消息。与「接口应用」（收到消息才触发）互补。
+          </p>
+
+          <h3 class="doc-subheading">1. 处理流程</h3>
+          <div class="code-block"><pre><code>调度器每 SCHEDULER_TICK_MS（默认 15s）扫描到期任务（enabled=1 AND next_run_at<=now）
+  → 渲染请求模板（URL/Header/Body，内置变量 {now}/{date}/{time}/{taskName}）
+  → 调用外部 HTTP 接口（SSRF 防护 / 超时 / 响应大小限制 / 重定向复验）
+  → 解析响应（JSON 点路径或纯文本）→ 渲染通知文本（{{path}}/{{response}}/{{raw}}）
+  → 目标用户 = 指定用户或指定分组内 status=active 的用户（去重、上限 SCHEDULER_MAX_RECIPIENTS）
+  → 逐个入队 outbox（source=schedule）→ 复用现有微信发送限流
+  → 写 scheduled_task_logs（状态/HTTP/耗时/错误/响应预览/通知预览/收件人数）
+  → 更新 last_run_at / last_status / next_run_at</code></pre></div>
+          <p class="doc-note">
+            任务停用后不再自动执行；<code class="code-inline">SCHEDULER_ENABLED=false</code> 时调度器不启动
+            （后台仍可管理任务、测试运行与立即执行）。单实例调度（与保活一致）。
+          </p>
+
+          <h3 class="doc-subheading">2. 计划（schedule）</h3>
+          <ul class="doc-list">
+            <li><strong>interval（间隔）</strong>：<code class="code-inline">interval_ms</code> 范围
+              60000..2592000000（1 分钟–30 天）；首次创建时 <code class="code-inline">next_run_at = now + interval_ms</code>，
+              执行后按本次执行开始时间 + 间隔计算下一次。</li>
+            <li><strong>daily（每日定时）</strong>：<code class="code-inline">daily_time</code> 为 HH:mm，
+              按 <code class="code-inline">SCHEDULER_TIMEZONE</code>（默认 Asia/Shanghai）执行；
+              当前时间已过当天 HH:mm 则排到明天。</li>
+            <li>服务重启：过期 ≤5 分钟的 interval 任务补跑一次，超过则顺延下一周期；
+              daily 任务过期时启动后立即补跑一次，避免漏发。</li>
+            <li>每 tick 最多取 10 个到期任务、按 next_run_at 升序；单任务失败不影响其他任务。</li>
+          </ul>
+
+          <h3 class="doc-subheading">3. 请求模板与安全（SSRF）</h3>
+          <ul class="doc-list">
+            <li>请求方法 <code class="code-inline">GET</code> / <code class="code-inline">POST</code>；
+              URL、Header 值、Body 支持内置变量 <code class="code-inline">{now}</code>、
+              <code class="code-inline">{date}</code>、<code class="code-inline">{time}</code>、
+              <code class="code-inline">{taskName}</code>。</li>
+            <li>Header 通过 <code class="code-inline">request.headers</code> 对象传入并<strong>加密落库</strong>；
+              读取接口只返回 <code class="code-inline">headerNames</code>（名称列表），值显示为 ••••••。
+              更新时不传=保持不变、传 <code class="code-inline">{}</code> 清空、传对象=全量替换。</li>
+            <li>复用接口应用的 SSRF 防护：仅 http/https、禁止 userinfo、默认拒绝私网/环回/链路本地地址，
+              域名先解析 IP 再判断；<code class="code-inline">APP_RULES_ALLOWED_HOSTS</code> 白名单可放行内网；
+              重定向最多 3 跳且每跳复验；超时取
+              <code class="code-inline">min(task.timeoutMs, SCHEDULER_TIMEOUT_MS)</code>；
+              响应体超过 <code class="code-inline">APP_RULE_MAX_RESPONSE_BYTES</code> 判失败，失败不重试。</li>
+          </ul>
+
+          <h3 class="doc-subheading">4. 响应解析与通知模板</h3>
+          <ul class="doc-list">
+            <li><code class="code-inline">response.type=json</code>：按 <code class="code-inline">response.path</code>
+              （点路径，可含数组下标）取值；路径为空时优先取 <code class="code-inline">reply</code> 字段，否则整个对象 JSON 化。</li>
+            <li><code class="code-inline">response.type=text</code>：直接使用响应文本（trim、截断）。</li>
+            <li>通知模板 <code class="code-inline">reply_template</code>：支持
+              <code class="code-inline">{{path}}</code>（如 <code class="code-inline">{{data.weather}}</code>）、
+              <code class="code-inline">{{response}}</code>（解析后的文本）、
+              <code class="code-inline">{{raw}}</code>（原始响应文本）；列表支持
+              <code class="code-inline">{{count data.list}}</code> 与
+              <code class="code-inline">{{#each data.list}}{{字段}}{{/each}}</code>（<code class="code-inline">@index</code>/<code class="code-inline">@number</code>，单层）。示例：</li>
+          </ul>
+          <div class="code-block"><pre><code>【未归寝】{{count data.data where CQZT=1}} 人
+{{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+{{/each}}【已归寝】{{count data.data where CQZT=2}} 人
+{{#each data.data where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+{{/each}}</code></pre></div>
+          <ul class="doc-list">
+            <li>接口失败 / 超时 / JSON 解析失败 / 模板为空：若配置了 <code class="code-inline">fallback_text</code>
+              则把兜底文案发送给全部目标；否则本次不发送（<code class="code-inline">failed</code> 日志）。</li>
+            <li>目标：<code class="code-inline">targets.type=users</code> 为指定用户 id，
+              <code class="code-inline">targets.type=groups</code> 为指定分组 id（分组内 active 用户去重），
+              上限 <code class="code-inline">SCHEDULER_MAX_RECIPIENTS</code>（默认 200，按用户 id 稳定排序截断）。</li>
+          </ul>
+
+          <h3 class="doc-subheading">5. 管理端接口（Cookie + CSRF）</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-patch">PATCH</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-delete">DELETE</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks/{id}</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks/{id}/test</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks/{id}/run</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/scheduled-task-logs</code>
+          </div>
+          <p>
+            TaskView 关键字段：<code class="code-inline">schedule{type,intervalMs,dailyTime,timezone}</code>、
+            <code class="code-inline">targets{type,ids,names}</code>、
+            <code class="code-inline">request{method,url,headerNames,bodyTemplate}</code>、
+            <code class="code-inline">response{type,path,template,fallbackText}</code>、
+            <code class="code-inline">limits.timeoutMs</code>、
+            <code class="code-inline">nextRunAt/lastRunAt/lastStatus</code>。
+            <br>
+            测试运行接口返回：<code class="code-inline">request{method,url,headerNames,bodyPreview}</code>、
+            <code class="code-inline">httpStatus</code>、<code class="code-inline">latencyMs</code>、
+            <code class="code-inline">responsePreview</code>、<code class="code-inline">replyText</code>、
+            <code class="code-inline">recipientsCount</code>（收件人数）、
+            <code class="code-inline">responseHeaders</code>（响应头诊断）、<code class="code-inline">error</code>；
+            立即执行接口返回 <code class="code-inline">{status,httpStatus,latencyMs,recipientsCount,error}</code>。
+          </p>
+
+          <h3 class="doc-subheading">6. 创建 / 更新请求体</h3>
+          <div class="code-block"><pre><code>{
+  "name": "每天天气推送", "enabled": true,
+  "schedule": { "type": "daily", "dailyTime": "08:00" },
+  "targets": { "type": "groups", "ids": ["grp_xxxxxxxx"] },
+  "request": { "method": "GET",
+               "url": "https://api.example.com/weather?city=北京",
+               "headers": { "Authorization": "Bearer xxx" },
+               "bodyTemplate": "" },
+  "response": { "type": "json", "path": "",
+                "template": "{{city}} 今天 {{weather}}，{{temp_min}}~{{temp_max}}℃",
+                "fallbackText": "天气获取失败" },
+  "timeoutMs": 8000
+}</code></pre></div>
+          <p>
+            校验：<code class="code-inline">name</code> 1–60；<code class="code-inline">schedule.type</code> ∈
+            interval/daily；<code class="code-inline">interval_ms</code> 60000–2592000000；
+            <code class="code-inline">daily_time</code> 合法 HH:mm；<code class="code-inline">targets.type</code> ∈
+            users/groups 且 ids 非空且存在；URL http(s) 且不带 userinfo；
+            <code class="code-inline">timeoutMs</code> 1000–30000；<code class="code-inline">response.type</code> ∈ json/text。
+            错误 400 / 404（任务不存在）。
+          </p>
+
+          <h3 class="doc-subheading">7. curl 示例</h3>
+          <div class="code-block"><pre><code># 创建每天 08:00 给分组推送天气的任务
+curl -X POST http://localhost:10380/api/admin/scheduled-tasks \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"每天天气推送","enabled":true,
+       "schedule":{"type":"daily","dailyTime":"08:00"},
+       "targets":{"type":"groups","ids":["grp_xxxxxxxx"]},
+       "request":{"method":"GET","url":"https://api.example.com/weather?city=北京","headers":{}},
+       "response":{"type":"json","path":"","template":"{{city}} 今天 {{weather}}",
+                   "fallbackText":"天气获取失败"},
+       "timeoutMs":8000}'
+
+# 测试运行（dry-run：真实调接口、渲染通知，但不发送、不写日志）
+curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/test \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
+
+# 立即执行一次（真实发送、写日志、更新 next_run_at）
+curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
+
+# 运行日志（任务/状态筛选 + 分页）
+curl "http://localhost:10380/api/admin/scheduled-task-logs?taskId=task_xxxxxxxx&status=success&limit=20&offset=0" \
+  -H "Cookie: cb_session=$ADMIN_COOKIE"</code></pre></div>
+
+          <h3 class="doc-subheading">8. 配置项（环境变量）</h3>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">变量</th>
+                  <th scope="col">默认</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="code-inline">SCHEDULER_ENABLED</code></td><td><code class="code-inline">true</code></td><td>调度器全局开关（false=不自动触发）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_TICK_MS</code></td><td><code class="code-inline">15000</code></td><td>扫描间隔</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_TIMEZONE</code></td><td><code class="code-inline">Asia/Shanghai</code></td><td>每日任务时区（IANA）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_MAX_RECIPIENTS</code></td><td><code class="code-inline">200</code></td><td>单任务单次最多收件人数</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_TIMEOUT_MS</code></td><td><code class="code-inline">8000</code></td><td>外部请求超时上限</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="doc-note">
+            管理后台「接口应用 → 定时通知」Tab 支持任务列表（启用开关/计划/目标/最近执行/下次执行）、
+            分区式任务表单（基本信息/计划/目标/请求/响应/超时）、测试运行（展示实际请求、HTTP/耗时、响应预览、
+            响应头诊断、将发送文本与收件人数，且<strong>不会发送</strong>）、立即执行（确认后真实发送并写日志）、
+            运行日志（任务/状态筛选 + 分页）。建议先用「测试运行」确认接口与文案，再启用或立即执行；
+            注意微信 7 条/5 分钟发送限流。
+          </p>
+        </section>
+
+        <!-- 运行配置（后台可改） -->
+        <section id="settings" class="doc-section">
+          <h2 class="doc-heading">运行配置（后台可改设置）</h2>
+          <p>
+            能在后台修改的参数已从 <code class="code-inline">.env</code> 迁移到数据库
+            （schema v8 <code class="code-inline">app_settings</code> 表）：管理员在「运行配置」页修改后保存，
+            DB 持久化，尽量即时生效。第二批迁移后 <code class="code-inline">.env</code> 只保留启动必须项
+            （<code class="code-inline">APP_SECRET</code>、<code class="code-inline">DATA_DIR</code>、
+            <code class="code-inline">MEDIA_DIR</code>、<code class="code-inline">PORT</code>、
+            <code class="code-inline">HOST</code>、<code class="code-inline">NODE_ENV</code>）与机密回退值；
+            只有启动期固定或无法安全热更新的少量字段会提示「需重启」。
+          </p>
+          <p>
+            页面顶部提供 <strong>「🔄 重启容器」</strong> 按钮：确认后调用
+            <code class="code-inline">POST /api/admin/system/restart</code>（202），后台优雅退出后由 Docker
+            <code class="code-inline">restart: unless-stopped</code> 自动拉起（通常 5-15 秒不可用）；
+            前端轮询 <code class="code-inline">/health</code>，恢复后自动刷新页面。
+            仅生产容器环境可用；测试/非容器环境返回 <strong>409</strong>，需手动重启服务。
+          </p>
+
+          <h3 class="doc-subheading">1. 可后台修改的分组与字段</h3>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">分组</th>
+                  <th scope="col">字段</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>推送 / 限流（push）</td><td><code class="code-inline">rateLimitMax</code>、<code class="code-inline">rateLimitWindowMs</code>、<code class="code-inline">maxAttempts</code>、<code class="code-inline">retryDelaysMs</code>、<code class="code-inline">apiRateLimitPerMinute</code>、<code class="code-inline">maxTextLength</code>、<code class="code-inline">tickMs</code></td></tr>
+                <tr><td>会话保活（keepalive）</td><td><code class="code-inline">enabled</code>、<code class="code-inline">windowMs</code>、<code class="code-inline">leadMs</code>、<code class="code-inline">tickMs</code>、<code class="code-inline">text</code>、<code class="code-inline">maxPerTick</code></td></tr>
+                <tr><td>接口应用（appRules）</td><td><code class="code-inline">enabled</code>、<code class="code-inline">timeoutMs</code>、<code class="code-inline">maxResponseBytes</code>、<code class="code-inline">workerConcurrency</code>、<code class="code-inline">allowedHosts</code>、<code class="code-inline">maxQueue</code></td></tr>
+                <tr><td>定时通知（scheduler）</td><td><code class="code-inline">enabled</code>、<code class="code-inline">tickMs</code>、<code class="code-inline">timezone</code>、<code class="code-inline">maxRecipients</code>、<code class="code-inline">timeoutMs</code></td></tr>
+                <tr><td>媒体（media）</td><td><code class="code-inline">maxBytes</code>、<code class="code-inline">inboundMaxBytes</code>、<code class="code-inline">downloadTimeoutMs</code>、<code class="code-inline">uploadTimeoutMs</code>、<code class="code-inline">allowedImageMime</code>、<code class="code-inline">allowedVideoMime</code></td></tr>
+                <tr><td>绑定（binding）</td><td><code class="code-inline">ttlMs</code>、<code class="code-inline">maxRefreshes</code>、<code class="code-inline">maxActive</code>、<code class="code-inline">ipLimitPerHour</code>、<code class="code-inline">verifyTimeoutMs</code>、<code class="code-inline">networkErrorLimit</code>、<code class="code-inline">pollGapMs</code></td></tr>
+                <tr><td>服务端（server）</td><td><code class="code-inline">publicBaseUrl</code>、<code class="code-inline">trustProxy</code>、<code class="code-inline">cookieSecure</code>、<code class="code-inline">logLevel</code>（enum：debug/info/warn/error/silent）</td></tr>
+                <tr><td>会话与安全（security）</td><td><code class="code-inline">sessionTtlMs</code>、<code class="code-inline">pushApiEnabled</code></td></tr>
+                <tr><td>微信接口（ilink）</td><td><code class="code-inline">loginBaseUrl</code>、<code class="code-inline">defaultBaseUrl</code>、<code class="code-inline">cdnBaseUrl</code>、<code class="code-inline">appId</code>、<code class="code-inline">channelVersion</code>、<code class="code-inline">botAgent</code>、<code class="code-inline">botType</code>、<code class="code-inline">routeTag</code>、<code class="code-inline">clientVersion</code>、<code class="code-inline">requestTimeoutMs</code>、<code class="code-inline">qrPollTimeoutMs</code>、<code class="code-inline">longPollTimeoutMs</code></td></tr>
+                <tr><td>入站监控（monitor）</td><td><code class="code-inline">longPollTimeoutMs</code>、<code class="code-inline">maxAccounts</code></td></tr>
+                <tr><td>管理密码 / API Token</td><td>「安全」卡片：管理密码修改/恢复、API Token 重新生成/恢复、推送 API 开关；密码哈希与 Token 明文永不在页面回显</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            <code class="code-inline">allowedHosts</code> 支持数组或逗号/换行分隔字符串，
+            空数组表示清空白名单（恢复默认拒绝私网/本机）；<code class="code-inline">retryDelaysMs</code> 为逗号分隔的毫秒值。
+            字段会显示默认值（.env）、min/max 范围、「已修改」标记与「需重启」标记。
+          </p>
+
+          <h3 class="doc-subheading">2. 管理端接口（Cookie + CSRF）</h3>
+          <div class="endpoint-line">
+            <span class="method method-get">GET</span>
+            <code class="endpoint-path">/api/admin/settings</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-patch">PATCH</span>
+            <code class="endpoint-path">/api/admin/settings</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/settings/reset</code>
+          </div>
+          <p>
+            <code class="code-inline">GET</code> 返回
+            <code class="code-inline">{ groups:[{key,label,fields:[{key,label,type,value,default,min,max,restartRequired,description}]}], envOnly:[...] }</code>；
+            <code class="code-inline">PATCH</code> 只提交修改过的字段（按分组嵌套），返回
+            <code class="code-inline">{ ok:true, groups:[...], restartRequired:[...] }</code>；
+            <code class="code-inline">reset</code> 恢复某分组为环境变量默认值。
+            校验失败 400（未知分组/字段、类型/范围/时区错误）；未登录 401、缺 CSRF 403。
+          </p>
+          <div class="code-block"><pre><code># 修改接口应用内网白名单 + 保活文本
+curl -X PATCH http://localhost:10380/api/admin/settings \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"appRules":{"allowedHosts":["192.168.88.10"]},
+       "keepalive":{"text":"【保活】回复任意内容继续接收通知"}}'
+
+# 恢复「接口应用」分组默认值
+curl -X POST http://localhost:10380/api/admin/settings/reset \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"group":"appRules"}'</code></pre></div>
+
+          <h3 class="doc-subheading">3. 安全卡片（管理密码 / API Token）</h3>
+          <p>
+            <code class="code-inline">GET /api/admin/settings</code> 额外返回
+            <code class="code-inline">security</code>：
+            <code class="code-inline">{ adminPasswordSource:'db', apiTokenSource:'db',
+            apiTokenPreview, pushApiEnabled, sessionTtlMs }</code>。
+            管理密码与 API Token <strong>仅保存在数据库</strong>（密码 scrypt 哈希 / Token AES 加密），
+            首次启动自动生成并写入 <code class="code-inline">data/admin-password.txt</code>、
+            <code class="code-inline">data/api-token.txt</code>；<strong>不再读取/回退
+            .env 的 ADMIN_PASSWORD、API_TOKEN</strong>，也不再兼容旧版自动生成文件回退。
+            <strong>永不返回密码哈希或 Token 明文</strong>；`security.pushApiEnabled` 通过 PATCH settings 修改（即时生效）。
+          </p>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/security/password</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/security/password/reset</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/security/api-token/rotate</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/security/api-token/reset</code>
+          </div>
+          <div class="code-block"><pre><code># 修改管理密码（newPassword 8..128）
+curl -X POST http://localhost:10380/api/admin/security/password \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" \
+  -d '{"currentPassword":"old-pass","newPassword":"new-pass-123"}'
+
+# 重置为随机密码（需当前密码；明文仅在本次响应返回并写入 data/admin-password.txt）
+curl -X POST http://localhost:10380/api/admin/security/password/reset \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" \
+  -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{"currentPassword":"new-pass-123"}'
+# → { "ok":true, "password":"…随机明文，仅本次…", "source":"db" }
+
+# 重新生成 API Token（明文仅返回一次 + preview，旧 Token 立即失效）
+curl -X POST http://localhost:10380/api/admin/security/api-token/rotate \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
+
+# 重置 Token（生成新 Token，明文仅本次返回并写入 data/api-token.txt）
+curl -X POST http://localhost:10380/api/admin/security/api-token/reset \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"</code></pre></div>
+          <p>
+            后台「安全」卡片：管理密码（当前/新/确认 + 修改、重置为随机密码）、API Token（预览 + 来源「数据库」、
+            重新生成/重置后弹窗一次性显示新值并支持复制）、推送 API 开关。
+            密码/Token 只存数据库（scrypt/AES），首次启动自动生成并写入 data/ 文件；
+            修改密码不会强制下线已登录会话（会话到期后需使用新密码登录）；新密码/新 Token 明文只显示一次。
+          </p>
+
+          <h3 class="doc-subheading">4. 只读环境变量（envOnly）</h3>
+          <p>
+            仍必须由 <code class="code-inline">.env</code> 管理的最终名单（后台只读展示、脱敏/路径，不能修改）：
+            <code class="code-inline">APP_SECRET</code>（加密主密钥）、<code class="code-inline">DATA_DIR</code>、
+            <code class="code-inline">MEDIA_DIR</code>、<code class="code-inline">PORT</code>、
+            <code class="code-inline">HOST</code>、<code class="code-inline">NODE_ENV</code>。
+            其余参数均在后台「运行配置」可改并持久化到数据库；
+            <code class="code-inline">ADMIN_PASSWORD</code> / <code class="code-inline">API_TOKEN</code>
+            已迁移到数据库管理（首次启动自动生成并写入 data/ 文件），
+            <strong>不再读取这两个环境变量</strong>。
+          </p>
+          <p class="doc-note">
+            后台「运行配置」页按分组展示可编辑表单：number 输入、boolean 开关、text/textarea 文本、
+            <code class="code-inline">allowedHosts</code> 文本域（逗号/换行分隔）；「保存修改」只提交变化字段，
+            成功 toast 会包含需重启提示；每组「恢复默认」可清除该分组的后台覆盖。
+            未修改的字段使用环境变量默认值；DB 覆盖优先于 <code class="code-inline">.env</code>。
+          </p>
+        </section>
+
+        <!-- 错误码 -->
+        <section id="error-codes" class="doc-section">
+          <h2 class="doc-heading">错误码</h2>
+          <p>HTTP 状态码与业务错误码一一对应，响应体形如 <code class="code-inline">{ "error": { "code": "…", "message": "…" } }</code>：</p>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">HTTP</th>
+                  <th scope="col">code</th>
+                  <th scope="col">含义</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>400</td><td><code class="code-inline">BAD_REQUEST</code></td><td>参数错误（如文本为空或超长、配对码格式错误）</td></tr>
+                <tr><td>401</td><td><code class="code-inline">UNAUTHORIZED</code></td><td>未登录、Cookie 过期或 API Key 错误</td></tr>
+                <tr><td>403</td><td><code class="code-inline">FORBIDDEN</code></td><td>无权限执行该操作（如缺少 CSRF 请求头）</td></tr>
+                <tr><td>404</td><td><code class="code-inline">NOT_FOUND</code></td><td>资源不存在；推送 API 会同时返回 <code class="code-inline">unknownUserIds</code></td></tr>
+                <tr><td>409</td><td><code class="code-inline">CONFLICT</code></td><td>状态冲突（用户未绑定、冷却中，或绑定会话状态不允许提交配对码）</td></tr>
+                <tr><td>429</td><td><code class="code-inline">RATE_LIMITED</code></td><td>触发限流（绑定创建 / 登录 / 推送 API / 账号发送）</td></tr>
+                <tr><td>500</td><td><code class="code-inline">INTERNAL</code></td><td>服务器内部错误</td></tr>
+                <tr><td>503</td><td><code class="code-inline">UNAVAILABLE</code></td><td>依赖服务不可用（如无法连接微信 API，创建绑定会话时 code 为 <code class="code-inline">SERVICE_UNAVAILABLE</code>）</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 环境变量 -->
+        <section id="env-vars" class="doc-section">
+          <h2 class="doc-heading">环境变量摘要</h2>
+          <p>Docker 部署时通过环境变量（或 <code class="code-inline">.env</code> 文件）配置，完整列表见部署说明：</p>
+          <div class="table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">变量</th>
+                  <th scope="col">默认值</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="code-inline">PORT</code> / <code class="code-inline">HOST</code></td><td><code class="code-inline">3000</code> / <code class="code-inline">0.0.0.0</code></td><td>HTTP 监听端口与地址</td></tr>
+                <tr><td><code class="code-inline">DATA_DIR</code></td><td><code class="code-inline">&lt;repo&gt;/data</code>（Docker <code class="code-inline">/app/data</code>）</td><td>SQLite 数据库与密钥目录</td></tr>
+                <tr><td><code class="code-inline">APP_SECRET</code></td><td>自动生成 <code class="code-inline">data/app-secret.key</code></td><td>加密主密钥（AES-256-GCM）</td></tr>
+                <tr><td><code class="code-inline">ADMIN_PASSWORD</code></td><td>不使用（数据库管理）</td><td>管理后台登录密码由数据库保存（首启自动生成并写 data/admin-password.txt），不再读取该环境变量</td></tr>
+                <tr><td><code class="code-inline">API_TOKEN</code></td><td>不使用（数据库管理）</td><td>推送 API Key 由数据库保存（首启自动生成并写 data/api-token.txt），不再读取该环境变量</td></tr>
+                <tr><td><code class="code-inline">PUBLIC_BASE_URL</code></td><td>空</td><td>公网访问地址（展示/文档用）</td></tr>
+                <tr><td><code class="code-inline">TRUST_PROXY</code> / <code class="code-inline">COOKIE_SECURE</code></td><td><code class="code-inline">false</code></td><td>反向代理场景 / 强制 Secure Cookie</td></tr>
+                <tr><td><code class="code-inline">LOG_LEVEL</code></td><td><code class="code-inline">info</code>（生产）/ <code class="code-inline">debug</code>（开发）</td><td>日志级别</td></tr>
+                <tr><td><code class="code-inline">ILINK_LOGIN_BASE_URL</code> / <code class="code-inline">ILINK_BASE_URL</code></td><td><code class="code-inline">https://ilinkai.weixin.qq.com</code></td><td>微信 ClawBot API 基址（演示/测试可指向 mock）</td></tr>
+                <tr><td><code class="code-inline">ILINK_APP_ID</code> / <code class="code-inline">ILINK_CLIENT_VERSION</code> / <code class="code-inline">CHANNEL_VERSION</code> / <code class="code-inline">BOT_AGENT</code> / <code class="code-inline">ILINK_BOT_TYPE</code></td><td><code class="code-inline">bot</code> / <code class="code-inline">132106</code> / <code class="code-inline">2.4.10</code> / <code class="code-inline">OpenClaw</code> / <code class="code-inline">3</code></td><td>协议常量覆盖</td></tr>
+                <tr><td><code class="code-inline">BINDING_TTL_MS</code> / <code class="code-inline">BINDING_MAX_REFRESHES</code> / <code class="code-inline">BINDING_MAX_ACTIVE</code> / <code class="code-inline">BINDING_IP_LIMIT_PER_HOUR</code></td><td><code class="code-inline">600000</code> / <code class="code-inline">3</code> / <code class="code-inline">50</code> / <code class="code-inline">20</code></td><td>绑定会话有效期 / 二维码刷新次数 / 并发会话上限 / 单 IP 每小时创建次数</td></tr>
+                <tr><td><code class="code-inline">RATE_LIMIT_MAX</code> / <code class="code-inline">RATE_LIMIT_WINDOW_MS</code></td><td><code class="code-inline">7</code> / <code class="code-inline">300000</code></td><td>每个微信账号的发送限流（条 / 窗口毫秒）</td></tr>
+                <tr><td><code class="code-inline">PUSH_MAX_ATTEMPTS</code> / <code class="code-inline">MAX_TEXT_LENGTH</code> / <code class="code-inline">API_RATE_LIMIT_PER_MINUTE</code></td><td><code class="code-inline">5</code> / <code class="code-inline">4000</code> / <code class="code-inline">60</code></td><td>投递重试次数 / 文本上限 / API Key 每分钟限流</td></tr>
+                <tr><td><code class="code-inline">MONITOR_MAX_ACCOUNTS</code> / <code class="code-inline">MONITOR_LONGPOLL_TIMEOUT_MS</code></td><td><code class="code-inline">200</code> / <code class="code-inline">35000</code></td><td>入站监控账号上限 / 长轮询超时</td></tr>
+                <tr><td><code class="code-inline">ADMIN_SESSION_TTL_MS</code></td><td><code class="code-inline">43200000</code></td><td>管理后台会话时长（12 小时）</td></tr>
+                <tr><td><code class="code-inline">MEDIA_MAX_BYTES</code></td><td><code class="code-inline">26214400</code></td><td>出站（上传/发送）单文件上限，默认 25MB</td></tr>
+                <tr><td><code class="code-inline">INBOUND_MEDIA_MAX_BYTES</code></td><td><code class="code-inline">104857600</code></td><td>入站媒体下载上限，默认 100MB</td></tr>
+                <tr><td><code class="code-inline">MEDIA_DIR</code></td><td><code class="code-inline">{DATA_DIR}/media</code></td><td>媒体文件目录（随命名卷持久化）</td></tr>
+                <tr><td><code class="code-inline">ILINK_CDN_BASE_URL</code></td><td><code class="code-inline">https://novac2c.cdn.weixin.qq.com/c2c</code></td><td>微信 CDN 基址（演示/测试可指向 mock）</td></tr>
+                <tr><td><code class="code-inline">MEDIA_UPLOAD_TIMEOUT_MS</code> / <code class="code-inline">MEDIA_DOWNLOAD_TIMEOUT_MS</code></td><td><code class="code-inline">60000</code></td><td>出站上传 / 入站下载超时（毫秒）</td></tr>
+                <tr><td><code class="code-inline">MEDIA_ALLOWED_IMAGE_MIME</code> / <code class="code-inline">MEDIA_ALLOWED_VIDEO_MIME</code></td><td>常见 image/video MIME</td><td>逗号分隔的图片/视频 MIME 白名单（未命中按普通文件发送）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_ENABLED</code></td><td><code class="code-inline">true</code></td><td>保活全局调度开关（false=完全不扫描）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_WINDOW_MS</code></td><td><code class="code-inline">86400000</code></td><td>会话窗口长度（24 小时）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_LEAD_MS</code></td><td><code class="code-inline">3600000</code></td><td>提前触发量（最后入站满 window-lead 时触发，默认提前 1 小时）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_TICK_MS</code></td><td><code class="code-inline">300000</code></td><td>扫描间隔（默认 5 分钟）</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_TEXT</code></td><td><code class="code-inline">【消息通道保活】回复任意内容即可继续接收通知。</code></td><td>保活文本模板，支持 <code class="code-inline">{name}</code> 占位</td></tr>
+                <tr><td><code class="code-inline">KEEPALIVE_MAX_PER_TICK</code></td><td><code class="code-inline">100</code></td><td>单次扫描最多处理的用户数（防御上限）</td></tr>
+                <tr><td><code class="code-inline">APP_RULES_ENABLED</code></td><td><code class="code-inline">true</code></td><td>接口应用规则引擎全局开关（false=不触发，后台仍可管理规则）</td></tr>
+                <tr><td><code class="code-inline">APP_RULE_TIMEOUT_MS</code></td><td><code class="code-inline">8000</code></td><td>单次外部接口超时上限（规则可配更小值）</td></tr>
+                <tr><td><code class="code-inline">APP_RULE_MAX_RESPONSE_BYTES</code></td><td><code class="code-inline">1048576</code></td><td>外部接口响应体大小上限（超过判失败）</td></tr>
+                <tr><td><code class="code-inline">APP_RULES_WORKER_CONCURRENCY</code></td><td><code class="code-inline">2</code></td><td>规则执行并发数</td></tr>
+                <tr><td><code class="code-inline">APP_RULES_ALLOWED_HOSTS</code></td><td>空</td><td>允许访问内网/本机的主机白名单（逗号分隔；为空时只允许公网地址）</td></tr>
+                <tr><td><code class="code-inline">APP_RULE_MAX_QUEUE</code></td><td><code class="code-inline">200</code></td><td>规则执行内存队列上限（超出丢弃并记日志）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_ENABLED</code></td><td><code class="code-inline">true</code></td><td>定时通知调度器全局开关（false=不自动触发，后台仍可管理/手动执行）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_TICK_MS</code></td><td><code class="code-inline">15000</code></td><td>调度器扫描间隔（毫秒）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_TIMEZONE</code></td><td><code class="code-inline">Asia/Shanghai</code></td><td>每日定时任务的时区（IANA）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_MAX_RECIPIENTS</code></td><td><code class="code-inline">200</code></td><td>单个任务单次最多收件人数（超出按用户 id 稳定排序截断）</td></tr>
+                <tr><td><code class="code-inline">SCHEDULER_TIMEOUT_MS</code></td><td><code class="code-inline">8000</code></td><td>定时任务外部请求超时上限（任务可配更小值）</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 安全说明 -->
+        <section id="security" class="doc-section">
+          <h2 class="doc-heading">安全说明</h2>
+          <ul class="doc-list">
+            <li>微信 <code class="code-inline">bot_token</code> / <code class="code-inline">context_token</code> 均以 AES-256-GCM 加密落库，任何接口与日志都不会返回明文。</li>
+            <li>绑定会话的 <code class="code-inline">token</code> 只在创建时返回一次，服务端仅保存其哈希。</li>
+            <li>管理后台 Cookie 为 HttpOnly + SameSite=Lax；写接口强制校验 <code class="code-inline">X-Requested-With: ClawBridge-Admin</code>。</li>
+            <li>绑定页公开但按 IP 限流；登录失败也会按 IP 限流。</li>
+            <li>响应头包含严格的 CSP、<code class="code-inline">X-Frame-Options: DENY</code>、<code class="code-inline">X-Content-Type-Options: nosniff</code> 与 <code class="code-inline">Referrer-Policy: no-referrer</code>。</li>
+          </ul>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <button id="back-to-top" class="back-to-top" type="button" aria-label="返回顶部" hidden>↑</button>
+
+  <footer class="site-footer">
+    <p class="footer-line">
+      <span class="footer-brand">ClawBridge</span>
+      <span class="footer-sep">·</span>
+      <span>HTTP API 文档</span>
+    </p>
+    <p class="footer-links">
+      <a class="footer-link" href="/">公开绑定页</a>
+      <a class="footer-link" href="/bind">扫码绑定</a>
+      <a class="footer-link" href="/admin">管理后台</a>
+    </p>
+  </footer>
+
+  <script type="module" src="/assets/docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# dependencies & build
+node_modules/
+npm-debug.log*
+
+# runtime data (SQLite, secrets, generated admin password)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# local env & test artifacts
+.env
+.env.local
+coverage/
+test-results/
+mock/.tmp-*.log
+mock/.curl-live.log
+*.log
+*.tgz
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

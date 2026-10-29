@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="ClawBridge 管理后台：查看运行状态、管理绑定用户、发送消息与广播、查阅消息记录。">
+  <meta name="theme-color" content="#07C160">
+  <meta name="robots" content="noindex, nofollow">
+  <title>ClawBridge · 管理后台</title>
+  <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMwN0MxNjAiLz48cGF0aCBkPSJNMjIgMTZoMjBhMTAgMTAgMCAwIDEgMTAgMTB2OGExMCAxMCAwIDAgMS0xMCAxMEgzNGwtOSA4di04aC0zYTEwIDEwIDAgMCAxLTEwLTEwdi04YTEwIDEwIDAgMCAxIDEwLTEweiIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjI3IiBjeT0iMzAiIHI9IjMiIGZpbGw9IiMwN0MxNjAiLz48Y2lyY2xlIGN4PSIzOCIgY3k9IjMwIiByPSIzIiBmaWxsPSIjMDdDMTYwIi8+PC9zdmc+">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="page-admin">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <div class="admin-shell">
+    <!-- 左侧菜单 -->
+    <aside id="admin-sidebar" class="admin-sidebar" aria-label="后台菜单" hidden>
+      <div class="sidebar-brand">
+        <a class="brand" href="/" aria-label="ClawBridge 首页">
+          <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <rect width="64" height="64" rx="14" fill="#07C160"></rect>
+            <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
+            <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
+            <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
+          </svg>
+          <span class="brand-name">ClawBridge</span>
+        </a>
+        <span class="brand-tag">管理后台</span>
+      </div>
+
+      <nav id="admin-menu" class="admin-menu" aria-label="后台视图">
+        <a class="menu-item" data-view="overview" href="#/overview">
+          <span class="menu-icon" aria-hidden="true">📊</span><span class="menu-label">概览</span>
+        </a>
+        <a class="menu-item" data-view="users" href="#/users">
+          <span class="menu-icon" aria-hidden="true">👥</span><span class="menu-label">用户管理</span>
+        </a>
+        <a class="menu-item" data-view="groups" href="#/groups">
+          <span class="menu-icon" aria-hidden="true">🏷️</span><span class="menu-label">用户分组</span>
+        </a>
+        <a class="menu-item" data-view="messages" href="#/messages">
+          <span class="menu-icon" aria-hidden="true">💬</span><span class="menu-label">消息记录</span>
+        </a>
+        <a class="menu-item" data-view="broadcast" href="#/broadcast">
+          <span class="menu-icon" aria-hidden="true">📢</span><span class="menu-label">广播消息</span>
+        </a>
+        <a class="menu-item" data-view="app-rules" href="#/app-rules">
+          <span class="menu-icon" aria-hidden="true">🔌</span><span class="menu-label">接口应用</span>
+        </a>
+        <a class="menu-item" data-view="config" href="#/config">
+          <span class="menu-icon" aria-hidden="true">⚙️</span><span class="menu-label">运行配置</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <a class="sidebar-link" href="/docs"><span aria-hidden="true">📖</span> API 文档</a>
+        <a class="sidebar-link" href="/"><span aria-hidden="true">🌐</span> 公开绑定页</a>
+        <span id="sidebar-version" class="sidebar-version">v—</span>
+      </div>
+    </aside>
+    <div id="sidebar-overlay" class="sidebar-overlay" hidden></div>
+
+    <div class="admin-main">
+      <!-- 顶部栏 -->
+      <header id="admin-topbar-bar" class="admin-topbar-bar" hidden>
+        <button
+          id="btn-sidebar-toggle"
+          class="admin-menu-toggle"
+          type="button"
+          aria-label="打开菜单"
+          aria-controls="admin-sidebar"
+          aria-expanded="false"
+        >☰</button>
+        <div class="admin-topbar-title">
+          <h1 id="view-title" class="page-title">概览</h1>
+          <p class="page-subtitle">用户绑定、消息推送与运行状态管理<span id="overview-updated" class="updated-at"></span></p>
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-refresh" class="btn btn-secondary btn-sm" type="button">🔄 刷新</button>
+          <button id="btn-logout" class="btn btn-ghost btn-sm" type="button">退出登录</button>
+        </div>
+      </header>
+
+      <main id="main" class="admin-content">
+        <!-- 登录状态检测中 -->
+        <section id="admin-loading" class="loading-view" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <p class="loading-text">正在验证登录状态…</p>
+        </section>
+
+        <!-- 登录视图 -->
+        <section id="login-view" class="login-view" hidden aria-labelledby="login-title">
+          <div class="card login-card">
+            <div class="login-icon" aria-hidden="true">🔐</div>
+            <h1 id="login-title" class="login-title">管理员登录</h1>
+            <p class="card-subtitle">登录后可管理用户、发送消息并查看运行状态。</p>
+            <form id="login-form" class="form" novalidate>
+              <div class="form-field">
+                <label class="form-label" for="login-password">管理密码</label>
+                <input
+                  id="login-password"
+                  class="input"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="请输入管理密码"
+                  required
+                >
+              </div>
+              <button id="login-submit" class="btn btn-primary btn-block" type="submit">登录</button>
+              <p id="login-error" class="inline-error" role="alert" hidden></p>
+            </form>
+            <p class="form-hint login-hint">
+              密码由后台管理（首次启动自动生成并写入数据目录的
+              <code class="code-inline">admin-password.txt</code>）；可登录后在「运行配置 → 安全」修改或重置。
+            </p>
+          </div>
+        </section>
+
+        <!-- 后台主视图（按菜单切换，其余视图 hidden 保留 DOM） -->
+        <section id="dashboard" hidden>
+          <!-- 概览 -->
+          <section id="overview-section" class="view-section" data-view="overview" aria-labelledby="overview-title">
+            <div class="view-head">
+              <h2 id="overview-title" class="view-title">概览</h2>
+            </div>
+            <div id="overview-stats" class="stats-grid"></div>
+            <div class="card">
+              <h3 class="card-title">服务状态</h3>
+              <div id="overview-server" class="kv-grid"></div>
+            </div>
+          </section>
+
+          <!-- 用户管理 -->
+          <section id="users-section" class="view-section" data-view="users" aria-labelledby="users-title">
+            <div class="view-head">
+              <h2 id="users-title" class="view-title">用户管理</h2>
+              <span id="users-total" class="section-meta">共 0 位用户</span>
+            </div>
+            <div class="toolbar">
+              <input
+                id="user-search"
+                class="input toolbar-search"
+                type="search"
+                autocomplete="off"
+                placeholder="搜索昵称 / 用户 ID / 微信 ID"
+                aria-label="搜索用户"
+              >
+              <select id="user-status-filter" class="select" aria-label="按状态筛选">
+                <option value="all">全部状态</option>
+                <option value="active">活跃</option>
+                <option value="paused">暂停中</option>
+                <option value="unbound">已解绑</option>
+              </select>
+              <select id="user-group-filter" class="select" aria-label="按分组筛选">
+                <option value="">全部分组</option>
+                <option value="__ungrouped__">未分组</option>
+              </select>
+            </div>
+            <div class="table-wrap card card-flush">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">用户</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">绑定时间</th>
+                    <th scope="col">最近入站</th>
+                    <th scope="col">最近出站</th>
+                    <th scope="col">队列/成功/失败</th>
+                    <th scope="col">保活</th>
+                    <th scope="col" class="col-actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="user-table-body"></tbody>
+              </table>
+            </div>
+            <div id="users-pagination" class="pagination">
+              <button id="users-prev" class="btn btn-secondary btn-sm" type="button">上一页</button>
+              <span id="users-page-info" class="pagination-info">第 1 / 1 页</span>
+              <button id="users-next" class="btn btn-secondary btn-sm" type="button">下一页</button>
+            </div>
+          </section>
+
+          <!-- 用户分组 -->
+          <section id="groups-section" class="view-section" data-view="groups" aria-labelledby="groups-title">
+            <div class="view-head">
+              <h2 id="groups-title" class="view-title">用户分组</h2>
+              <div class="section-head-actions">
+                <span id="groups-total" class="section-meta">共 0 个分组</span>
+                <button id="btn-create-group" class="btn btn-primary btn-sm" type="button">＋ 新建分组</button>
+              </div>
+            </div>
+            <p class="section-desc">
+              分组为多对多标签：一个用户可属于多个分组。分组可用于筛选用户、按分组群发消息，不会影响用户本身。
+            </p>
+            <div class="table-wrap card card-flush">
+              <table class="data-table data-table-groups">
+                <thead>
+                  <tr>
+                    <th scope="col">分组</th>
+                    <th scope="col">描述</th>
+                    <th scope="col">用户数（活跃/总数）</th>
+                    <th scope="col">保活</th>
+                    <th scope="col" class="col-actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="group-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- 消息记录 -->
+          <section id="messages-section" class="view-section" data-view="messages" aria-labelledby="messages-title">
+            <div class="view-head">
+              <h2 id="messages-title" class="view-title">消息记录</h2>
+              <span id="messages-total" class="section-meta">共 0 条</span>
+            </div>
+            <div id="messages-tabs" class="tab-bar" role="tablist" aria-label="消息方向">
+              <button class="tab-btn is-active" type="button" role="tab" aria-selected="true" data-direction="inbound">入站消息</button>
+              <button class="tab-btn" type="button" role="tab" aria-selected="false" data-direction="outbound">出站消息</button>
+            </div>
+            <div class="toolbar toolbar-slim">
+              <select id="messages-group-filter" class="select" aria-label="按分组筛选消息">
+                <option value="">全部分组</option>
+              </select>
+            </div>
+            <div class="table-wrap card card-flush">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">时间</th>
+                    <th scope="col">方向</th>
+                    <th scope="col">用户</th>
+                    <th scope="col">内容</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">错误</th>
+                  </tr>
+                </thead>
+                <tbody id="messages-table-body"></tbody>
+              </table>
+            </div>
+            <div id="messages-pagination" class="pagination">
+              <button id="messages-prev" class="btn btn-secondary btn-sm" type="button">上一页</button>
+              <span id="messages-page-info" class="pagination-info">第 1 / 1 页</span>
+              <button id="messages-next" class="btn btn-secondary btn-sm" type="button">下一页</button>
+            </div>
+          </section>
+
+          <!-- 广播 -->
+          <section id="broadcast-section" class="view-section" data-view="broadcast" aria-labelledby="broadcast-title">
+            <div class="view-head">
+              <h2 id="broadcast-title" class="view-title">广播消息</h2>
+              <span class="section-meta">向所有可推送用户发送</span>
+            </div>
+            <div class="card">
+              <form id="broadcast-form" class="form" novalidate>
+                <div class="form-field">
+                  <label class="form-label" for="broadcast-text">广播内容</label>
+                  <textarea
+                    id="broadcast-text"
+                    class="textarea"
+                    rows="4"
+                    maxlength="4000"
+                    placeholder="输入要发送给所有已绑定用户的文本…"
+                  ></textarea>
+                </div>
+                <div class="form-row-between">
+                  <p class="form-hint">消息只会入队，由服务端按限流逐条投递。</p>
+                  <span id="broadcast-count" class="char-count">0 / 4000</span>
+                </div>
+                <div class="form-actions">
+                  <button id="btn-broadcast" class="btn btn-primary" type="submit">发送广播</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <!-- 接口应用 -->
+          <section id="app-rules-section" class="view-section" data-view="app-rules" aria-labelledby="app-rules-title">
+            <div class="view-head">
+              <h2 id="app-rules-title" class="view-title">接口应用</h2>
+              <div id="app-rules-head-actions" class="section-head-actions">
+                <span id="app-rules-total" class="section-meta">共 0 条规则</span>
+                <button id="btn-create-rule" class="btn btn-primary btn-sm" type="button">＋ 新建规则</button>
+              </div>
+              <div id="schedule-head-actions" class="section-head-actions" hidden>
+                <span id="schedule-total" class="section-meta">共 0 个任务</span>
+                <button id="btn-create-schedule" class="btn btn-primary btn-sm" type="button">＋ 新建任务</button>
+              </div>
+            </div>
+            <p class="section-desc">
+              当指定用户 / 分组发来包含关键词的微信消息时，调用外部 HTTP 接口并把解析结果回复给用户。
+              规则默认不启用；同一消息最多命中一条规则，受冷却与每小时限额约束。
+              定时通知则无需用户先发消息，按时间计划主动调用接口并推送结果。
+            </p>
+            <div id="rule-tabs" class="tab-bar" role="tablist" aria-label="接口应用视图">
+              <button class="tab-btn is-active" type="button" role="tab" aria-selected="true" data-rule-tab="rules">规则列表</button>
+              <button class="tab-btn" type="button" role="tab" aria-selected="false" data-rule-tab="logs">运行日志</button>
+              <button class="tab-btn" type="button" role="tab" aria-selected="false" data-rule-tab="schedule">定时通知</button>
+            </div>
+
+            <div id="rule-rules-panel" class="rule-panel">
+              <div class="toolbar toolbar-slim">
+                <select id="rule-status-filter" class="select" aria-label="按启用状态筛选">
+                  <option value="all">全部规则</option>
+                  <option value="enabled">已启用</option>
+                  <option value="disabled">已禁用</option>
+                </select>
+              </div>
+              <div class="table-wrap card card-flush">
+                <table class="data-table data-table-rules">
+                  <thead>
+                    <tr>
+                      <th scope="col">启用</th>
+                      <th scope="col">规则</th>
+                      <th scope="col">触发范围</th>
+                      <th scope="col">请求</th>
+                      <th scope="col">最近运行</th>
+                      <th scope="col">24h 成功/失败/跳过</th>
+                      <th scope="col" class="col-actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="app-rule-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div id="rule-logs-panel" class="rule-panel" hidden>
+              <div class="toolbar toolbar-slim">
+                <select id="rule-log-rule-filter" class="select" aria-label="按规则筛选日志">
+                  <option value="">全部规则</option>
+                </select>
+                <select id="rule-log-status-filter" class="select" aria-label="按状态筛选日志">
+                  <option value="">全部状态</option>
+                  <option value="success">成功</option>
+                  <option value="failed">失败</option>
+                  <option value="skipped">跳过</option>
+                  <option value="matched">命中</option>
+                </select>
+                <span class="form-hint">展示最近运行记录，按时间倒序。</span>
+              </div>
+              <div class="table-wrap card card-flush">
+                <table class="data-table data-table-logs">
+                  <thead>
+                    <tr>
+                      <th scope="col">时间</th>
+                      <th scope="col">规则</th>
+                      <th scope="col">用户</th>
+                      <th scope="col">状态</th>
+                      <th scope="col">HTTP</th>
+                      <th scope="col">耗时</th>
+                      <th scope="col">错误</th>
+                      <th scope="col">参数预览</th>
+                      <th scope="col">响应预览</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rule-log-table-body"></tbody>
+                </table>
+              </div>
+              <div id="rule-log-pagination" class="pagination">
+                <button id="rule-log-prev" class="btn btn-secondary btn-sm" type="button">上一页</button>
+                <span id="rule-log-page-info" class="pagination-info">第 1 / 1 页</span>
+                <button id="rule-log-next" class="btn btn-secondary btn-sm" type="button">下一页</button>
+              </div>
+            </div>
+
+            <div id="rule-schedule-panel" class="rule-panel" hidden>
+              <p class="form-hint">
+                定时任务按计划主动调用外部接口并把解析结果推送微信（无需用户先发消息）；
+                默认不启用，建议先用「测试运行」验证接口与文案，再启用或「立即执行」。
+              </p>
+              <div class="table-wrap card card-flush">
+                <table class="data-table data-table-schedules">
+                  <thead>
+                    <tr>
+                      <th scope="col">启用</th>
+                      <th scope="col">任务</th>
+                      <th scope="col">计划</th>
+                      <th scope="col">目标</th>
+                      <th scope="col">最近执行</th>
+                      <th scope="col">下次执行</th>
+                      <th scope="col" class="col-actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="schedule-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- 运行配置 -->
+          <section id="config-section" class="view-section" data-view="config" aria-labelledby="config-title">
+            <div class="view-head">
+              <h2 id="config-title" class="view-title">运行配置</h2>
+              <span class="section-meta">保存到数据库，尽量即时生效；带「需重启」的字段需重启容器</span>
+              <div class="section-head-actions">
+                <button id="btn-restart-container" class="btn btn-danger-ghost btn-sm" type="button">🔄 重启容器</button>
+              </div>
+            </div>
+            <p class="section-desc">
+              可后台修改的参数已持久化到数据库（schema v8 <code class="code-inline">app_settings</code>），保存后尽量即时生效；
+              <code class="code-inline">.env</code> 仅保留 6 项启动必须配置
+              （<code class="code-inline">APP_SECRET</code>、<code class="code-inline">DATA_DIR</code>、
+              <code class="code-inline">MEDIA_DIR</code>、<code class="code-inline">PORT</code>、
+              <code class="code-inline">HOST</code>、<code class="code-inline">NODE_ENV</code>），
+              管理密码与 API Token 均由数据库管理（首次启动自动生成并写入 data/ 目录文件）。
+            </p>
+            <div id="settings-error" class="inline-error" role="alert" hidden></div>
+            <div id="settings-unavailable" class="alert alert-warning" hidden></div>
+            <div id="settings-groups" class="settings-groups"></div>
+            <div id="settings-savebar" class="settings-savebar" hidden>
+              <span id="settings-save-status" class="form-hint">尚未修改</span>
+              <button id="btn-settings-save" class="btn btn-primary" type="button">保存修改</button>
+            </div>
+            <p id="settings-restart-note" class="config-note" hidden></p>
+            <div id="security-card" class="card security-card" hidden>
+              <div class="settings-group-head">
+                <div class="settings-group-title">
+                  <h3 class="card-title">安全</h3>
+                  <p class="form-hint">
+                    管理密码与 API Token 仅保存在数据库（密码 scrypt 哈希 / Token AES 加密），
+                    首次启动自动生成并写入 data/ 目录文件；不再读取 .env 的
+                    <code class="code-inline">ADMIN_PASSWORD</code> / <code class="code-inline">API_TOKEN</code>。
+                    密码哈希与 Token 明文永不在页面回显，新值仅在重新生成或重置时显示一次。
+                  </p>
+                </div>
+              </div>
+              <div class="security-grid">
+                <section class="security-section" aria-labelledby="security-token-title">
+                  <h4 id="security-token-title" class="security-section-title">API Token（推送 API）</h4>
+                  <div class="kv-grid">
+                    <div class="kv-item"><span class="kv-label">当前预览</span><span id="security-token-preview" class="kv-value">—</span></div>
+                    <div class="kv-item"><span class="kv-label">来源</span><span id="security-token-source" class="kv-value">—</span></div>
+                  </div>
+                  <label class="check-field security-push-row" for="security-push-toggle">
+                    <button
+                      id="security-push-toggle"
+                      class="settings-switch switch"
+                      type="button"
+                      role="switch"
+                      aria-checked="false"
+                      aria-label="推送 API 开关"
+                    ><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span class="switch-label">未启用</span></button>
+                    <span class="check-field-text">
+                      <strong>启用推送 API</strong>
+                      <span class="form-hint">关闭后 <code class="code-inline">/api/v1/*</code> 推送接口不可用；切换会立即保存到数据库。</span>
+                    </span>
+                  </label>
+                  <div class="security-actions">
+                    <button id="btn-token-rotate" class="btn btn-secondary btn-sm" type="button">重新生成 Token</button>
+                    <button id="btn-token-reset" class="btn btn-ghost btn-sm" type="button">重置 Token</button>
+                  </div>
+                  <p class="form-hint">
+                    重新生成或重置后旧 Token 立即失效；新 Token 只显示一次并写入
+                    <code class="code-inline">data/api-token.txt</code>，请立即复制保存。
+                  </p>
+                </section>
+                <section class="security-section" aria-labelledby="security-password-title">
+                  <h4 id="security-password-title" class="security-section-title">管理密码</h4>
+                  <p class="form-hint">密码来源：<span id="security-password-source" class="security-source">—</span></p>
+                  <div class="password-form">
+                    <div class="form-field">
+                      <label class="form-label" for="security-current-password">当前密码</label>
+                      <input id="security-current-password" class="input" type="password" autocomplete="current-password">
+                    </div>
+                    <div class="form-field">
+                      <label class="form-label" for="security-new-password">新密码（8-128 字符）</label>
+                      <input id="security-new-password" class="input" type="password" autocomplete="new-password">
+                    </div>
+                    <div class="form-field">
+                      <label class="form-label" for="security-confirm-password">确认新密码</label>
+                      <input id="security-confirm-password" class="input" type="password" autocomplete="new-password">
+                    </div>
+                  </div>
+                  <div class="security-actions">
+                    <button id="btn-password-change" class="btn btn-primary btn-sm" type="button">修改密码</button>
+                    <button id="btn-password-reset" class="btn btn-ghost btn-sm" type="button">重置为随机密码</button>
+                  </div>
+                  <p class="form-hint">
+                    修改密码不会强制下线已登录会话（会话到期后需使用新密码登录）；
+                    「重置为随机密码」会生成新的随机密码并写入 <code class="code-inline">data/admin-password.txt</code>。
+                  </p>
+                </section>
+              </div>
+              <div id="security-error" class="inline-error" role="alert" hidden></div>
+            </div>
+            <div class="card settings-readonly-card">
+              <h3 class="card-title">只读配置（.env 启动必须项）</h3>
+              <p class="form-hint">
+                以下 6 项仍由环境变量/启动参数控制，不能在此修改；管理密码与 API Token 已改由数据库管理，
+                不再读取 <code class="code-inline">ADMIN_PASSWORD</code> / <code class="code-inline">API_TOKEN</code>。
+              </p>
+              <div id="settings-env-only" class="kv-grid"></div>
+              <h3 class="card-title">服务与版本</h3>
+              <div id="config-list" class="kv-grid"></div>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="site-footer admin-footer">
+        <p class="footer-line">
+          <span class="footer-brand">ClawBridge</span>
+          <span class="footer-sep">·</span>
+          <span>管理后台 · 当前视图每 5 秒自动刷新（页面隐藏时暂停）</span>
+        </p>
+        <p class="footer-links">
+          <a class="footer-link" href="/">公开绑定页</a>
+          <a class="footer-link" href="/docs">API 文档</a>
+        </p>
+      </footer>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "clawbridge",
+  "version": "1.0.0",
+  "description": "ClawBridge - 多用户微信 ClawBot 扫码绑定与消息推送平台",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev": "node --watch server/src/index.js",
+    "mock": "node mock/ilink-mock.mjs",
+    "test": "node --test --test-reporter=spec \"tests/**/*.test.js\" \"tests/**/*.test.mjs\"",
+    "test:unit": "node --test --test-reporter=spec \"tests/unit/**/*.test.js\" \"tests/unit/**/*.test.mjs\"",
+    "test:e2e": "node --test --test-reporter=spec \"tests/e2e/**/*.test.js\" \"tests/e2e/**/*.test.mjs\"",
+    "docker:build": "docker build -t clawbridge:local .",
+    "docker:up": "docker compose up -d --build",
+    "docker:demo": "docker compose --profile demo up -d --build",
+    "docker:down": "docker compose down"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "qrcode": "^1.5.4"
+  }
+}

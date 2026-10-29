@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="ClawBridge —— 多用户微信 ClawBot 扫码绑定与消息推送平台。扫码绑定微信，即可通过推送 API 接收消息。">
+  <meta name="theme-color" content="#07C160">
+  <title>ClawBridge · 微信 ClawBot 扫码绑定</title>
+  <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMwN0MxNjAiLz48cGF0aCBkPSJNMjIgMTZoMjBhMTAgMTAgMCAwIDEgMTAgMTB2OGExMCAxMCAwIDAgMS0xMCAxMEgzNGwtOSA4di04aC0zYTEwIDEwIDAgMCAxLTEwLTEwdi04YTEwIDEwIDAgMCAxIDEwLTEweiIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjI3IiBjeT0iMzAiIHI9IjMiIGZpbGw9IiMwN0MxNjAiLz48Y2lyY2xlIGN4PSIzOCIgY3k9IjMwIiByPSIzIiBmaWxsPSIjMDdDMTYwIi8+PC9zdmc+">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="page-public">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="brand" href="/" aria-label="ClawBridge 首页">
+        <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <rect width="64" height="64" rx="14" fill="#07C160"></rect>
+          <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
+          <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
+          <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
+        </svg>
+        <span class="brand-name">ClawBridge</span>
+      </a>
+      <nav class="site-nav" aria-label="主导航">
+        <a class="nav-link" href="/">首页</a>
+        <a class="nav-link" href="/bind">扫码绑定</a>
+        <a class="nav-link" href="/docs">API 文档</a>
+        <a class="nav-link nav-link-strong" href="/admin">管理后台</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+    <section class="hero" aria-labelledby="hero-title">
+      <span class="hero-badge">微信 ClawBot · 消息通道</span>
+      <h1 id="hero-title" class="hero-title">扫码绑定微信<br class="br-mobile">接收 ClawBridge 消息</h1>
+      <p class="hero-subtitle">
+        ClawBridge 是一个多用户微信 ClawBot 消息推送平台。使用手机微信扫码并确认绑定后，
+        你就能通过 ClawBridge 接收订阅通知、系统提醒等消息。
+      </p>
+      <ol class="hero-steps">
+        <li class="hero-step">
+          <span class="step-index">1</span>
+          <span class="step-text">生成并扫描二维码</span>
+        </li>
+        <li class="hero-step">
+          <span class="step-index">2</span>
+          <span class="step-text">在手机上确认绑定</span>
+        </li>
+        <li class="hero-step">
+          <span class="step-index">3</span>
+          <span class="step-text">开始接收消息</span>
+        </li>
+      </ol>
+    </section>
+
+    <section class="card bind-card" aria-labelledby="bind-card-title">
+      <div class="card-header">
+        <h2 id="bind-card-title" class="card-title">扫码绑定</h2>
+        <p class="card-subtitle">绑定完全免费，整个过程约需 10 秒。</p>
+      </div>
+
+      <!-- 第一步：填写昵称并创建绑定会话 -->
+      <form id="bind-form" class="form" novalidate>
+        <div class="form-field">
+          <label class="form-label" for="display-name">昵称（可选）</label>
+          <input
+            id="display-name"
+            class="input"
+            type="text"
+            name="displayName"
+            maxlength="40"
+            autocomplete="nickname"
+            placeholder="例如：张三"
+          >
+          <p class="form-hint">仅用于管理后台识别，最长 40 个字符。</p>
+        </div>
+        <button id="btn-create" class="btn btn-primary btn-block" type="submit">生成绑定二维码</button>
+        <p id="create-error" class="inline-error" role="alert" hidden></p>
+      </form>
+
+      <!-- 第二步：二维码与绑定状态 -->
+      <div id="bind-session" class="bind-session" hidden>
+        <div id="qr-box" class="qr-box">
+          <img id="qr-img" class="qr-img" width="240" height="240" alt="微信扫码绑定二维码">
+        </div>
+
+        <span id="status-badge" class="status-pill" data-status="waiting">等待扫码</span>
+        <p id="status-text" class="status-title">请用微信扫描二维码</p>
+        <p id="status-message" class="status-desc" hidden></p>
+        <p id="qr-countdown" class="qr-countdown" hidden></p>
+
+        <form id="verify-form" class="verify-form" hidden novalidate>
+          <label class="form-label" for="verify-code">手机微信显示的数字</label>
+          <input
+            id="verify-code"
+            class="input input-code"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="8"
+            autocomplete="one-time-code"
+            placeholder="输入配对数字"
+          >
+          <button id="btn-verify" class="btn btn-primary btn-block" type="submit">提交配对数字</button>
+          <p id="verify-error" class="inline-error" role="alert" hidden></p>
+        </form>
+
+        <div id="bound-info" class="bound-info" hidden>
+          <div class="bound-icon" aria-hidden="true">✅</div>
+          <dl id="bound-details" class="kv-list"></dl>
+          <p id="bound-note" class="bound-note">之后将通过微信 ClawBot 接收消息。</p>
+        </div>
+
+        <div class="bind-actions">
+          <button id="btn-regenerate" class="btn btn-secondary" type="button" hidden>重新生成二维码</button>
+          <button id="btn-cancel" class="btn btn-ghost" type="button" hidden>取消绑定</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="features" aria-labelledby="features-title">
+      <h2 id="features-title" class="section-title">工作原理</h2>
+      <div class="features-grid">
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">📱</span>
+          <h3 class="feature-title">手机微信扫码</h3>
+          <p class="feature-text">使用微信「扫一扫」扫描上方二维码，并在手机端确认登录授权。</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">🔢</span>
+          <h3 class="feature-title">输入配对数字</h3>
+          <p class="feature-text">若微信提示安全验证，输入手机屏幕上显示的数字即可完成验证。</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon" aria-hidden="true">🔔</span>
+          <h3 class="feature-title">安全接收消息</h3>
+          <p class="feature-text">绑定凭证加密保存在服务端；可随时在管理后台解绑，或在手机微信中管理授权。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="notice" aria-label="提示">
+      <p class="notice-text">
+        <strong>提示：</strong>如果扫码后长时间没有反应，可点击「重新生成二维码」。
+        同一网络下 1 小时内生成次数有限；如有问题请联系部署管理员。
+      </p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p class="footer-line">
+      <span class="footer-brand">ClawBridge</span>
+      <span class="footer-sep">·</span>
+      <span>多用户微信 ClawBot 绑定与消息推送</span>
+    </p>
+    <p class="footer-links">
+      <a class="footer-link" href="/bind">扫码绑定</a>
+      <a class="footer-link" href="/admin">管理后台</a>
+      <a class="footer-link" href="/docs">API 文档</a>
+    </p>
+  </footer>
+
+  <script type="module" src="/assets/bind.js"></script>
+</body>
+</html>

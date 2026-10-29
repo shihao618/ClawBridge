@@ -1,0 +1,70 @@
+# =============================================================================
+# ClawBridge for fnOS（飞牛OS）Docker Compose
+#
+# 使用（fnOS 应用中心 → Docker → Compose → 新建项目）：
+#   1) 项目目录选本仓库目录（含 Dockerfile / server / web / docker-compose.fnos.yml）
+#   2) 先创建本地持久化目录（属主为 NAS 用户）：
+#        mkdir -p data
+#   3) Compose 文件选 docker-compose.fnos.yml，构建并启动
+#
+# 数据持久化（本编排的核心）：
+#   左侧是 NAS 上的真实目录（默认 ./data，相对项目目录），
+#   可在项目 .env 用 DATA_PATH 覆盖为绝对路径（如 /vol1/1000/docker/clawbridge/data）。
+#   容器以 PUID:PGID（默认 1000:1000，即 fnOS 默认用户）运行，保证能写入这些目录。
+#   注意：目录必须提前创建；若由 Docker 自动创建会归 root 所有，容器将无法写入。
+#
+# 可选 .env（与 docker-compose.fnos.yml 同目录）：
+#   PUID=1000
+#   PGID=1000
+#   DATA_PATH=./data
+#   APP_SECRET=（可选，64 位随机串；不设会自动生成到 data/app-secret.key）
+#
+# 首次启动会自动（全部写入 data/）：
+#   - APP_SECRET → data/app-secret.key
+#   - 管理密码 → data/admin-password.txt
+#   - API Token → data/api-token.txt
+# 可直接在 fnOS 文件管理器打开 data/，或：
+#   docker exec clawbridge cat /app/data/admin-password.txt
+#   docker exec clawbridge cat /app/data/api-token.txt
+#
+# 备份/迁移：直接打包 data/ 目录即可（含 app-secret.key，必须一起迁移）。
+# =============================================================================
+services:
+  clawbridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: clawbridge:fnos
+    container_name: clawbridge
+    # 以 NAS 用户运行（默认 fnOS 的 1000:1000），需提前把 ./data 建好并归该用户所有
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      NODE_ENV: production
+      # 容器内监听端口固定 3000，不要改成 10380（10380 是宿主机映射端口）
+      PORT: "3000"
+      DATA_DIR: /app/data
+      # 可选：从项目 .env 读取 APP_SECRET（留空则自动生成到 data/app-secret.key）
+      APP_SECRET: "${APP_SECRET:-}"
+    ports:
+      - "10380:3000"
+    volumes:
+      # 默认项目根目录 data/；可在 .env 用 DATA_PATH 覆盖为绝对路径
+      - "${DATA_PATH:-./data}:/app/data"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

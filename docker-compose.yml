@@ -1,0 +1,58 @@
+# =============================================================================
+# ClawBridge 生产编排（单容器 + Docker 命名卷）
+#
+# 使用：
+#   1) 首次运行前准备 .env：cp .env.example .env（只需 APP_SECRET 必填）
+#   2) docker compose up -d --build
+#   3) 访问 http://<服务器IP>:10380（绑定页 /，管理后台 /admin，API 文档 /docs）
+#
+# 说明：
+# - env_file 必须存在（compose 缺少 .env 会直接报错）：用 scripts/demo.ps1|demo.sh 会自动从
+#   .env.example 复制；也可手动 `cp .env.example .env`。
+# - 宿主机固定端口 10380；容器内固定 3000。
+# - fnOS（飞牛OS）请使用 docker-compose.fnos.yml（不依赖 .env，配置内联）。
+# - 数据持久化在 Docker 命名卷 clawbridge-data（SQLite + app-secret + 自动生成的密码/Token + 媒体）。
+#   命名卷会继承镜像内 /app/data 的属主（node UID 1000），无需额外权限初始化。
+# =============================================================================
+name: clawbridge
+
+services:
+  clawbridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: clawbridge:local
+    container_name: clawbridge-app
+    env_file:
+      - .env
+    environment:
+      # 容器内固定监听 3000（宿主机映射 10380）；DATA_DIR 指向命名卷挂载点
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /app/data
+    ports:
+      - "10380:3000"
+    volumes:
+      - clawbridge-data:/app/data
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  clawbridge-data:
+    name: clawbridge-data

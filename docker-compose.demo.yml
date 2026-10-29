@@ -1,0 +1,73 @@
+# =============================================================================
+# ClawBridge 本地演示编排覆盖（与 docker-compose.yml 叠加使用）
+#
+# 一条命令起「app + mock 微信 iLink」全栈，无需真实微信：
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d --build
+#
+# 或使用脚本（推荐，自动检查 .env、等待健康并打印操作指引）：
+#   scripts/demo.ps1        # Windows PowerShell
+#   scripts/demo.sh         # bash
+#
+# 演示行为：
+# - mock-ilink：node:24-alpine + 挂载 ./mock，端口 3100；
+#   MOCK_AUTO_CONFIRM_MS=3000 → 页面生成二维码后约 3~4 秒自动“扫码+确认”，绑定自动完成。
+# - app 通过 environment 把 ILINK_LOGIN_BASE_URL / ILINK_BASE_URL 指向 http://mock-ilink:3100，
+#   mock 返回的 confirmed.baseurl 同样是该地址，保证容器间回连；
+#   媒体 CDN（图片/视频/文件）的 ILINK_CDN_BASE_URL 指向 http://mock-ilink:3100/cdn
+#   （后端按 `{ILINK_CDN_BASE_URL}/download?encrypted_query_param=…` 拼下载 URL）。
+# =============================================================================
+
+services:
+  mock-ilink:
+    # 与 app 镜像统一使用 node:24-alpine（本机镜像加速下可稳定拉取；mock 为纯 JS，零依赖）
+    image: node:24-alpine
+    container_name: clawbridge-mock
+    profiles: ["demo"]
+    working_dir: /app
+    command: ["node", "mock/ilink-mock.mjs"]
+    environment:
+      PORT: "3100"
+      HOST: 0.0.0.0
+      # 新二维码自动 scan+confirm（毫秒）；0 = 关闭自动，需用控制面手动操作
+      MOCK_AUTO_CONFIRM_MS: "${MOCK_AUTO_CONFIRM_MS:-3000}"
+      # confirmed 返回的 baseurl：容器网络内 app 通过服务名回连 mock
+      MOCK_PUBLIC_BASE_URL: "http://mock-ilink:3100"
+      # 入站媒体注入内容上限：默认 100MB（MOCK_MEDIA_MAX_BYTES），demo 无需覆盖
+      # MOCK_MEDIA_MAX_BYTES: "104857600"
+      # 演示时缩短长轮询挂起时间，让页面状态刷新更及时
+      MOCK_QR_POLL_MS: "${MOCK_QR_POLL_MS:-1000}"
+      MOCK_LONGPOLL_MS: "${MOCK_LONGPOLL_MS:-2000}"
+    volumes:
+      # 只读挂载 mock 源码，无需重建镜像
+      - ./mock:/app/mock:ro
+    ports:
+      # 宿主机可直接 curl mock 控制面：http://127.0.0.1:3100/__mock/state
+      - "${MOCK_PORT:-3100}:3100"
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3100/__mock/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  clawbridge:
+    environment:
+      # 覆盖 .env 中的真实微信地址，改用本地 mock
+      ILINK_LOGIN_BASE_URL: http://mock-ilink:3100
+      ILINK_BASE_URL: http://mock-ilink:3100
+      # 媒体 CDN：mock 的下载路径为 /cdn/download?encrypted_query_param=…
+      # 后端按 {ILINK_CDN_BASE_URL}/download?… 拼 URL，因此带 /cdn 后缀
+      ILINK_CDN_BASE_URL: http://mock-ilink:3100/cdn
+      # 绑定 worker 轮询间隔（演示更跟手；生产用默认 1000ms）
+      BINDING_POLL_GAP_MS: "300"
+      # 演示环境日志更详细
+      LOG_LEVEL: debug
+    depends_on:
+      mock-ilink:
+        condition: service_healthy
