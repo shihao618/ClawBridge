@@ -1,6 +1,6 @@
 # =============================================================================
 # Docker 构建上下文排除项（.dockerignore 语法与 .gitignore 类似）
-# 目标：镜像只包含运行必需的 server/ + web/ + docs/ + 生产依赖
+# 目标：镜像只包含运行必需的 server/ + web/ + 生产依赖
 # =============================================================================
 
 # 依赖与构建产物
@@ -14,14 +14,14 @@ data
 *.db-wal
 *.db-shm
 
-# 本地环境变量（.env.example 可保留作文档，真实 .env 不进镜像）
+# 本地环境变量（真实 .env 不进镜像）
 .env
 .env.*
-!.env.example
 
 # 版本库 / 编辑器 / 系统文件
 .git
 .gitignore
+.gitattributes
 .vscode
 .idea
 .DS_Store
@@ -35,8 +35,13 @@ scripts
 coverage
 test-results
 
+# 文档 / 展示资源（web/docs.html 已内置文档页，无需 docs/ 与截图）
+docs
+screenshots
+README.md
+LICENSE
+
 # Docker 自身文件
 Dockerfile
 .dockerignore
-docker-compose.yml
-docker-compose.demo.yml
+docker-compose*.yml
