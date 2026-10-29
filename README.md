@@ -180,16 +180,26 @@ docker compose down                    # 停止（保留数据卷）
 数据保存在 Docker 命名卷 `clawbridge-data`（SQLite、加密主密钥、自动生成的密码/Token、媒体），
 `docker compose down` 不会删除；如需彻底清空用 `docker compose down -v`（**会清空所有绑定与消息**）。
 
-### 4. fnOS（飞牛OS）安装
+### 4. fnOS（飞牛OS）安装（免构建，直接拉取 GHCR 镜像）
 
-使用 [`docker-compose.fnos.yml`](docker-compose.fnos.yml)：宿主机端口 **10380**，数据持久化在
-**项目根目录 `./data`**（NAS 真实目录，方便在文件管理器查看/备份）。
+使用 [`docker-compose.fnos.yml`](docker-compose.fnos.yml)：**不需要源码/构建**，直接拉取
+`ghcr.io/shihao618/clawbridge:latest`（GitHub Actions 自动构建，支持 linux/amd64 与 linux/arm64）。
+宿主机端口 **10380**，数据持久化在 **项目根目录 `./data`**（NAS 真实目录，方便查看/备份）。
 
 ```bash
-# 1) 项目目录选本仓库目录（含 Dockerfile / server / web / docker-compose.fnos.yml）
+# 1) 只需要 docker-compose.fnos.yml（可保存到 fnOS 的 Compose 项目目录）
 # 2) 先创建本地持久化目录（属主为 NAS 用户，否则 Docker 自动创建会归 root，容器无法写入）：
 mkdir -p data
-# 3) fnOS「Docker → Compose → 新建项目」，Compose 文件选 docker-compose.fnos.yml，构建并启动
+# 3) 拉取镜像并启动：
+docker compose -f docker-compose.fnos.yml pull
+docker compose -f docker-compose.fnos.yml up -d
+```
+
+更新镜像：
+
+```bash
+docker compose -f docker-compose.fnos.yml pull
+docker compose -f docker-compose.fnos.yml up -d
 ```
 
 容器默认以 `PUID:PGID = 1000:1000`（fnOS 默认用户）运行，保证能写入 `./data`。

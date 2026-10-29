@@ -18,6 +18,11 @@
 # =============================================================================
 FROM node:24-alpine
 
+LABEL org.opencontainers.image.title="ClawBridge" \
+      org.opencontainers.image.description="Multi-user WeChat ClawBot binding & messaging bridge" \
+      org.opencontainers.image.source="https://github.com/shihao618/ClawBridge" \
+      org.opencontainers.image.licenses="MIT"
+
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/app/data

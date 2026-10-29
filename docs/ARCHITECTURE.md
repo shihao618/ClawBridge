@@ -289,10 +289,15 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 ## 11. Docker 约定（infra-dev）
 
 - `Dockerfile`：`node:24-alpine`（Node 24 内置 `node:sqlite`，镜像更小；本机镜像加速对 slim 清单拉取不稳定）；
-  `npm ci --omit=dev`；`COPY server web docs`；`USER node`；`DATA_DIR=/app/data`；`HEALTHCHECK` 用
-  `node -e fetch(...)`；`EXPOSE 3000`。
+  `npm ci --omit=dev`；仅 `COPY server web`（文档页内嵌在 `web/docs.html`）；`USER node`；`DATA_DIR=/app/data`；
+  `HEALTHCHECK` 用 `node -e fetch(...)`；`EXPOSE 3000`。
 - `docker-compose.yml`：`clawbridge` 服务，`env_file: .env`，命名卷 `clawbridge-data:/app/data`，
-  `restart: unless-stopped`，`init: true`，healthcheck，容器内监听 3000、宿主机映射 10380。
+  `restart: unless-stopped`，`init: true`，`security_opt: no-new-privileges:true`，healthcheck，
+  容器内监听 3000、宿主机映射 10380。
+- `.github/workflows/docker-publish.yml`：push main 时构建 `linux/amd64 + linux/arm64` 镜像并推送
+  `ghcr.io/shihao618/clawbridge:latest`（另带 `sha-*` / tag 标签）。
+- fnOS：`docker-compose.fnos.yml` **免构建**，直接拉取上述 GHCR 镜像；数据挂载项目 `./data`
+  （可用 `PUID/PGID/DATA_PATH` 覆盖），容器以 NAS 用户运行。
 - 演示模式：`docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d --build`
   启动 `mock-ilink` 服务（复用 `node:24-alpine` + 挂载 `./mock`，`MOCK_AUTO_CONFIRM_MS=3000`），
   app 通过环境变量把 `ILINK_LOGIN_BASE_URL` / `ILINK_BASE_URL` 指向 `http://mock-ilink:3100`，

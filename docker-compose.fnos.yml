@@ -2,10 +2,14 @@
 # ClawBridge for fnOS（飞牛OS）Docker Compose
 #
 # 使用（fnOS 应用中心 → Docker → Compose → 新建项目）：
-#   1) 项目目录选本仓库目录（含 Dockerfile / server / web / docker-compose.fnos.yml）
+#   1) 只需要 docker-compose.fnos.yml（不需要源码、不需要构建）
 #   2) 先创建本地持久化目录（属主为 NAS 用户）：
 #        mkdir -p data
-#   3) Compose 文件选 docker-compose.fnos.yml，构建并启动
+#   3) Compose 文件选 docker-compose.fnos.yml，拉取镜像并启动
+#
+# 镜像：ghcr.io/shihao618/clawbridge:latest（GitHub Actions 自动构建，linux/amd64 + linux/arm64）
+#   - 无需 Dockerfile / 源码，直接拉取即可
+#   - 更新镜像：docker compose -f docker-compose.fnos.yml pull && docker compose ... up -d
 #
 # 数据持久化（本编排的核心）：
 #   左侧是 NAS 上的真实目录（默认 ./data，相对项目目录），
@@ -31,10 +35,7 @@
 # =============================================================================
 services:
   clawbridge:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: clawbridge:fnos
+    image: ghcr.io/shihao618/clawbridge:latest
     container_name: clawbridge
     # 以 NAS 用户运行（默认 fnOS 的 1000:1000），需提前把 ./data 建好并归该用户所有
     user: "${PUID:-1000}:${PGID:-1000}"

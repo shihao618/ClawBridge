@@ -45,3 +45,4 @@ LICENSE
 Dockerfile
 .dockerignore
 docker-compose*.yml
+.github
