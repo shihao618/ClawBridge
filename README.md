@@ -432,7 +432,7 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 | `APP_SECRET` | 自动生成到数据卷 `app-secret.key` | AES 加密根密钥；**必须保持稳定**，否则旧凭证无法解密（建议显式设置） |
 | `DATA_DIR` | `data`（容器内 `/app/data`） | SQLite、密钥、媒体等数据目录 |
 | `MEDIA_DIR` | `DATA_DIR/media` | 媒体文件存储路径 |
-| `PORT` / `HOST` | `3000` / `0.0.0.0` | **容器内**监听地址；宿主机固定映射 10380，一般无需修改 |
+| `PORT` / `HOST` | `10380` / `0.0.0.0` | HTTP 监听端口（Docker 内外一致 10380）；一般无需修改 |
 | `NODE_ENV` | `production` | 运行模式（Docker 部署已固定） |
 
 > 其余运行参数（限流、会话保活、接口应用、定时通知、媒体、绑定、iLink 地址/超时、日志级别、
@@ -478,7 +478,7 @@ TRUST_PROXY=true
 
 ```bash
 npm install
-npm start                 # 本地启动（默认 http://127.0.0.1:3000，自动生成 data/ 下的密钥）
+npm start                 # 本地启动（默认 http://127.0.0.1:10380，自动生成 data/ 下的密钥）
 npm test                  # 单元测试 + e2e（需先安装依赖）
 npm run test:unit         # 单元测试（config/crypto/ilink 客户端/store/限流/API 契约）
 npm run test:e2e          # 端到端：真实 app 进程 + mock 微信 API，全 HTTP 黑盒
@@ -562,8 +562,8 @@ Dockerfile · docker-compose*.yml · .env.example
    告警类通知建议结合服务号模板消息 / 企业微信 / 短信 / 邮件等强提醒通道。
 
 **Q：端口 10380 被占用？**
-修改 `docker-compose.yml` 的 `ports`（例如 `"18080:3000"`）后 `docker compose up -d`；
-fnOS 同理修改 `docker-compose.fnos.yml`。容器内始终监听 3000，只改宿主机映射端口即可。
+修改 `docker-compose.yml` 的 `ports`（例如 `"18080:10380"`）后 `docker compose up -d`；
+fnOS 同理修改 `docker-compose.fnos.yml`。内外端口一致，改映射时两侧保持同一个值即可。
 
 **Q：Docker 镜像拉取慢/失败？**
 本仓库镜像基于 `node:24-alpine`；配置 Docker 镜像加速器，或预先 `docker pull node:24-alpine` 后

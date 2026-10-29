@@ -9,7 +9,7 @@
 # 说明：
 # - env_file 必须存在（compose 缺少 .env 会直接报错）：用 scripts/demo.ps1|demo.sh 会自动从
 #   .env.example 复制；也可手动 `cp .env.example .env`。
-# - 宿主机固定端口 10380；容器内固定 3000。
+# - 宿主机端口 10380，容器内监听 10380（内外一致）。
 # - fnOS（飞牛OS）请使用 docker-compose.fnos.yml（不依赖 .env，配置内联）。
 # - 数据持久化在 Docker 命名卷 clawbridge-data（SQLite + app-secret + 自动生成的密码/Token + 媒体）。
 #   命名卷会继承镜像内 /app/data 的属主（node UID 1000），无需额外权限初始化。
@@ -26,12 +26,12 @@ services:
     env_file:
       - .env
     environment:
-      # 容器内固定监听 3000（宿主机映射 10380）；DATA_DIR 指向命名卷挂载点
+      # 容器内监听 10380（宿主机 10380:10380）；DATA_DIR 指向命名卷挂载点
       NODE_ENV: production
-      PORT: "3000"
+      PORT: "10380"
       DATA_DIR: /app/data
     ports:
-      - "10380:3000"
+      - "10380:10380"
     volumes:
       - clawbridge-data:/app/data
     init: true
@@ -44,7 +44,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "fetch('http://127.0.0.1:10380/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 5s
       retries: 5

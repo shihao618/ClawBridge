@@ -4,7 +4,7 @@
 #
 # 构建：docker build -t clawbridge:local .
 # 运行：见 docker-compose.yml（推荐，命名卷）或 docker-compose.fnos.yml（fnOS）：
-#   docker run -d --name clawbridge -p 10380:3000 \
+#   docker run -d --name clawbridge -p 10380:10380 \
 #     -e NODE_ENV=production -e DATA_DIR=/app/data \
 #     -v clawbridge-data:/app/data clawbridge:local
 #   初始管理密码/API Token 会在首次启动时生成到数据卷 /app/data/ 下。
@@ -24,7 +24,7 @@ LABEL org.opencontainers.image.title="ClawBridge" \
       org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=10380 \
     DATA_DIR=/app/data
 
 WORKDIR /app
@@ -47,10 +47,10 @@ RUN mkdir -p /app/data \
     && chown -R node:node /app
 USER node
 
-EXPOSE 3000
+EXPOSE 10380
 
 # ---- 健康检查（node fetch，5s 超时）----
 HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||10380)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "server/src/index.js"]

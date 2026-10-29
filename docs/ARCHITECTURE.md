@@ -226,7 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `PORT` / `HOST` | `3000` / `0.0.0.0` | 容器内 HTTP 监听（宿主机映射 10380，一般不改） |
+| `PORT` / `HOST` | `10380` / `0.0.0.0` | HTTP 监听（Docker 内外一致 10380，一般不改） |
 | `DATA_DIR` | `<repo>/data` | SQLite/secret 目录（Docker 用 `/app/data`） |
 | `APP_SECRET` | 自动生成 `data/app-secret.key` | 加密主密钥 |
 | `ADMIN_PASSWORD` | —（不再读取 env） | 管理密码只存 DB（scrypt 哈希）；首启自动生成到 `data/admin-password.txt` |
@@ -290,10 +290,10 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 
 - `Dockerfile`：`node:24-alpine`（Node 24 内置 `node:sqlite`，镜像更小；本机镜像加速对 slim 清单拉取不稳定）；
   `npm ci --omit=dev`；仅 `COPY server web`（文档页内嵌在 `web/docs.html`）；`USER node`；`DATA_DIR=/app/data`；
-  `HEALTHCHECK` 用 `node -e fetch(...)`；`EXPOSE 3000`。
+  `HEALTHCHECK` 用 `node -e fetch(...)`；`EXPOSE 10380`。
 - `docker-compose.yml`：`clawbridge` 服务，`env_file: .env`，命名卷 `clawbridge-data:/app/data`，
   `restart: unless-stopped`，`init: true`，`security_opt: no-new-privileges:true`，healthcheck，
-  容器内监听 3000、宿主机映射 10380。
+  容器内/宿主机均监听 10380（内外一致）。
 - `.github/workflows/docker-publish.yml`：push main 时构建 `linux/amd64 + linux/arm64` 镜像并推送
   `ghcr.io/shihao618/clawbridge:latest`（另带 `sha-*` / tag 标签）。
 - fnOS：`docker-compose.fnos.yml` **免构建**，直接拉取上述 GHCR 镜像；数据挂载项目 `./data`

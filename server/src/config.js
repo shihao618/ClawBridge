@@ -202,7 +202,7 @@ export function loadConfig(env = process.env) {
     version: readVersion(),
     nodeEnv,
     isProduction,
-    port: envInt(env, 'PORT', 3000),
+    port: envInt(env, 'PORT', 10380),
     host: envStr(env, 'HOST', '0.0.0.0'),
     dataDir,
     dbPath: path.join(dataDir, 'clawbridge.db'),

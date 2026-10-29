@@ -41,13 +41,13 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       NODE_ENV: production
-      # 容器内监听端口固定 3000，不要改成 10380（10380 是宿主机映射端口）
-      PORT: "3000"
+      # 容器内/宿主机端口一致：均为 10380
+      PORT: "10380"
       DATA_DIR: /app/data
       # 可选：从项目 .env 读取 APP_SECRET（留空则自动生成到 data/app-secret.key）
       APP_SECRET: "${APP_SECRET:-}"
     ports:
-      - "10380:3000"
+      - "10380:10380"
     volumes:
       # 默认项目根目录 data/；可在 .env 用 DATA_PATH 覆盖为绝对路径
       - "${DATA_PATH:-./data}:/app/data"
@@ -61,7 +61,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "fetch('http://127.0.0.1:10380/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 5s
       retries: 5

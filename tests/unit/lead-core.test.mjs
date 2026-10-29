@@ -36,7 +36,7 @@ test.after(async () => {
 test('config: 默认值与环境变量覆盖', () => {
   const tmp = path.join(tmpDir, 'cfg-default');
   const cfg = loadConfig({ DATA_DIR: tmp, APP_SECRET: 's', ADMIN_PASSWORD: 'p', API_TOKEN: 't' });
-  assert.equal(cfg.port, 3000);
+  assert.equal(cfg.port, 10380);
   assert.equal(cfg.ilink.loginBaseUrl, 'https://ilinkai.weixin.qq.com');
   assert.equal(cfg.ilink.appId, 'bot');
   assert.equal(cfg.ilink.clientVersion, 132106);
