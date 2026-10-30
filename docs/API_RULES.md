@@ -186,7 +186,11 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   对内层逐项渲染，内层可用当前项字段 `{{字段}}`（当前项没有该字段时依次回退父级/根响应）、`{{@index}}`（从 0）、
   `{{@number}}`（从 1）。支持 `where 字段=值` / `where 字段!=值` 过滤（值可加引号）。
 - **多层嵌套循环**：`each` 可嵌套多层（≤8 层）；内层用 `{{../字段}}` 取父级字段、
-  `{{../@index}}`/`{{../@number}}` 取父循环下标/序号、`{{@root.字段}}` 取完整响应根。示例（路径已指向数组）：
+  `{{../@index}}`/`{{../@number}}` 取父循环下标/序号；`{{@root.字段}}` 取模板根（JSON 路径选中节点）；
+  `{{@responseRoot.字段}}` 取完整响应根（可访问选中节点的兄弟字段，如 pageSize）。
+- **同时需要 pageSize 与 rows**：推荐把 JSON 路径选到共同父节点（如 `datas.cqztbg`），模板直接写
+  `{{pageSize}}` 与 `{{#each rows}}`；若路径仍选 `rows`，可用 `{{@responseRoot.datas.cqztbg.pageSize}}`。
+  示例（路径已指向数组）：
 
   ```
   【未归寝】{{count . where CQZT=1}} 人

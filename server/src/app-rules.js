@@ -452,6 +452,9 @@ function resolveTemplatePath(rawPath, contextStack, fallbackRoot) {
   let current = contextStack[contextStack.length - 1];
   if (!pathText || pathText === '.' || pathText === 'this' || pathText === '@this') return current;
 
+  const responseRoot = fallbackRoot !== undefined ? fallbackRoot : contextStack[0];
+  if (pathText === '@responseRoot') return responseRoot;
+  if (pathText.startsWith('@responseRoot.')) return getByPath(responseRoot, pathText.slice('@responseRoot.'.length));
   if (pathText === '@root') return contextStack[0];
   if (pathText.startsWith('@root.')) return getByPath(contextStack[0], pathText.slice(6));
 

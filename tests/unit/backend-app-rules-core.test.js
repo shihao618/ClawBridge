@@ -451,6 +451,7 @@ test('模板根=JSON 路径选中节点：相对引用、旧全路径回退、�
   const rawText = JSON.stringify({
     datas: {
       cqztbg: {
+        pageSize: 10,
         rows: [
           { XM: '张三', FJH: '101', CQZT: '1' },
           { XM: '李四', FJH: '102', CQZT: '2' },
@@ -469,7 +470,14 @@ test('模板根=JSON 路径选中节点：相对引用、旧全路径回退、�
   );
   assert.equal(relative, '共 2 人；1.李四（102）；2.王五（103）；');
 
-  // 旧模板写完整响应路径仍可解析（自动回退到完整响应根）
+  // 选中节点为 rows 时，可通过 @responseRoot 访问兄弟字段
+  assert.equal(
+    appRules.renderReplyTemplate('pageSize={{@responseRoot.datas.cqztbg.pageSize}}；rows={{count .}}', {
+      root: parsed.templateRoot,
+      fallbackRoot: parsed.root,
+    }),
+    'pageSize=10；rows=3',
+  );  // 旧模板写完整响应路径仍可解析（自动回退到完整响应根）
   const legacy = appRules.renderReplyTemplate('{{count datas.cqztbg.rows where CQZT=1}}', {
     root: parsed.templateRoot,
     fallbackRoot: parsed.root,

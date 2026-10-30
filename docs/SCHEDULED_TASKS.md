@@ -106,7 +106,9 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
      旧模板写完整路径仍兼容（自动回退完整响应根）。
    - **列表/多层循环**：`{{count . where 字段=值}}`、`{{#each . where 字段=值}}...{{/each}}`；
      `each` 可嵌套多层，内层用 `{{../字段}}` 取父级、`{{../@index}}`/`{{../@number}}` 取父循环、
-     `{{@root.字段}}` 取完整响应根；`@index` 从 0、`@number` 从 1。示例（`response.path=datas.rows`）：
+     `{{@root.字段}}` 取模板根、`{{@responseRoot.字段}}` 取完整响应根（可访问选中节点的兄弟字段）；
+     `@index` 从 0、`@number` 从 1。若同时需要 pageSize 与 rows，推荐把 `response.path` 选到共同父节点
+     （如 `datas.cqztbg`），模板直接写 `{{pageSize}}` 与 `{{#each rows}}`。示例（`response.path=datas.rows`）：
 
    ```
    【未归寝】{{count . where CQZT=1}} 人
