@@ -119,8 +119,8 @@ test.after(() => {
 const count = (db, table) => Number(db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c);
 const userColumns = (db) => new Set(db.prepare('PRAGMA table_info(users)').all().map((row) => row.name));
 
-test('v3 → v8 迁移：既有数据保留 + keepalive 列默认值 + v5 接口应用表 + v6 分组保活列 + 幂等', () => {
-  assert.equal(SCHEMA_VERSION, 8);
+test('v3 → v9 迁移：既有数据保留 + keepalive 列默认值 + v5 接口应用表 + v6 分组保活列 + 幂等', () => {
+  assert.equal(SCHEMA_VERSION, 9);
   const db = openDatabase(v3Path);
   try {
     // 数据不丢
@@ -135,7 +135,7 @@ test('v3 → v8 迁移：既有数据保留 + keepalive 列默认值 + v5 接口
     assert.equal(db.prepare('SELECT media_id FROM outbox WHERE id = ?').get('ob_v3_1').media_id, 'att_v3_1');
     assert.equal(db.prepare('SELECT text FROM inbound_messages WHERE id = ?').get('in_v3_1').text, '历史入站');
     assert.equal(db.prepare('SELECT name FROM groups WHERE id = ?').get('grp_v3_1').name, '真实分组');
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     for (const table of ['app_rules', 'app_rule_logs']) {
       assert.ok(
         db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table),
@@ -164,7 +164,7 @@ test('v3 → v8 迁移：既有数据保留 + keepalive 列默认值 + v5 接口
   // 幂等：重复打开（已 v4）数据/列稳定
   const again = openDatabase(v3Path);
   try {
-    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(again, 'users'), 2);
     assert.equal(count(again, 'outbox'), 1);
     assert.equal(count(again, 'inbound_messages'), 1);
@@ -176,18 +176,18 @@ test('v3 → v8 迁移：既有数据保留 + keepalive 列默认值 + v5 接口
   }
   const third = openDatabase(v3Path);
   try {
-    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(third, 'users'), 2);
   } finally {
     third.close();
   }
 });
 
-test('全新数据库直接创建为 v8 结构', () => {
+test('全新数据库直接创建为 v9 结构', () => {
   const freshPath = path.join(v3Dir, 'fresh.db');
   const db = openDatabase(freshPath);
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     const columns = userColumns(db);
     assert.ok(columns.has('keepalive_enabled'));
     assert.ok(columns.has('keepalive_last_sent_at'));

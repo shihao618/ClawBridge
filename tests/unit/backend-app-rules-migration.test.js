@@ -110,8 +110,8 @@ const tableExists = (db, name) =>
 const indexExists = (db, name) =>
   Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name=?").get(name));
 
-test('v4 → v8 迁移：既有数据零丢失 + app_rules/app_rule_logs + groups 保活列 + v7 定时通知表 + 幂等', () => {
-  assert.equal(SCHEMA_VERSION, 8);
+test('v4 → v9 迁移：既有数据零丢失 + app_rules/app_rule_logs + groups 保活列 + v7 定时通知表 + 幂等', () => {
+  assert.equal(SCHEMA_VERSION, 9);
   const db = openDatabase(v4Path);
   try {
     assert.equal(count(db, 'users'), 2);
@@ -124,7 +124,7 @@ test('v4 → v8 迁移：既有数据零丢失 + app_rules/app_rule_logs + group
     const alpha = db.prepare('SELECT * FROM users WHERE id = ?').get('u_v4_alpha');
     assert.equal(alpha.display_name, '真实用户甲');
     assert.equal(Number(alpha.keepalive_enabled), 1);
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.ok(tableExists(db, 'scheduled_tasks'), 'scheduled_tasks 表应存在（schema v7）');
     assert.ok(tableExists(db, 'scheduled_task_logs'), 'scheduled_task_logs 表应存在（schema v7）');
 
@@ -176,7 +176,7 @@ test('v4 → v8 迁移：既有数据零丢失 + app_rules/app_rule_logs + group
   // 幂等
   const again = openDatabase(v4Path);
   try {
-    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(again, 'users'), 2);
     assert.equal(count(again, 'app_rules'), 1);
     assert.equal(count(again, 'app_rule_logs'), 1);
@@ -186,18 +186,18 @@ test('v4 → v8 迁移：既有数据零丢失 + app_rules/app_rule_logs + group
   }
   const third = openDatabase(v4Path);
   try {
-    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(third, 'users'), 2);
   } finally {
     third.close();
   }
 });
 
-test('全新数据库直接创建为 v8 结构', () => {
+test('全新数据库直接创建为 v9 结构', () => {
   const freshPath = path.join(v4Dir, 'fresh.db');
   const db = openDatabase(freshPath);
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.ok(tableExists(db, 'app_rules'));
     assert.ok(tableExists(db, 'app_rule_logs'));
     db.prepare(

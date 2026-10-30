@@ -23,8 +23,9 @@ const log = logger.child({ mod: 'db' });
  *  v5 = 接口应用 app_rules/app_rule_logs；
  *  v6 = 分组级保活开关 groups.keepalive_enabled（新成员继承）；
  *  v7 = 定时通知 scheduled_tasks/scheduled_task_logs；
- *  v8 = 运行配置 app_settings（后台可改，docs/SETTINGS.md §1））。 */
-export const SCHEMA_VERSION = 8;
+ *  v8 = 运行配置 app_settings（后台可改，docs/SETTINGS.md §1）；
+ *  v9 = 定时通知 interval 每日生效时间段 scheduled_tasks.window_start/window_end）。 */
+export const SCHEMA_VERSION = 9;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -204,6 +205,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   schedule_type TEXT NOT NULL DEFAULT 'interval',
   interval_ms INTEGER NOT NULL DEFAULT 3600000,
   daily_time TEXT NOT NULL DEFAULT '08:00',
+  window_start TEXT NOT NULL DEFAULT '',
+  window_end TEXT NOT NULL DEFAULT '',
   target_type TEXT NOT NULL DEFAULT 'users',
   target_ids TEXT NOT NULL DEFAULT '[]',
   request_method TEXT NOT NULL DEFAULT 'GET',
@@ -308,6 +311,25 @@ function migrateGroupKeepaliveColumn(instance) {
   return applied;
 }
 
+/**
+ * additive migration：scheduled_tasks 新增每日生效时间段列（schema v9）；
+ * 只在列缺失时 ALTER，保留既有数据且可重复执行。
+ * @returns {string[]} 本次实际执行的迁移项
+ */
+function migrateScheduledTaskWindowColumns(instance) {
+  const applied = [];
+  const columns = tableColumns(instance, 'scheduled_tasks');
+  if (!columns.has('window_start')) {
+    instance.exec("ALTER TABLE scheduled_tasks ADD COLUMN window_start TEXT NOT NULL DEFAULT ''");
+    applied.push('scheduled_tasks.window_start');
+  }
+  if (!columns.has('window_end')) {
+    instance.exec("ALTER TABLE scheduled_tasks ADD COLUMN window_end TEXT NOT NULL DEFAULT ''");
+    applied.push('scheduled_tasks.window_end');
+  }
+  return applied;
+}
+
 /** 读取当前 schema_version（meta 表不存在/无记录时返回 0）。 */
 function readSchemaVersion(instance) {
   try {
@@ -340,6 +362,7 @@ export function openDatabase(dbPath = config.dbPath) {
       ...migrateOutboxMediaColumns(instance),
       ...migrateUserKeepaliveColumns(instance),
       ...migrateGroupKeepaliveColumn(instance),
+      ...migrateScheduledTaskWindowColumns(instance),
     ];
     instance
       .prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")

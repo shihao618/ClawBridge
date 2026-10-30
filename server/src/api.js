@@ -711,6 +711,26 @@ function buildScheduledTaskPatch(rawBody, { requireAll = false } = {}) {
     const type = schedule.type ?? 'interval';
     if (!SCHEDULED_SCHEDULE_TYPES.has(type)) throw badRequest('schedule.type 只能是 interval | daily');
     patch.scheduleType = type;
+    // 每日生效时间段（仅 interval；windowStart/windowEnd 必须同时为空或同时存在）
+    const windowStartRaw = schedule.windowStart === undefined || schedule.windowStart === null ? '' : schedule.windowStart;
+    const windowEndRaw = schedule.windowEnd === undefined || schedule.windowEnd === null ? '' : schedule.windowEnd;
+    if (typeof windowStartRaw !== 'string' || typeof windowEndRaw !== 'string') {
+      throw badRequest('schedule.windowStart/windowEnd 必须是 HH:mm 字符串');
+    }
+    const windowStart = windowStartRaw.trim();
+    const windowEnd = windowEndRaw.trim();
+    if ((windowStart === '') !== (windowEnd === '')) {
+      throw badRequest('schedule.windowStart 与 schedule.windowEnd 必须同时为空或同时填写');
+    }
+    if (windowStart !== '') {
+      if (type === 'daily') throw badRequest('daily 计划不支持每日生效时间段（windowStart/windowEnd 仅 interval 可用）');
+      if (!scheduler.parseClockTime(windowStart) || !scheduler.parseClockTime(windowEnd)) {
+        throw badRequest('schedule.windowStart/windowEnd 必须是合法的 HH:mm');
+      }
+      if (windowStart === windowEnd) throw badRequest('schedule.windowStart 与 schedule.windowEnd 不能相同');
+    }
+    patch.windowStart = windowStart;
+    patch.windowEnd = windowEnd;
     if (type === 'interval') {
       const intervalMs = schedule.intervalMs === undefined ? 3600000 : schedule.intervalMs;
       if (!Number.isInteger(intervalMs) || intervalMs < SCHEDULED_MIN_INTERVAL_MS || intervalMs > SCHEDULED_MAX_INTERVAL_MS) {
@@ -1254,6 +1274,8 @@ export function createApp() {
         scheduleType: patch.scheduleType ?? row.schedule_type,
         intervalMs: patch.intervalMs ?? row.interval_ms,
         dailyTime: patch.dailyTime ?? row.daily_time,
+        windowStart: patch.windowStart ?? row.window_start,
+        windowEnd: patch.windowEnd ?? row.window_end,
       });
     }
     const task = store.updateScheduledTask(req.params.id, patch);

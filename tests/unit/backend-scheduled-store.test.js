@@ -80,6 +80,8 @@ test('任务 CRUD / TaskView：headerNames 不含值、targets.names、schedule 
     type: 'daily',
     intervalMs: 3600000,
     dailyTime: '08:30',
+    windowStart: '',
+    windowEnd: '',
     timezone: 'Asia/Shanghai',
   });
   assert.equal(task.targets.type, 'users');

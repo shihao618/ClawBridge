@@ -136,10 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   `crypto.decryptSecretOrNull()` 读取；任何 API/日志不得返回明文 token。
 - 时间统一为毫秒整数。
 - 开启 WAL；`db.js` 内设置 `busy_timeout`（如 5000）。单进程写，无需连接池。
-- 迁移：`meta` 表存 `schema_version`；当前版本 8（v2 = 多媒体扩展见 §12；v3 = 用户分组 + 入站消息
+- 迁移：`meta` 表存 `schema_version`；当前版本 9（v2 = 多媒体扩展见 §12；v3 = 用户分组 + 入站消息
   API 见 §13；v4 = 24h 会话保活见 §14；v5 = 接口应用见 §15；v6 = 分组级保活开关见 §14；
-  v7 = 定时通知见 §16；v8 = 运行配置后台可改见 §17），用 `CREATE TABLE IF NOT EXISTS` +
-  `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN` 幂等迁移。
+  v7 = 定时通知见 §16；v8 = 运行配置后台可改见 §17；v9 = 定时通知每日生效时间段见 §16），用
+  `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN` 幂等迁移。
 
 
 ## 4. 绑定会话（binding.js，内存态）
@@ -411,10 +411,12 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 
 - **背景**：无需用户发消息，按计划主动调用外部接口 → 解析 → 通过微信通知指定用户/分组
   （如每天 8:00 天气、每 30 分钟订单状态）。
-- **DB v7（additive）**：新表 `scheduled_tasks`（任务配置，Header 加密存 `request_headers_enc`）与
-  `scheduled_task_logs`（执行日志）；`SCHEMA_VERSION=7`，v6→v7 保留全部数据。
+- **DB v7/v9（additive）**：新表 `scheduled_tasks`（任务配置，Header 加密存 `request_headers_enc`）与
+  `scheduled_task_logs`（执行日志）；v9 为 interval 增加 `window_start/window_end`（每日生效时间段）；
+  迁移保留全部数据。
 - **新模块 `server/src/scheduler.js`**：
-  - 计划计算：`interval`（每 N 分钟，60s–30d；执行后 next=执行开始+interval）与 `daily`
+  - 计划计算：`interval`（每 N 分钟，60s–30d；执行后 next=执行开始+interval；可选每日生效时间段 windowStart/windowEnd，
+    窗口外 next 自动推进到窗口内）与 `daily`
     （每天 HH:mm，时区 `SCHEDULER_TIMEZONE`，用 Intl 计算下一次；服务启动时过期任务补跑一次）；
   - tick 扫描（`SCHEDULER_TICK_MS`）：取 `enabled=1 AND next_run_at<=now` 任务顺序执行，单任务异常不影响其他；
   - 执行：复用 `app-rules` 的模板渲染/HTTP 调用（SSRF/超时/大小/重定向）与响应解析；成功按回复模板渲染，
@@ -425,7 +427,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   `SCHEDULER_ENABLED=false` 时不启动。
 - **api.js**：任务 CRUD、`/:id/test`（dry-run）、`/:id/run`（立即执行）、日志查询；Header 值加密、
   读取仅返回名称；完整校验。
-- **前端**：接口应用页新增「定时通知」Tab（任务列表/表单/测试运行/立即执行/运行日志）；文档页定时通知章节。
+- **前端**：接口应用页新增「定时通知」Tab（任务列表/表单/测试运行/立即执行/运行日志）；文档页定时通知章节；
+  接口应用的规则日志改为每行「日志」弹窗（不再单独占一个 Tab）。
 - **测试**：v6→v7 迁移、计划计算（interval/daily/时区/过期补跑）、tick 执行、目标去重上限、
   fallback、dry-run 不发送、run 写日志/更新 next、API 校验；e2e 用本地 mock 外部 API 覆盖执行链路与投递。
 
@@ -436,7 +439,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 - **背景**：原 `.env` 中的运行参数改为数据库持久化、后台「运行配置」可编辑，`.env` 仅作首次默认值；
   第二批迁移后 `.env` 只保留启动前必须确定/不能入 DB 的项（`APP_SECRET`/`DATA_DIR`/`MEDIA_DIR`/`PORT`/`HOST`/`NODE_ENV`），
   管理密码与 API Token **只由 DB 管理**：首次启动自动生成随机值并写入 `data/` 文件，不再读取 `.env`（不兼容旧版 env 机密）。
-- **DB v8（additive）**：新表 `app_settings(key, value, updated_at)`，只存被覆盖的字段；`SCHEMA_VERSION=8`。
+- **DB v8（additive）**：新表 `app_settings(key, value, updated_at)`，只存被覆盖的字段；该表引入于 schema v8；
+  当前 `SCHEMA_VERSION=9`（v9 仅新增定时任务的 window_start/window_end 列，不影响本表）。
 - **新模块 `settings.js`**：`SETTINGS_SCHEMA`（push/keepalive/appRules/scheduler/media/binding/server/security/ilink/monitor
   字段元数据，含类型/范围/default/restartRequired）、`loadOverrides()`、`getSettings()`、`updateSettings()`、
   `resetGroup()`、机密管理（scrypt 密码哈希 / AES Token 加密 / rotate/reset / 首启 bootstrap）；

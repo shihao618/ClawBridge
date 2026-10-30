@@ -194,7 +194,7 @@ test('config/overview/v1 users/messages.source 字段', async () => {
   assert.equal(v1User.keepaliveEnabled, true);
 });
 
-test('数据库最新 schema：users/groups 保活列存在（v8）', () => {
+test('数据库最新 schema：users/groups 保活列存在（v9）', () => {
   const db = getDb();
   const columns = new Set(db.prepare('PRAGMA table_info(users)').all().map((row) => row.name));
   assert.ok(columns.has('keepalive_enabled'));
@@ -205,5 +205,5 @@ test('数据库最新 schema：users/groups 保活列存在（v8）', () => {
     Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduled_tasks'").get()),
     'scheduled_tasks 表应存在（schema v7）',
   );
-  assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
 });

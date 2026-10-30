@@ -147,8 +147,8 @@ const tableExists = (db, name) =>
   Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name));
 const count = (db, table) => Number(db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c);
 
-test('v1 → v8 迁移（逐级 additive）：既有 users/outbox/inbound 数据保留 + 新增表/列', () => {
-  assert.equal(SCHEMA_VERSION, 8);
+test('v1 → v9 迁移（逐级 additive）：既有 users/outbox/inbound 数据保留 + 新增表/列', () => {
+  assert.equal(SCHEMA_VERSION, 9);
   const db = openDatabase(v1Path);
   try {
     // 数据不丢
@@ -165,7 +165,7 @@ test('v1 → v8 迁移（逐级 additive）：既有 users/outbox/inbound 数据
     assert.equal(oldOutbox.status, 'sent');
     assert.equal(oldOutbox.media_id, null, '旧 outbox 行 media_id 应为 NULL');
     assert.equal(Number(oldOutbox.caption_sent_at), 0, '旧 outbox 行 caption_sent_at 应为 0');
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.ok(tableExists(db, 'app_rules'), 'app_rules 表应存在（schema v5）');
     assert.ok(tableExists(db, 'app_rule_logs'), 'app_rule_logs 表应存在（schema v5）');
 
@@ -214,7 +214,7 @@ test('v1 → v8 迁移（逐级 additive）：既有 users/outbox/inbound 数据
   // 幂等：再次打开（已升级库）不报错、数据与列不变
   const again = openDatabase(v1Path);
   try {
-    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(again, 'users'), 2);
     assert.equal(count(again, 'outbox'), 4);
     assert.equal(count(again, 'inbound_messages'), 2);
@@ -228,18 +228,18 @@ test('v1 → v8 迁移（逐级 additive）：既有 users/outbox/inbound 数据
   }
   const third = openDatabase(v1Path);
   try {
-    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(third, 'users'), 2);
   } finally {
     third.close();
   }
 });
 
-test('全新数据库直接创建为最新（v8）结构', () => {
+test('全新数据库直接创建为最新（v9）结构', () => {
   const freshPath = path.join(v1Dir, 'fresh.db');
   const db = openDatabase(freshPath);
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     const outboxColumns = tableColumns(db, 'outbox');
     assert.ok(outboxColumns.has('media_id'));
     assert.ok(outboxColumns.has('caption_sent_at'));

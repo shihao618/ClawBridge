@@ -153,7 +153,14 @@ test('创建/查看：TaskView 结构、nextRunAt 计算、header 只回 names�
   assert.match(task.id, /^task_/);
   assert.equal(task.name, '天气推送');
   assert.equal(task.enabled, true);
-  assert.deepEqual(task.schedule, { type: 'interval', intervalMs: 120000, dailyTime: '08:00', timezone: 'Asia/Shanghai' });
+  assert.deepEqual(task.schedule, {
+    type: 'interval',
+    intervalMs: 120000,
+    dailyTime: '08:00',
+    windowStart: '',
+    windowEnd: '',
+    timezone: 'Asia/Shanghai',
+  });
   assert.equal(task.targets.type, 'users');
   assert.deepEqual(task.targets.ids, [user.id]);
   assert.deepEqual(task.targets.names, ['目标用户']);

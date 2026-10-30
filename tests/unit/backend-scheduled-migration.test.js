@@ -1,5 +1,5 @@
 /**
- * 回归测试：DB schema v6 → v8 additive migration（v7 定时通知 + v8 运行配置；docs/SCHEDULED_TASKS.md §1、docs/SETTINGS.md §1）。
+ * 回归测试：DB schema v6 → v9 additive migration（v7 定时通知 + v8 运行配置；docs/SCHEDULED_TASKS.md §1、docs/SETTINGS.md §1）。
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -129,8 +129,8 @@ const tableExists = (db, name) =>
 const indexExists = (db, name) =>
   Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name=?").get(name));
 
-test('v6 → v8 迁移：既有数据零丢失 + scheduled_tasks/scheduled_task_logs 表/索引 + app_settings 表 + 幂等', () => {
-  assert.equal(SCHEMA_VERSION, 8);
+test('v6 → v9 迁移：既有数据零丢失 + scheduled_tasks/scheduled_task_logs 表/索引 + app_settings 表 + 幂等', () => {
+  assert.equal(SCHEMA_VERSION, 9);
   const db = openDatabase(v6Path);
   try {
     assert.equal(count(db, 'users'), 2);
@@ -147,7 +147,13 @@ test('v6 → v8 迁移：既有数据零丢失 + scheduled_tasks/scheduled_task_
     assert.equal(Number(alpha.keepalive_enabled), 1);
     assert.equal(db.prepare('SELECT name FROM groups WHERE id = ?').get('grp_v6_1').name, '真实分组');
     assert.equal(Number(db.prepare('SELECT keepalive_enabled FROM groups WHERE id = ?').get('grp_v6_1').keepalive_enabled), 1);
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
+    // v9 增量：scheduled_tasks 每日生效时间段列（旧行默认空字符串）
+    for (const column of ['window_start', 'window_end']) {
+      const info = db.prepare('PRAGMA table_info(scheduled_tasks)').all().find((row) => row.name === column);
+      assert.ok(info, `scheduled_tasks.${column} 应存在（schema v9）`);
+      assert.equal(String(info.dflt_value ?? ''), "''", `${column} 默认值应为空字符串`);
+    }
     // v8 新表：运行配置（初始为空，使用 env 默认值）
     assert.ok(tableExists(db, 'app_settings'), 'app_settings 表应存在（schema v8）');
     assert.equal(count(db, 'app_settings'), 0);
@@ -183,7 +189,7 @@ test('v6 → v8 迁移：既有数据零丢失 + scheduled_tasks/scheduled_task_
   // 幂等
   const again = openDatabase(v6Path);
   try {
-    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(again, 'users'), 2);
     assert.equal(count(again, 'scheduled_tasks'), 1);
     assert.ok(tableExists(again, 'scheduled_tasks'));
@@ -192,18 +198,18 @@ test('v6 → v8 迁移：既有数据零丢失 + scheduled_tasks/scheduled_task_
   }
   const third = openDatabase(v6Path);
   try {
-    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(third.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(third, 'users'), 2);
   } finally {
     third.close();
   }
 });
 
-test('全新数据库直接创建为 v8 结构', () => {
+test('全新数据库直接创建为 v9 结构', () => {
   const freshPath = path.join(v6Dir, 'fresh.db');
   const db = openDatabase(freshPath);
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.ok(tableExists(db, 'scheduled_tasks'));
     assert.ok(tableExists(db, 'scheduled_task_logs'));
     db.prepare(
@@ -212,5 +218,62 @@ test('全新数据库直接创建为 v8 结构', () => {
     assert.equal(count(db, 'scheduled_tasks'), 1);
   } finally {
     db.close();
+  }
+});
+
+test('v8 → v9 迁移：既有 scheduled_tasks 数据保留 + window 列默认空字符串 + 幂等', () => {
+  const v8Path = path.join(v6Dir, 'v8.db');
+  // 构造 v8（无 window 列）的 scheduled_tasks
+  const v8 = new DatabaseSync(v8Path);
+  v8.exec('PRAGMA journal_mode = WAL;');
+  v8.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE scheduled_tasks (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+      schedule_type TEXT NOT NULL DEFAULT 'interval', interval_ms INTEGER NOT NULL DEFAULT 3600000,
+      daily_time TEXT NOT NULL DEFAULT '08:00', target_type TEXT NOT NULL DEFAULT 'users',
+      target_ids TEXT NOT NULL DEFAULT '[]', request_method TEXT NOT NULL DEFAULT 'GET',
+      request_url TEXT NOT NULL, request_headers_enc TEXT, request_body_template TEXT NOT NULL DEFAULT '',
+      response_type TEXT NOT NULL DEFAULT 'json', response_path TEXT NOT NULL DEFAULT '',
+      reply_template TEXT NOT NULL DEFAULT '', fallback_text TEXT NOT NULL DEFAULT '',
+      timeout_ms INTEGER NOT NULL DEFAULT 8000, last_run_at INTEGER NOT NULL DEFAULT 0,
+      last_status TEXT NOT NULL DEFAULT '', next_run_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_scheduled_tasks_due ON scheduled_tasks(enabled, next_run_at);
+  `);
+  v8.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '8')").run();
+  v8.prepare(
+    `INSERT INTO scheduled_tasks (id, name, schedule_type, interval_ms, target_ids, request_url, next_run_at, created_at, updated_at)
+     VALUES ('task_v8_old', '旧窗口任务', 'interval', 60000, '[]', 'https://a.example', 12345, 1, 1)`,
+  ).run();
+  v8.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  v8.close();
+
+  const migrated = openDatabase(v8Path);
+  try {
+    assert.equal(migrated.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
+    const columns = new Set(migrated.prepare('PRAGMA table_info(scheduled_tasks)').all().map((row) => row.name));
+    assert.ok(columns.has('window_start') && columns.has('window_end'), 'window 列应由 v8→v9 迁移补齐');
+    const row = migrated.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get('task_v8_old');
+    assert.equal(row.name, '旧窗口任务');
+    assert.equal(Number(row.next_run_at), 12345);
+    assert.equal(row.window_start, '', '旧任务 window_start 默认空字符串');
+    assert.equal(row.window_end, '', '旧任务 window_end 默认空字符串');
+    // 可写入窗口值
+    migrated.prepare("UPDATE scheduled_tasks SET window_start = '22:00', window_end = '06:00' WHERE id = 'task_v8_old'").run();
+    assert.equal(migrated.prepare('SELECT window_start FROM scheduled_tasks WHERE id = ?').get('task_v8_old').window_start, '22:00');
+  } finally {
+    migrated.close();
+  }
+
+  // 幂等
+  const again = openDatabase(v8Path);
+  try {
+    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
+    assert.equal(count(again, 'scheduled_tasks'), 1);
+    assert.equal(again.prepare('SELECT window_start FROM scheduled_tasks WHERE id = ?').get('task_v8_old').window_start, '22:00');
+  } finally {
+    again.close();
   }
 });

@@ -295,7 +295,6 @@
             </p>
             <div id="rule-tabs" class="tab-bar" role="tablist" aria-label="接口应用视图">
               <button class="tab-btn is-active" type="button" role="tab" aria-selected="true" data-rule-tab="rules">规则列表</button>
-              <button class="tab-btn" type="button" role="tab" aria-selected="false" data-rule-tab="logs">运行日志</button>
               <button class="tab-btn" type="button" role="tab" aria-selected="false" data-rule-tab="schedule">定时通知</button>
             </div>
 
@@ -322,45 +321,6 @@
                   </thead>
                   <tbody id="app-rule-table-body"></tbody>
                 </table>
-              </div>
-            </div>
-
-            <div id="rule-logs-panel" class="rule-panel" hidden>
-              <div class="toolbar toolbar-slim">
-                <select id="rule-log-rule-filter" class="select" aria-label="按规则筛选日志">
-                  <option value="">全部规则</option>
-                </select>
-                <select id="rule-log-status-filter" class="select" aria-label="按状态筛选日志">
-                  <option value="">全部状态</option>
-                  <option value="success">成功</option>
-                  <option value="failed">失败</option>
-                  <option value="skipped">跳过</option>
-                  <option value="matched">命中</option>
-                </select>
-                <span class="form-hint">展示最近运行记录，按时间倒序。</span>
-              </div>
-              <div class="table-wrap card card-flush">
-                <table class="data-table data-table-logs">
-                  <thead>
-                    <tr>
-                      <th scope="col">时间</th>
-                      <th scope="col">规则</th>
-                      <th scope="col">用户</th>
-                      <th scope="col">状态</th>
-                      <th scope="col">HTTP</th>
-                      <th scope="col">耗时</th>
-                      <th scope="col">错误</th>
-                      <th scope="col">参数预览</th>
-                      <th scope="col">响应预览</th>
-                    </tr>
-                  </thead>
-                  <tbody id="rule-log-table-body"></tbody>
-                </table>
-              </div>
-              <div id="rule-log-pagination" class="pagination">
-                <button id="rule-log-prev" class="btn btn-secondary btn-sm" type="button">上一页</button>
-                <span id="rule-log-page-info" class="pagination-info">第 1 / 1 页</span>
-                <button id="rule-log-next" class="btn btn-secondary btn-sm" type="button">下一页</button>
               </div>
             </div>
 

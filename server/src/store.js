@@ -1088,6 +1088,9 @@ export function mapScheduledTaskRow(row) {
       type: row.schedule_type ?? 'interval',
       intervalMs: toNumber(row.interval_ms),
       dailyTime: row.daily_time ?? '08:00',
+      // 每日生效时间段（仅 interval；空字符串表示不限）
+      windowStart: row.window_start ?? '',
+      windowEnd: row.window_end ?? '',
       timezone: config.scheduler.timezone,
     },
     targets: {
@@ -1140,6 +1143,8 @@ const SCHEDULED_TASK_COLUMNS = {
   scheduleType: 'schedule_type',
   intervalMs: 'interval_ms',
   dailyTime: 'daily_time',
+  windowStart: 'window_start',
+  windowEnd: 'window_end',
   targetType: 'target_type',
   targetIds: 'target_ids',
   requestMethod: 'request_method',

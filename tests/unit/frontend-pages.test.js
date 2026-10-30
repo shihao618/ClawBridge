@@ -113,13 +113,6 @@ const REQUIRED_IDS = {
     'app-rule-table-body',
     'rule-tabs',
     'rule-rules-panel',
-    'rule-logs-panel',
-    'rule-log-rule-filter',
-    'rule-log-status-filter',
-    'rule-log-table-body',
-    'rule-log-prev',
-    'rule-log-next',
-    'rule-log-page-info',
     'rule-schedule-panel',
     'schedule-total',
     'btn-create-schedule',
@@ -770,8 +763,11 @@ test('接口应用：管理后台脚本实现规则 CRUD、表单、测试运行
     'rule-extraction-mode',
     'openAppRuleEditor',
     'openAppRuleTestModal',
-    'loadRuleLogsInline',
+    'openRuleLogsModal',
     'setRuleTab',
+    'rule-log-modal-status',
+    'rule-log-modal-body',
+    'rule-log-modal-prev',
     'buildRuleTestResultNodes',
     'priority',
     'cooldownMs',
@@ -784,6 +780,49 @@ test('接口应用：管理后台脚本实现规则 CRUD、表单、测试运行
     assert.ok(admin.includes(token), `admin.js 应包含接口应用实现：${token}`);
   }
   assert.match(admin, /\/app-rules\/\$\{encodeURIComponent/, '规则接口应使用编码后的规则 ID');
+});
+
+test('接口应用：规则日志改为弹窗（移除独立日志 Tab）', async () => {
+  const admin = await readAsset('admin.js');
+  for (const token of [
+    'openRuleLogsModal',
+    'rule-log-modal-status',
+    'rule-log-modal-body',
+    'rule-log-modal-prev',
+    'rule-log-modal-next',
+    'rule-log-modal-page-info',
+    '加载规则运行日志失败',
+  ]) {
+    assert.ok(admin.includes(token), `admin.js 应包含规则日志弹窗实现：${token}`);
+  }
+  assert.match(admin, /params\.set\('ruleId', rule\.id\)/, '规则日志弹窗应固定按 ruleId 查询');
+  assert.ok(!admin.includes('loadRuleLogsInline'), '不应再保留内联日志加载函数');
+  assert.ok(!admin.includes('updateRuleLogFilterOptions'), '不应再保留内联日志筛选函数');
+  const html = await readPage('admin.html');
+  assert.ok(!html.includes('data-rule-tab="logs"'), '不应再有「运行日志」Tab');
+  assert.ok(!html.includes('id="rule-logs-panel"'), '不应再有运行日志面板');
+  assert.ok(
+    html.includes('data-rule-tab="rules"') && html.includes('data-rule-tab="schedule"'),
+    '应保留规则列表与定时通知两个 Tab',
+  );
+});
+
+test('定时通知：interval 可选每日生效时间段（windowStart/windowEnd）', async () => {
+  const admin = await readAsset('admin.js');
+  for (const token of [
+    'windowStart',
+    'windowEnd',
+    'schedule-window-start',
+    'schedule-window-end',
+    '每日生效时间段',
+    '需同时填写开始与结束时间',
+    '开始与结束时间不能相同',
+    '支持跨午夜',
+  ]) {
+    assert.ok(admin.includes(token), `admin.js 应包含 interval 生效时间段实现：${token}`);
+  }
+  assert.match(admin, /windowStart,\s*\n\s*windowEnd,/, '保存 payload 应携带 windowStart/windowEnd');
+  assert.match(admin, /summary\}（\$\{windowStart\}–\$\{windowEnd\}）/, '列表摘要应显示「每 N 分钟（08:00–20:00）」');
 });
 
 test('接口应用：后台页面包含规则区块', async () => {

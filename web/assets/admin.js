@@ -115,9 +115,7 @@ const state = {
   groups: [],
   /** 接口应用规则（docs/API_RULES.md §7）。 */
   appRules: { items: [], filter: 'all' },
-  /** 接口应用页内「运行日志」Tab 状态。 */
-  ruleLogs: { ruleId: '', status: '', offset: 0, total: 0 },
-  /** 接口应用页内 Tab：'rules' | 'logs' | 'schedule'。 */
+  /** 接口应用页内 Tab：'rules' | 'schedule'。 */
   ruleTab: 'rules',
   /** 接口应用「定时通知」Tab：ScheduledTaskView 列表（docs/SCHEDULED_TASKS.md §5/§6）。 */
   scheduled: { items: [], loaded: false, timezone: 'Asia/Shanghai' },
@@ -185,13 +183,6 @@ const els = {
 
   ruleTabs: $('#rule-tabs'),
   ruleRulesPanel: $('#rule-rules-panel'),
-  ruleLogsPanel: $('#rule-logs-panel'),
-  ruleLogRuleFilter: $('#rule-log-rule-filter'),
-  ruleLogStatusFilter: $('#rule-log-status-filter'),
-  ruleLogTableBody: $('#rule-log-table-body'),
-  ruleLogPrev: $('#rule-log-prev'),
-  ruleLogNext: $('#rule-log-next'),
-  ruleLogPageInfo: $('#rule-log-page-info'),
 
   appRulesHeadActions: $('#app-rules-head-actions'),
   scheduleHeadActions: $('#schedule-head-actions'),
@@ -357,34 +348,14 @@ function init() {
     handleRoute().catch(loadErrorHandler('切换视图失败'));
   });
 
-  // 接口应用页内 Tab：规则列表 / 运行日志
+  // 接口应用页内 Tab：规则列表 / 定时通知
   els.ruleTabs.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-rule-tab]');
     if (!button) return;
     setRuleTab(button.dataset.ruleTab);
   });
-  els.ruleLogRuleFilter.addEventListener('change', () => {
-    state.ruleLogs.ruleId = els.ruleLogRuleFilter.value || '';
-    state.ruleLogs.offset = 0;
-    loadRuleLogsInline().catch(loadErrorHandler('加载运行日志失败'));
-  });
-  els.ruleLogStatusFilter.addEventListener('change', () => {
-    state.ruleLogs.status = els.ruleLogStatusFilter.value || '';
-    state.ruleLogs.offset = 0;
-    loadRuleLogsInline().catch(loadErrorHandler('加载运行日志失败'));
-  });
-  els.ruleLogPrev.addEventListener('click', () => {
-    if (state.ruleLogs.offset <= 0) return;
-    state.ruleLogs.offset = Math.max(0, state.ruleLogs.offset - PAGE_SIZE);
-    loadRuleLogsInline().catch(loadErrorHandler('加载运行日志失败'));
-  });
-  els.ruleLogNext.addEventListener('click', () => {
-    if (state.ruleLogs.offset + PAGE_SIZE >= state.ruleLogs.total) return;
-    state.ruleLogs.offset += PAGE_SIZE;
-    loadRuleLogsInline().catch(loadErrorHandler('加载运行日志失败'));
-  });
 
-  // 定时通知（接口应用第三个 Tab）
+  // 定时通知（接口应用第二个 Tab）
   els.createScheduleButton.addEventListener('click', () => openScheduleEditor(null));
   els.scheduleTableBody.addEventListener('click', handleScheduleTableClick);
 
@@ -1070,7 +1041,6 @@ async function loadAppRules() {
   const data = await apiFetch('/api/admin/app-rules?includeDisabled=1');
   state.appRules.items = data && Array.isArray(data.items) ? data.items : [];
   renderAppRules();
-  updateRuleLogFilterOptions();
 }
 
 function filteredAppRules() {
@@ -1223,7 +1193,7 @@ function handleAppRuleTableClick(event) {
   if (action === 'toggle-rule') toggleAppRule(rule, button);
   else if (action === 'edit') openAppRuleEditor(rule);
   else if (action === 'test') openAppRuleTestModal(rule);
-  else if (action === 'logs') showRuleLogsFor(rule);
+  else if (action === 'logs') openRuleLogsModal(rule);
   else if (action === 'delete') deleteAppRule(rule);
 }
 
@@ -2177,11 +2147,11 @@ function buildRuleTestResultNodes(result) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 接口应用页内「运行日志」Tab（不占菜单）                              */
+/* 接口应用页内 Tab + 规则运行日志弹窗                                   */
 /* ------------------------------------------------------------------ */
 
 function setRuleTab(tab) {
-  const target = tab === 'logs' || tab === 'schedule' ? tab : 'rules';
+  const target = tab === 'schedule' ? 'schedule' : 'rules';
   state.ruleTab = target;
   for (const button of $$('button[data-rule-tab]', els.ruleTabs)) {
     const active = button.dataset.ruleTab === target;
@@ -2189,87 +2159,134 @@ function setRuleTab(tab) {
     button.setAttribute('aria-selected', active ? 'true' : 'false');
   }
   setHidden(els.ruleRulesPanel, target !== 'rules');
-  setHidden(els.ruleLogsPanel, target !== 'logs');
   if (els.ruleSchedulePanel) setHidden(els.ruleSchedulePanel, target !== 'schedule');
-  // 视图头部操作按钮跟随 Tab：规则列表 → 新建规则；定时通知 → 新建任务；运行日志 → 不显示
+  // 视图头部操作按钮跟随 Tab：规则列表 → 新建规则；定时通知 → 新建任务
   if (els.appRulesHeadActions) setHidden(els.appRulesHeadActions, target !== 'rules');
   if (els.scheduleHeadActions) setHidden(els.scheduleHeadActions, target !== 'schedule');
-  if (target === 'logs') {
-    loadRuleLogsInline().catch(loadErrorHandler('加载运行日志失败'));
-  } else if (target === 'schedule') {
+  if (target === 'schedule') {
     loadScheduledTasks().catch(loadErrorHandler('加载定时任务失败'));
   }
 }
 
-function showRuleLogsFor(rule) {
-  if (rule && rule.id) {
-    state.ruleLogs.ruleId = rule.id;
-    state.ruleLogs.offset = 0;
-  }
-  if (els.ruleLogRuleFilter) els.ruleLogRuleFilter.value = state.ruleLogs.ruleId || '';
-  setRuleTab('logs');
-}
+/**
+ * 规则运行日志弹窗（与定时通知运行日志弹窗同风格：状态筛选 + 分页）。
+ * GET /api/admin/app-rule-logs?ruleId=&status=&limit=&offset=
+ */
+function openRuleLogsModal(rule) {
+  const local = { status: '', offset: 0, limit: PAGE_SIZE, total: 0 };
+  const statusSelect = el(
+    'select',
+    { id: 'rule-log-modal-status', class: 'select' },
+    ...[
+      ['', '全部状态'],
+      ['success', '成功'],
+      ['failed', '失败'],
+      ['skipped', '跳过'],
+      ['matched', '命中'],
+    ].map(([value, label]) => el('option', { value, text: label })),
+  );
+  const tbody = el('tbody', { id: 'rule-log-modal-body' });
+  const pageInfo = el('span', { id: 'rule-log-modal-page-info', class: 'pagination-info', text: '第 1 / 1 页' });
+  const prevButton = el('button', { id: 'rule-log-modal-prev', class: 'btn btn-secondary btn-sm', type: 'button', text: '上一页' });
+  const nextButton = el('button', { id: 'rule-log-modal-next', class: 'btn btn-secondary btn-sm', type: 'button', text: '下一页' });
+  const body = el(
+    'div',
+    { class: 'rule-logs' },
+    el(
+      'div',
+      { class: 'toolbar toolbar-slim' },
+      statusSelect,
+      el('span', { class: 'form-hint', text: `规则：${rule.name || rule.id}；按时间倒序展示最近运行记录。` }),
+    ),
+    el(
+      'div',
+      { class: 'table-wrap' },
+      el(
+        'table',
+        { class: 'data-table data-table-logs' },
+        el('thead', {}, el('tr', {},
+          ...['时间', '规则', '用户', '状态', 'HTTP', '耗时', '错误', '参数预览', '响应预览'].map((label) =>
+            el('th', { scope: 'col', text: label }),
+          ),
+        )),
+        tbody,
+      ),
+    ),
+    el('div', { class: 'pagination' }, prevButton, pageInfo, nextButton),
+  );
 
-function updateRuleLogFilterOptions() {
-  if (!els.ruleLogRuleFilter) return;
-  const current = state.ruleLogs.ruleId;
-  clearNode(els.ruleLogRuleFilter);
-  els.ruleLogRuleFilter.append(el('option', { value: '', text: '全部规则' }));
-  for (const rule of state.appRules.items) {
-    els.ruleLogRuleFilter.append(el('option', { value: rule.id, text: rule.name || rule.id }));
-  }
-  const exists = [...els.ruleLogRuleFilter.options].some((option) => option.value === current);
-  els.ruleLogRuleFilter.value = exists ? current : '';
-  state.ruleLogs.ruleId = els.ruleLogRuleFilter.value;
-}
-
-async function loadRuleLogsInline() {
-  if (!els.ruleLogTableBody) return;
-  const params = new URLSearchParams();
-  params.set('limit', String(PAGE_SIZE));
-  params.set('offset', String(state.ruleLogs.offset));
-  if (state.ruleLogs.ruleId) params.set('ruleId', state.ruleLogs.ruleId);
-  if (state.ruleLogs.status) params.set('status', state.ruleLogs.status);
-  const data = await apiFetch(`/api/admin/app-rule-logs?${params.toString()}`);
-  state.ruleLogs.total = toCount(data && data.total);
-  renderRuleLogsInline(data && Array.isArray(data.items) ? data.items : []);
-}
-
-function renderRuleLogsInline(items) {
-  if (!els.ruleLogTableBody) return;
-  clearNode(els.ruleLogTableBody);
-  if (items.length === 0) {
-    els.ruleLogTableBody.append(
-      el('tr', {}, el('td', { class: 'empty-cell', colspan: '9' }, el('span', { class: 'empty-text', text: '暂无运行日志' }))),
-    );
-  } else {
-    for (const log of items) {
-      const statusMeta = RULE_RUN_STATUS_META[log.status] || { label: log.status || '—', className: 'badge-muted' };
-      els.ruleLogTableBody.append(
-        el('tr', {},
-          el('td', { class: 'cell-nowrap' }, el('div', { text: formatDateTime(log.createdAt) }), el('div', { class: 'cell-muted', text: formatRelative(log.createdAt) })),
-          el('td', { class: 'cell-mono', text: log.ruleName || log.ruleId || '—' }),
-          el('td', { class: 'cell-mono', text: log.userId || '—' }),
-          el('td', {}, el('span', { class: `badge ${statusMeta.className}`, text: statusMeta.label })),
-          el('td', { class: 'cell-mono', text: log.httpStatus === null || log.httpStatus === undefined ? '—' : String(log.httpStatus) }),
-          el('td', { class: 'cell-mono cell-nowrap', text: log.latencyMs === null || log.latencyMs === undefined ? '—' : `${log.latencyMs} ms` }),
-          el('td', { class: 'cell-error', text: log.error || '—' }),
-          el('td', { class: 'cell-muted log-preview', title: log.paramsPreview || '', text: log.paramsPreview || '—' }),
-          el('td', { class: 'cell-muted log-preview', title: log.responsePreview || '', text: log.responsePreview || '—' }),
-        ),
-      );
+  async function load() {
+    clearNode(tbody);
+    tbody.append(el('tr', {}, el('td', { class: 'empty-cell', colspan: '9' }, el('span', { class: 'empty-text', text: '加载中…' }))));
+    try {
+      const params = new URLSearchParams();
+      params.set('ruleId', rule.id);
+      params.set('limit', String(local.limit));
+      params.set('offset', String(local.offset));
+      if (local.status) params.set('status', local.status);
+      const data = await apiFetch(`/api/admin/app-rule-logs?${params.toString()}`);
+      local.total = toCount(data && data.total);
+      const items = data && Array.isArray(data.items) ? data.items : [];
+      clearNode(tbody);
+      if (items.length === 0) {
+        tbody.append(el('tr', {}, el('td', { class: 'empty-cell', colspan: '9' }, el('span', { class: 'empty-text', text: '暂无运行日志' }))));
+      } else {
+        for (const log of items) {
+          const statusMeta = RULE_RUN_STATUS_META[log.status] || { label: log.status || '—', className: 'badge-muted' };
+          tbody.append(
+            el('tr', {},
+              el('td', { class: 'cell-nowrap' }, el('div', { text: formatDateTime(log.createdAt) }), el('div', { class: 'cell-muted', text: formatRelative(log.createdAt) })),
+              el('td', { class: 'cell-mono', text: log.ruleName || log.ruleId || '—' }),
+              el('td', { class: 'cell-mono', text: log.userId || '—' }),
+              el('td', {}, el('span', { class: `badge ${statusMeta.className}`, text: statusMeta.label })),
+              el('td', { class: 'cell-mono', text: log.httpStatus === null || log.httpStatus === undefined ? '—' : String(log.httpStatus) }),
+              el('td', { class: 'cell-mono cell-nowrap', text: log.latencyMs === null || log.latencyMs === undefined ? '—' : `${log.latencyMs} ms` }),
+              el('td', { class: 'cell-error', text: log.error || '—' }),
+              el('td', { class: 'cell-muted log-preview', title: log.paramsPreview || '', text: log.paramsPreview || '—' }),
+              el('td', { class: 'cell-muted log-preview', title: log.responsePreview || '', text: log.responsePreview || '—' }),
+            ),
+          );
+        }
+      }
+      updatePagination();
+    } catch (error) {
+      clearNode(tbody);
+      tbody.append(el('tr', {}, el('td', { class: 'empty-cell', colspan: '9' }, el('span', { class: 'inline-error', text: error && error.message ? error.message : '加载日志失败' }))));
+      if (error && error.status !== 401) toastError(error, '加载规则运行日志失败');
     }
   }
-  updateRuleLogPagination();
-}
 
-function updateRuleLogPagination() {
-  if (!els.ruleLogPageInfo) return;
-  const totalPages = Math.max(1, Math.ceil(state.ruleLogs.total / PAGE_SIZE));
-  const currentPage = Math.min(totalPages, Math.floor(state.ruleLogs.offset / PAGE_SIZE) + 1);
-  els.ruleLogPageInfo.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${formatNumber(state.ruleLogs.total)} 条`;
-  els.ruleLogPrev.disabled = currentPage <= 1;
-  els.ruleLogNext.disabled = currentPage >= totalPages;
+  function updatePagination() {
+    const totalPages = Math.max(1, Math.ceil(local.total / local.limit));
+    const currentPage = Math.min(totalPages, Math.floor(local.offset / local.limit) + 1);
+    pageInfo.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${formatNumber(local.total)} 条`;
+    prevButton.disabled = currentPage <= 1;
+    nextButton.disabled = currentPage >= totalPages;
+  }
+
+  statusSelect.addEventListener('change', () => {
+    local.status = statusSelect.value;
+    local.offset = 0;
+    void load();
+  });
+  prevButton.addEventListener('click', () => {
+    if (local.offset <= 0) return;
+    local.offset = Math.max(0, local.offset - local.limit);
+    void load();
+  });
+  nextButton.addEventListener('click', () => {
+    if (local.offset + local.limit >= local.total) return;
+    local.offset += local.limit;
+    void load();
+  });
+
+  openTrackedModal({
+    title: `运行日志：${rule.name || rule.id}`,
+    size: 'wide',
+    content: [body],
+    actions: [{ label: '关闭', class: 'btn btn-secondary' }],
+  });
+  void load();
 }
 
 /* ------------------------------------------------------------------ */
@@ -2310,7 +2327,11 @@ function schedulePlanSummary(task) {
   if (schedule.type === 'daily') {
     return `每天 ${schedule.dailyTime || '08:00'}（${schedule.timezone || scheduleTimezone()}）`;
   }
-  return formatIntervalSummary(schedule.intervalMs || 3600000);
+  const summary = formatIntervalSummary(schedule.intervalMs || 3600000);
+  const windowStart = typeof schedule.windowStart === 'string' ? schedule.windowStart.trim() : '';
+  const windowEnd = typeof schedule.windowEnd === 'string' ? schedule.windowEnd.trim() : '';
+  if (windowStart && windowEnd) return `${summary}（${windowStart}–${windowEnd}）`;
+  return summary;
 }
 
 function scheduleTargetSummary(task) {
@@ -2531,9 +2552,38 @@ async function openScheduleEditor(task = null) {
   });
   const intervalField = formField('间隔（分钟，1–43200）', intervalMinutesInput, '最小 1 分钟；例如 60 = 每小时一次。', 'schedule-interval-minutes');
   const dailyField = formField('每日时间（HH:mm）', dailyTimeInput, `按服务端时区 ${timezone} 执行；错过后启动时补跑一次。`, 'schedule-daily-time');
+  // interval 可选「每日生效时间段」（windowStart/windowEnd，HH:mm，成对可空，支持跨午夜）
+  const windowStartInput = el('input', {
+    id: 'schedule-window-start',
+    class: 'input input-narrow',
+    type: 'time',
+    value: typeof schedule.windowStart === 'string' ? schedule.windowStart : '',
+  });
+  const windowEndInput = el('input', {
+    id: 'schedule-window-end',
+    class: 'input input-narrow',
+    type: 'time',
+    value: typeof schedule.windowEnd === 'string' ? schedule.windowEnd : '',
+  });
+  const windowField = el(
+    'div',
+    { class: 'form-field' },
+    el('span', { class: 'form-label', text: '每日生效时间段（可选，仅间隔计划）' }),
+    el(
+      'div',
+      { class: 'rule-form-grid' },
+      formField('开始时间（HH:mm）', windowStartInput, null, 'schedule-window-start'),
+      formField('结束时间（HH:mm）', windowEndInput, '支持跨午夜，如 22:00–06:00。', 'schedule-window-end'),
+    ),
+    el('p', {
+      class: 'form-hint',
+      text: '留空=全天生效；两个时间需同时填写或同时留空，开始时间不能等于结束时间。',
+    }),
+  );
   const timezoneHint = el('p', { class: 'form-hint', text: `当前时区：${timezone}（由服务端 SCHEDULER_TIMEZONE 决定）` });
   function syncScheduleFields() {
     setHidden(intervalField, scheduleType !== 'interval');
+    setHidden(windowField, scheduleType !== 'interval');
     setHidden(dailyField, scheduleType !== 'daily');
   }
   typeSelect.addEventListener('change', () => {
@@ -2808,6 +2858,7 @@ async function openScheduleEditor(task = null) {
       '间隔任务从上次执行时间 + 间隔计算下次；每日任务按服务端时区 HH:mm 执行。',
       formField('计划类型', typeSelect, null, 'schedule-type'),
       intervalField,
+      windowField,
       dailyField,
       timezoneHint,
     ),
@@ -2865,7 +2916,20 @@ async function openScheduleEditor(task = null) {
             if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43200) {
               return showFormError('间隔必须是 1–43200 的整数分钟');
             }
-            schedulePayload = { type: 'interval', intervalMs: minutes * 60000 };
+            const windowStart = String(windowStartInput.value || '').trim();
+            const windowEnd = String(windowEndInput.value || '').trim();
+            if ((windowStart && !windowEnd) || (!windowStart && windowEnd)) {
+              return showFormError('生效时间段需同时填写开始与结束时间');
+            }
+            if (windowStart && windowEnd && windowStart === windowEnd) {
+              return showFormError('生效时间段的开始与结束时间不能相同');
+            }
+            schedulePayload = {
+              type: 'interval',
+              intervalMs: minutes * 60000,
+              windowStart,
+              windowEnd,
+            };
           } else {
             const dailyTime = String(dailyTimeInput.value || '').trim();
             if (!/^\d{2}:\d{2}$/.test(dailyTime)) return showFormError('每日时间格式必须是 HH:mm');

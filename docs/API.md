@@ -662,11 +662,12 @@ POST   /api/admin/scheduled-tasks/{id}/run           → 200（立即执行一�
 GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset=
 ```
 
-TaskView 关键字段：`schedule{type,intervalMs,dailyTime,timezone}`、`targets{type,ids,names}`、
+TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEnd,timezone}`、`targets{type,ids,names}`、
 `request{method,url,headerNames,bodyTemplate}`、`response{type,path,template,fallbackText}`、
 `nextRunAt/lastRunAt/lastStatus`。Header 值加密保存、读取只返回名称。
 
-**计划**：`interval`（每 N 分钟，60s–30d）或 `daily`（每天 HH:mm，时区 `SCHEDULER_TIMEZONE`，默认 Asia/Shanghai）；
+**计划**：`interval`（每 N 分钟，60s–30d；可选 `windowStart`/`windowEnd` 每日生效时间段，HH:mm、成对、支持跨午夜）
+或 `daily`（每天 HH:mm，时区 `SCHEDULER_TIMEZONE`，默认 Asia/Shanghai）；
 任务执行后写 `nextRunAt`，服务重启时过期任务补跑一次（避免漏发）。
 
 **发送**：解析成功后按回复模板（`{{path}}`/`{{response}}`/`{{raw}}`）渲染通知文本，

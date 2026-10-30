@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 ```
 
-- `SCHEMA_VERSION=8`；v7→v8 保留全部数据；新表空时使用 env 默认值。
+- `app_settings` 表引入于 schema v8；当前 `SCHEMA_VERSION=9`（v9 为定时任务窗口列，不影响本表）；v7→v8 保留全部数据；新表空时使用 env 默认值。
 - 只存**被修改过**的字段（新增/删除字段不影响未设置的默认值）。
 
 ## 2. 服务端 `server/src/settings.js`

@@ -1,5 +1,5 @@
 /**
- * 回归测试：DB schema v7 → v8 additive migration（app_settings，docs/SETTINGS.md §1）。
+ * 回归测试：DB schema v7 → v9 additive migration（app_settings，docs/SETTINGS.md §1）。
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -82,8 +82,8 @@ const count = (db, table) => Number(db.prepare(`SELECT COUNT(*) AS c FROM ${tabl
 const tableExists = (db, name) =>
   Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name));
 
-test('v7 → v8 迁移：既有数据零丢失 + app_settings 表 + 幂等', () => {
-  assert.equal(SCHEMA_VERSION, 8);
+test('v7 → v9 迁移：既有数据零丢失 + app_settings 表 + 幂等', () => {
+  assert.equal(SCHEMA_VERSION, 9);
   const db = openDatabase(v7Path);
   try {
     assert.equal(count(db, 'users'), 1);
@@ -93,7 +93,7 @@ test('v7 → v8 迁移：既有数据零丢失 + app_settings 表 + 幂等', () 
     assert.equal(count(db, 'scheduled_tasks'), 1);
     assert.equal(db.prepare('SELECT display_name FROM users WHERE id = ?').get('u_v7_alpha').display_name, '真实用户甲');
     assert.equal(db.prepare('SELECT name FROM groups WHERE id = ?').get('grp_v7_1').name, '真实分组');
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
 
     assert.ok(tableExists(db, 'app_settings'), 'app_settings 表应存在');
     assert.equal(count(db, 'app_settings'), 0);
@@ -118,7 +118,7 @@ test('v7 → v8 迁移：既有数据零丢失 + app_settings 表 + 幂等', () 
   // 幂等
   const again = openDatabase(v7Path);
   try {
-    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(again.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.equal(count(again, 'users'), 1);
     assert.equal(count(again, 'app_settings'), 2);
     assert.ok(tableExists(again, 'app_settings'));
@@ -127,11 +127,11 @@ test('v7 → v8 迁移：既有数据零丢失 + app_settings 表 + 幂等', () 
   }
 });
 
-test('全新数据库直接创建为 v8 结构', () => {
+test('全新数据库直接创建为 v9 结构', () => {
   const freshPath = path.join(v7Dir, 'fresh.db');
   const db = openDatabase(freshPath);
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
     assert.ok(tableExists(db, 'app_settings'));
     db.prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)').run('keepalive.enabled', 'false', 1);
     assert.equal(count(db, 'app_settings'), 1);

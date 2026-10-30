@@ -132,6 +132,71 @@ export function computeDailyNextRun(now, dailyTime, timeZone = config.scheduler.
   );
 }
 
+/** 解析 HH:mm 为「当天分钟数」；非法返回 null。 */
+export function parseClockTime(value) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value ?? '').trim());
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function localMinuteOfDay(ts, timeZone = config.scheduler.timezone) {
+  const parts = getZonedParts(ts, timeZone);
+  return parts.hour * 60 + parts.minute;
+}
+
+/** 任务是否配置了每日生效时间段（仅 interval 有意义；成对且 start!=end）。 */
+export function scheduleWindowOf(task) {
+  const start = task?.schedule?.windowStart ?? task?.window_start ?? task?.windowStart ?? '';
+  const end = task?.schedule?.windowEnd ?? task?.window_end ?? task?.windowEnd ?? '';
+  const startMinutes = parseClockTime(start);
+  const endMinutes = parseClockTime(end);
+  if (startMinutes === null || endMinutes === null || startMinutes === endMinutes) return null;
+  return { startMinutes, endMinutes, start, end };
+}
+
+/** 时间戳是否落在每日生效时间段内（支持跨午夜；区间 [start, end)）。 */
+export function isInDailyWindow(ts, start, end, timeZone = config.scheduler.timezone) {
+  const startMinutes = typeof start === 'number' ? start : parseClockTime(start);
+  const endMinutes = typeof end === 'number' ? end : parseClockTime(end);
+  if (startMinutes === null || endMinutes === null || startMinutes === endMinutes) return false;
+  const minute = localMinuteOfDay(ts, timeZone);
+  if (startMinutes < endMinutes) return minute >= startMinutes && minute < endMinutes;
+  // 跨午夜：22:00–06:00
+  return minute >= startMinutes || minute < endMinutes;
+}
+
+/** ts 之后（严格）的下一个窗口开始时间；无有效窗口返回 null。 */
+export function nextWindowStart(ts, start, end, timeZone = config.scheduler.timezone) {
+  const startMinutes = typeof start === 'number' ? start : parseClockTime(start);
+  const endMinutes = typeof end === 'number' ? end : parseClockTime(end);
+  if (startMinutes === null || endMinutes === null || startMinutes === endMinutes) return null;
+  const local = getZonedParts(ts, timeZone);
+  for (let offset = 0; offset <= 2; offset += 1) {
+    const date = new Date(Date.UTC(local.year, local.month - 1, local.day + offset));
+    const candidate = zonedWallTimeToUtc(
+      date.getUTCFullYear(),
+      date.getUTCMonth() + 1,
+      date.getUTCDate(),
+      Math.floor(startMinutes / 60),
+      startMinutes % 60,
+      timeZone,
+    );
+    if (candidate > Number(ts)) return candidate;
+  }
+  return null;
+}
+
+/** 把 candidate 落入窗口：在窗口内直接用；否则取 candidate 之后的下一个窗口 start。 */
+function clampToWindow(candidate, window, timeZone = config.scheduler.timezone) {
+  if (!window) return candidate;
+  if (isInDailyWindow(candidate, window.startMinutes, window.endMinutes, timeZone)) return candidate;
+  return (
+    nextWindowStart(candidate, window.startMinutes, window.endMinutes, timeZone) ??
+    nextWindowStart(Date.now(), window.startMinutes, window.endMinutes, timeZone) ??
+    candidate
+  );
+}
+
 /** 兼容多种任务对象形态（DB row / API patch / store view）读取计划类型与 daily 时间。 */
 function scheduleTypeOf(task) {
   return task?.schedule?.type ?? task?.schedule_type ?? task?.scheduleType ?? 'interval';
@@ -147,9 +212,17 @@ export function computeInitialNextRun(task, now = deps.now()) {
   if (scheduleType === 'daily') {
     return computeDailyNextRun(now, dailyTimeOf(task), config.scheduler.timezone) ?? now + 60_000;
   }
-  const intervalMs = Number(task.intervalMs ?? task.interval_ms ?? 3600000);
+  const intervalMs = Number(task.intervalMs ?? task.interval_ms ?? task?.schedule?.intervalMs ?? 3600000);
   const clamped = Math.min(MAX_INTERVAL_MS, Math.max(60_000, Number.isFinite(intervalMs) ? intervalMs : 3600000));
-  return Number(now) + clamped;
+  const window = scheduleWindowOf(task);
+  if (!window) return Number(now) + clamped;
+  const timeZone = config.scheduler.timezone;
+  if (!isInDailyWindow(now, window.startMinutes, window.endMinutes, timeZone)) {
+    // 早于窗口 start → 当天窗口 start；晚于窗口 end → 下一个窗口 start
+    return nextWindowStart(now, window.startMinutes, window.endMinutes, timeZone) ?? Number(now) + clamped;
+  }
+  // now 在窗口内：candidate=now+interval；超出窗口 end 则到下一个窗口 start
+  return clampToWindow(Number(now) + clamped, window, timeZone);
 }
 
 /** 本次执行开始后的下一次触发时间（interval=执行开始+间隔；daily=下一次本地 HH:mm）。 */
@@ -165,7 +238,11 @@ export function computeNextAfterRun(task, runStartedAt) {
     MAX_INTERVAL_MS,
     Math.max(60_000, Number(task.interval_ms ?? task.intervalMs ?? task?.schedule?.intervalMs ?? 3600000) || 3600000),
   );
-  return Number(runStartedAt) + intervalMs;
+  const candidate = Number(runStartedAt) + intervalMs;
+  const window = scheduleWindowOf(task);
+  if (!window) return candidate;
+  // candidate 在窗口内 → 用它；否则取 candidate 之后的下一个窗口 start
+  return clampToWindow(candidate, window, config.scheduler.timezone);
 }
 
 /** 超过补跑窗口的 interval 任务顺延到下一个周期（避免重启后积压爆发）。 */
@@ -195,7 +272,28 @@ export function reconcileStartupTasks(now = deps.now()) {
       continue;
     }
     if (task.schedule.type === 'interval') {
+      const window = scheduleWindowOf(task);
       const overdue = Number(now) - nextRunAt;
+      if (window) {
+        // 启动对账：next_run_at 必须落在窗口内，避免启动后立即执行窗口外任务
+        if (!isInDailyWindow(nextRunAt, window.startMinutes, window.endMinutes, config.scheduler.timezone)) {
+          const normalized =
+            overdue > 0
+              ? nextWindowStart(now, window.startMinutes, window.endMinutes, config.scheduler.timezone)
+              : nextWindowStart(nextRunAt, window.startMinutes, window.endMinutes, config.scheduler.timezone);
+          if (normalized) {
+            store.updateScheduledTask(task.id, { nextRunAt: normalized });
+            changed += 1;
+          }
+        } else if (overdue > MAX_CATCHUP_MS) {
+          const advanced = advanceIntervalNextRun(nextRunAt, task.schedule.intervalMs, now);
+          store.updateScheduledTask(task.id, {
+            nextRunAt: clampToWindow(advanced, window, config.scheduler.timezone),
+          });
+          changed += 1;
+        }
+        continue;
+      }
       if (overdue > MAX_CATCHUP_MS) {
         store.updateScheduledTask(task.id, {
           nextRunAt: advanceIntervalNextRun(nextRunAt, task.schedule.intervalMs, now),
@@ -240,6 +338,8 @@ export function parseScheduledTaskRow(row) {
       type: row.schedule_type ?? 'interval',
       intervalMs: Number(row.interval_ms) || 3600000,
       dailyTime: time,
+      windowStart: row.window_start ?? '',
+      windowEnd: row.window_end ?? '',
       timezone: config.scheduler.timezone,
     },
     targets: { type: row.target_type ?? 'users', ids: targetIds },

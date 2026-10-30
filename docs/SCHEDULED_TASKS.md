@@ -15,7 +15,7 @@
 - 单实例调度（与 keepalive 一致）；多副本部署需只让一个副本启用调度器。
 - 默认不启用（无任务），配置后不影响现有功能；任务停用后不再执行。
 
-## 1. 数据库 Schema v7（additive）
+## 1. 数据库 Schema v9（additive）
 
 ```sql
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   schedule_type TEXT NOT NULL DEFAULT 'interval',   -- interval | daily
   interval_ms INTEGER NOT NULL DEFAULT 3600000,     -- interval：最小 60000，最大 30d
   daily_time TEXT NOT NULL DEFAULT '08:00',         -- daily：HH:mm（SCHEDULER_TIMEZONE）
+  window_start TEXT NOT NULL DEFAULT '',            -- interval：每日生效时间段开始 HH:mm（空=不限）
+  window_end TEXT NOT NULL DEFAULT '',              -- interval：每日生效时间段结束 HH:mm
   target_type TEXT NOT NULL DEFAULT 'users',        -- users | groups
   target_ids TEXT NOT NULL DEFAULT '[]',            -- JSON string[]
   request_method TEXT NOT NULL DEFAULT 'GET',       -- GET | POST
@@ -79,6 +81,12 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
 
 - **interval**：首次创建（next_run_at=0）时，next = now + interval_ms；执行后 next = 本次执行开始时间 + interval_ms。
   服务重启后若 next_run_at 已过期 ≤5 分钟内则补跑一次；超过则顺延到下一个周期（避免重启后大量积压任务同时爆发）。
+- **interval + 每日生效时间段（可选）**：`windowStart`/`windowEnd`（HH:mm，成对、可空，支持跨午夜，如 22:00–06:00）。
+  任务只在每天该时间段 `[start, end)` 内执行，next_run_at 必须落在窗口内：
+  - now 在窗口内 → next = now + interval（若超过 end → 下一个窗口 start）；
+  - now 早于窗口 start → next = 当天窗口 start；now 晚于窗口 end → 下一个窗口 start；
+  - 执行后 candidate = 执行开始 + interval，若不在窗口内 → candidate 之后的下一个窗口 start；
+  - 启动对账时窗口外 next 会被修正；daily 计划不支持 window 字段。
 - **daily**：按 `SCHEDULER_TIMEZONE` 的 HH:mm 计算下一次；当前时间已过今天的 HH:mm → 明天 HH:mm；
   创建时若今天该时间已过 → 明天；服务启动时若 next_run_at 已过期 → 立即补跑一次，然后计算下一次。
 - 每 tick 取 `enabled=1 AND next_run_at<=now` 的任务，按 next_run_at 升序、最多 10 个；
@@ -122,7 +130,7 @@ TaskView（GET）不返回 Header 值：
 ```json
 {
   "id":"task_…","name":"每天天气推送","enabled":true,
-  "schedule":{"type":"daily","intervalMs":3600000,"dailyTime":"08:00","timezone":"Asia/Shanghai"},
+  "schedule":{"type":"daily","intervalMs":3600000,"dailyTime":"08:00","windowStart":"","windowEnd":"","timezone":"Asia/Shanghai"},
   "targets":{"type":"groups","ids":["grp_…"],"names":["VIP客户"]},
   "request":{"method":"GET","url":"https://api.example.com/weather?city=北京",
              "headerNames":["Authorization"],"bodyTemplate":""},
@@ -159,7 +167,8 @@ GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset= → { total
 ```
 
 - 创建/更新校验：name 1..60；schedule.type ∈ interval/daily；interval_ms 60000..2592000000；
-  daily_time 合法 HH:mm；targets.type ∈ users/groups，ids 非空且存在；URL http(s)（创建时拒绝 userinfo）；
+  daily_time 合法 HH:mm；windowStart/windowEnd 必须同时为空或同时填写、仅 interval、合法 HH:mm 且不相等；
+  targets.type ∈ users/groups，ids 非空且存在；URL http(s)（创建时拒绝 userinfo）；
   headers 值加密（更新时不传=不变、{} 清空、传对象=全量替换；读取只回 headerNames）；
   timeoutMs 1000..30000；response.type json/text。
 - `POST /:id/test` 返回：`{matched:true, request:{method,url,headerNames,bodyPreview}, httpStatus, latencyMs,
@@ -175,7 +184,7 @@ GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset= → { total
    最近执行状态与时间、下次执行时间、操作（编辑 / 测试运行 / 立即执行 / 运行日志 / 删除）。
 2. 新建/编辑表单：
    - 基本信息：名称、启用；
-   - 计划：类型（间隔 / 每日定时）+ 间隔分钟或 HH:mm 时间；展示时区；
+   - 计划：类型（间隔 / 每日定时）+ 间隔分钟或 HH:mm 时间；间隔可另选「每日生效时间段」（HH:mm–HH:mm，留空不限，支持跨午夜）；展示时区；
    - 目标：指定用户 / 指定分组（复选框列表，带全选/清空）；
    - 请求：方法 GET/POST、URL 模板、Header（保留/重设/清空，值加密不回显）、Body 模板（POST）；
    - 响应：类型 JSON/文本、JSON 路径、通知模板（`{{path}}`/`{{response}}`/`{{raw}}`）、失败兜底文案；
@@ -195,16 +204,16 @@ GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset= → { total
 - `store.js`：任务 CRUD/视图（headerNames 映射）、到期任务查询、日志、目标用户解析（复用分组/用户查询）。
 - `api.js`：§5 接口 + 校验 + Header 加解密 + 测试运行/立即执行 + 日志查询。
 - `index.js`：启动 `scheduler.start()`（`config.scheduler.enabled=false` 不启动）、优雅退出 `scheduler.stop()`。
-- `db.js`：schema v7。
+- `db.js`：schema v9（scheduled_tasks.window_start/window_end）。
 - 复用：`app-rules.js` 的 template/response/requestExternal 纯函数；`crypto` 加解密；`logger`；
   `outbox` 发送完全复用 dispatcher。
 
 ## 8. 测试要求
 
 **单元**
-- v6→v7 迁移（数据保留/新表/索引/幂等/全新库 v7）；
+- v6→v7 / v8→v9 迁移（数据保留/新表/新列/索引/幂等/全新库 v9）；
 - store：任务 CRUD/视图（headerNames 不含值）、到期查询、日志、目标用户解析（users/groups、active 过滤、去重、上限）；
-- scheduler：interval/daily 时间计算（含跨天、已过期补跑、时区）、tick 只执行到期任务、
+- scheduler：interval/daily/每日生效时间段时间计算（窗口内/前/后、跨午夜、启动对账、时区）、tick 只执行到期任务、
   成功渲染+入队 source=schedule、失败 fallback、无 fallback 不发送、收件人去重/上限、日志写入、
   start/stop 幂等、单任务异常不影响其他任务；
 - API：CRUD/校验（非 boolean、非法计划/目标/URL 400）、Header 加密不泄漏、test dry-run 不发送不写日志、
