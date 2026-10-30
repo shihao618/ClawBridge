@@ -425,3 +425,25 @@ test('testRule dry-run：不写日志、不发消息、返回请求/响应/回�
   assert.equal(Number(getDb().prepare('SELECT COUNT(*) AS c FROM app_rule_logs').get().c), logsBefore, 'dry-run 不应写运行日志');
   assert.equal(Number(getDb().prepare('SELECT COUNT(*) AS c FROM outbox').get().c), outboxBefore, 'dry-run 不应发消息');
 });
+
+test('requestExternal：POST JSON body 自动补 Content-Type；网络错误诊断可读', async () => {
+  requests.length = 0;
+  const result = await appRules.requestExternal({
+    url: `http://127.0.0.1:${port}/echo_post`,
+    method: 'POST',
+    body: '{"pageSize":1,"pageNumber":1}',
+    timeoutMs: 2000,
+  });
+  assert.equal(result.status, 200);
+  const sent = requests.find((item) => item.path === '/echo_post');
+  assert.ok(sent, '应发出 POST 请求');
+  assert.match(sent.headers['content-type'], /application\/json/);
+
+  const networkError = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:9'), { code: 'ECONNREFUSED' }),
+  });
+  const message = appRules.describeFetchError(networkError);
+  assert.match(message, /ECONNREFUSED/);
+  assert.match(message, /请检查目标服务是否已启动/);
+  assert.match(appRules.describeFetchError(Object.assign(new Error('aborted'), { name: 'AbortError' })), /请求超时/);
+});

@@ -630,6 +630,44 @@ export async function validateTargetUrl(rawUrl, { allowedHosts = config.appRules
   return { url, hostname };
 }
 
+/** 是否为 JSON 形态的请求 body（对象/数组文本）；用于自动补 Content-Type。 */
+function looksLikeJsonBody(body) {
+  const text = String(body ?? '').trim();
+  return text.startsWith('{') || text.startsWith('[');
+}
+
+/** POST + JSON body 且未显式设置 Content-Type 时，自动补 application/json。 */
+function withDefaultJsonContentType(method, body, headers) {
+  const next = { ...(headers ?? {}) };
+  if (String(method).toUpperCase() !== 'POST' || !String(body ?? '').trim()) return next;
+  const hasContentType = Object.keys(next).some((key) => key.toLowerCase() === 'content-type');
+  if (!hasContentType && looksLikeJsonBody(body)) next['Content-Type'] = 'application/json';
+  return next;
+}
+
+/**
+ * 把底层网络错误转成可读诊断：保留 fetch failed 原因码（ECONNREFUSED/ENOTFOUND/超时等），
+ * 避免界面只显示 “fetch failed”。
+ */
+export function describeFetchError(err) {
+  if (err?.name === 'AbortError' || /aborted|abort/i.test(String(err?.message ?? ''))) {
+    return '请求超时：目标接口未在限定时间内响应';
+  }
+  const base = String(err?.message ?? err ?? '请求失败');
+  const cause = err && typeof err === 'object' ? err.cause : null;
+  const code = cause && typeof cause === 'object' ? cause.code || cause.errno || '' : '';
+  const causeMessage = cause && typeof cause === 'object' ? String(cause.message ?? '') : '';
+  const details = [];
+  if (code && !base.includes(String(code))) details.push(String(code));
+  if (causeMessage && !base.includes(causeMessage)) details.push(causeMessage);
+  let text = base;
+  if (details.length > 0) text += `（${details.join('：')}）`;
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ECONNRESET|UND_ERR/i.test(text)) {
+    text += '；请检查目标服务是否已启动、URL 端口是否正确，以及 Docker 容器内是否可达该地址';
+  }
+  return text;
+}
+
 /**
  * 调用外部接口（SSRF 校验 + 重定向逐跳复验 + 超时 + 响应大小限制 + 仅文本）。
  * @returns {Promise<{status:number, text:string, headers:object, finalUrl:string, latencyMs:number}>}
@@ -660,7 +698,7 @@ export async function requestExternal({
     try {
       response = await fetchImpl(currentUrl, {
         method: currentMethod,
-        headers: requestHeaders,
+        headers: withDefaultJsonContentType(currentMethod, currentBody, requestHeaders),
         body: currentMethod === 'GET' ? undefined : currentBody,
         redirect: 'manual',
         signal: controller.signal,
@@ -784,7 +822,7 @@ export async function executeRuleHttp(rule, { text = '', userId = '', displayNam
     if (result.replyText.trim() === '') result.error = 'empty reply';
     return result;
   } catch (err) {
-    result.error = truncate(err?.message ?? String(err), 500);
+    result.error = truncate(describeFetchError(err), 500);
     result.replyText = rule.response?.fallbackText ?? '';
     return result;
   }

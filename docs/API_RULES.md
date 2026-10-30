@@ -159,6 +159,10 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
     169.254/16、0.0.0.0/8、100.64/10、192.0.0/24、192.0.2/24、198.18/15、198.51.100/24、
     203.0.113/24、224/4、240/4；IPv6：::1、::、fc00::/7、fe80::/10、ff00::/8、::ffff:0:0/96 等）；
   - 若主机名在 `APP_RULES_ALLOWED_HOSTS` 白名单中，允许私网（用于内网接口）；
+  - Docker 内访问宿主机/内网：目标主机需加入白名单（`host.docker.internal` 或内网 IP）；目标服务必须监听
+    非 loopback 地址（Docker Desktop 的 `host.docker.internal` 可访问宿主机已发布端口）；
+  - POST 的 JSON body 未显式设置 `Content-Type` 时自动补 `application/json`；连接失败错误会保留
+    `ECONNREFUSED` 等原因码并给出排查提示，不再只显示 `fetch failed`；
   - 重定向：最多 3 跳，每跳重新做 URL/IP 校验（不允许跳到未授权内网）；
   - 超时 `min(rule.timeoutMs, config.appRules.timeoutMs)`；响应体超过上限直接判失败；
   - 只接受文本响应（忽略二进制）；失败不重试（避免用户触发场景重复副作用）。
