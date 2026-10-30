@@ -1032,6 +1032,12 @@ const RULE_EXTRACTION_LABELS = {
   none: '不提取（直接调用接口）',
   multi: '多参数组合提取',
 };
+const MULTI_EXTRACTOR_TYPE_LABELS = {
+  trailing: '关键词后文本',
+  regex: '正则命名捕获',
+  json: 'JSON 消息',
+  fulltext: '整句',
+};
 async function loadAppRules() {
   const data = await apiFetch('/api/admin/app-rules?includeDisabled=1');
   state.appRules.items = data && Array.isArray(data.items) ? data.items : [];

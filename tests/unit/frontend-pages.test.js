@@ -1283,7 +1283,7 @@ test('接口应用：新建规则弹窗点击遮罩不关闭（closeOnBackdrop=f
 
 test('接口应用：参数提取支持多参数组合模式', async () => {
   const admin = await readAsset('admin.js');
-  for (const token of ['多参数组合提取', 'multi-extractor-row', 'multi-extractor-list', '＋ 添加提取项', 'multiExtractors']) {
+  for (const token of ['多参数组合提取', 'MULTI_EXTRACTOR_TYPE_LABELS', 'multi-extractor-row', 'multi-extractor-list', '＋ 添加提取项', 'multiExtractors']) {
     assert.ok(admin.includes(token), `admin.js 应包含多参数提取实现：${token}`);
   }
   assert.match(admin, /extractionCfg\.extractors = extractors/, '多参数模式保存时应写入 extractors');
