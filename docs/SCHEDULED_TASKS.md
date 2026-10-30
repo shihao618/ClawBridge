@@ -186,7 +186,7 @@ GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset= → { total
    - 基本信息：名称、启用；
    - 计划：类型（间隔 / 每日定时）+ 间隔分钟或 HH:mm 时间；间隔可另选「每日生效时间段」（HH:mm–HH:mm，留空不限，支持跨午夜）；展示时区；
    - 目标：指定用户 / 指定分组（复选框列表，带全选/清空）；
-   - 请求：方法 GET/POST、URL 模板、Header（保留/重设/清空，值加密不回显）、Body 模板（POST）；
+   - 请求：方法 GET/POST、URL 模板、Header（保留/重设/清空，值加密不回显）、Body 模板（仅 POST 显示；GET 参数写在 URL）；
    - 响应：类型 JSON/文本、JSON 路径、通知模板（`{{path}}`/`{{response}}`/`{{raw}}`）、失败兜底文案；
    - 超时；
    - 表单校验与后端错误展示。

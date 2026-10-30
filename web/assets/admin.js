@@ -1675,6 +1675,12 @@ function openAppRuleEditor(rule = null) {
     placeholder: 'POST 请求体模板，可插入 {参数}；GET 请求忽略该字段',
     value: request.bodyTemplate || '',
   });
+  const bodyField = formField('Body 模板（POST）', bodyTemplateInput, null, 'rule-body');
+  function syncRuleRequestFields() {
+    setHidden(bodyField, methodSelect.value !== 'POST');
+  }
+  methodSelect.addEventListener('change', syncRuleRequestFields);
+  syncRuleRequestFields();
 
   // 响应
   const responseTypeSelect = el(
@@ -1800,7 +1806,7 @@ function openAppRuleEditor(rule = null) {
     ),
     formSection(
       '请求',
-      'URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
+      'URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。GET 参数写在 URL 查询串，POST 可用 URL 查询参数 + Body（Body 可留空）。默认拒绝访问内网/本机（SSRF 防护）。',
       el(
         'div',
         { class: 'rule-form-grid' },
@@ -1817,7 +1823,7 @@ function openAppRuleEditor(rule = null) {
         headersTextarea,
         headerHintNode,
       ),
-      formField('Body 模板（POST）', bodyTemplateInput, null, 'rule-body'),
+      bodyField,
     ),
     formSection(
       '响应解析与回复',
@@ -2795,9 +2801,15 @@ async function openScheduleEditor(task = null) {
     id: 'schedule-body',
     class: 'textarea',
     rows: '3',
-    placeholder: 'POST 请求体模板（支持 {now}/{date}/{time}/{taskName}），GET 忽略',
+    placeholder: 'POST 请求体模板（支持 {now}/{date}/{time}/{taskName}）；仅 POST 显示，GET 参数请写在 URL 中',
     value: request.bodyTemplate || '',
   });
+  const bodyField = formField('Body 模板（POST）', bodyTemplateInput, null, 'schedule-body');
+  function syncScheduleRequestFields() {
+    setHidden(bodyField, methodSelect.value !== 'POST');
+  }
+  methodSelect.addEventListener('change', syncScheduleRequestFields);
+  syncScheduleRequestFields();
 
   // 响应
   const responseTypeSelect = el(
@@ -2871,7 +2883,7 @@ async function openScheduleEditor(task = null) {
     ),
     formSection(
       '请求',
-      'URL / Header / Body 支持内置变量 {now}/{date}/{time}/{taskName}；默认拒绝内网/本机（SSRF 防护）。',
+      'URL / Header / Body 支持内置变量 {now}/{date}/{time}/{taskName}；GET 参数写在 URL 查询串，POST 可用 URL 查询参数 + Body（Body 可留空）。默认拒绝内网/本机（SSRF 防护）。',
       el('div', { class: 'rule-form-grid' },
         formField('请求方法', methodSelect, null, 'schedule-request-method'),
         formField('请求 URL（必填，http/https）', urlInput, null, 'schedule-request-url'),
@@ -2880,7 +2892,7 @@ async function openScheduleEditor(task = null) {
         ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios), headerMask)
         : null,
       formField('Header 列表（每行 Name: Value）', headersTextarea, '编辑时：不传=保留现有；传 {} 清空；重新输入=全量替换。', 'schedule-headers'),
-      formField('Body 模板（POST）', bodyTemplateInput, null, 'schedule-body'),
+      bodyField,
     ),
     formSection(
       '响应与通知',
@@ -2898,6 +2910,7 @@ async function openScheduleEditor(task = null) {
   openTrackedModal({
     title: isEdit ? '编辑定时任务' : '新建定时任务',
     size: 'wide',
+    closeOnBackdrop: false,
     content,
     actions: [
       { label: '取消', class: 'btn btn-secondary' },

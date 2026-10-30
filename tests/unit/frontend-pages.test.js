@@ -1302,3 +1302,19 @@ test('移动端后台顶栏：标题与刷新/退出按钮不冲突', async () =
   }
   assert.ok(css.includes('.admin-topbar .topbar-actions'), '旧的 topbar-actions 宽度规则应只作用于旧 .admin-topbar');
 });
+test('表单：GET 隐藏 Body 模板、POST 显示；定时任务弹窗遮罩不关闭', async () => {
+  const admin = await readAsset('admin.js');
+  for (const token of ['syncRuleRequestFields', 'syncScheduleRequestFields', 'schedule-body', 'rule-body']) {
+    assert.ok(admin.includes(token), `admin.js 应包含请求表单方法联动：${token}`);
+  }
+  assert.equal(
+    (admin.match(/setHidden\(bodyField, methodSelect\.value !== 'POST'\)/g) || []).length,
+    2,
+    '规则与定时任务表单都应在 GET 时隐藏 Body',
+  );
+  assert.equal(
+    (admin.match(/closeOnBackdrop: false/g) || []).length,
+    2,
+    '规则编辑与定时任务编辑弹窗都应设置 closeOnBackdrop: false',
+  );
+});
