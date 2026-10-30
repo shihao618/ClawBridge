@@ -71,7 +71,7 @@ const RULE_BASE = () => ({
   matchMode: 'contains',
   keywords: ['__none__'],
   regexPattern: '',
-  extraction: { mode: 'trailing', config: { param: 'arg' } },
+  extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
   request: { method: 'GET', url: `${externalApi.baseUrl}/echo`, headers: {}, bodyTemplate: '' },
   response: { type: 'json', path: '', template: '', fallbackText: '' },
   timeoutMs: 3000,
@@ -210,7 +210,7 @@ test('成功链路：user scope + contains + trailing → 调外部 API → 解�
     name: '天气查询',
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['查天气'],
-    extraction: { mode: 'trailing', config: { param: 'city' } },
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'city' }] } },
     request: { method: 'GET', url: `${externalApi.baseUrl}/weather?city={city}`, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '暂时无法查询' },
     timeoutMs: 3000,
@@ -266,7 +266,7 @@ test('POST body 模板 + regex 命名组提取', async () => {
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['下单'],
     matchMode: 'contains',
-    extraction: { mode: 'regex', config: { regex: '^下单\\s+(?<item>\\S+)\\s+x(?<qty>\\d+)$' } },
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'regex', regex: '^下单\\s+(?<item>\\S+)\\s+x(?<qty>\\d+)$' }] } },
     request: {
       method: 'POST',
       url: `${externalApi.baseUrl}/order`,
@@ -277,7 +277,8 @@ test('POST body 模板 + regex 命名组提取', async () => {
     response: { type: 'json', path: 'reply', template: '', fallbackText: '下单失败' },
     timeoutMs: 3000,
   });
-  assert.equal(rule.extraction.mode, 'regex');
+  assert.equal(rule.extraction.mode, 'multi');
+  assert.equal(rule.extraction.config.extractors[0].type, 'regex');
 
   externalApi.reset();
   await injectInbound(userA, accountA, '下单 苹果 x3');
@@ -306,7 +307,7 @@ test('分组 scope：组内用户命中、非组内用户不触发', async () =>
     name: '分组查询接口',
     scope: { type: 'groups', ids: [groupRule.id] },
     keywords: ['分组查询'],
-    extraction: { mode: 'trailing', config: { param: 'q' } },
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'q' }] } },
     request: { method: 'GET', url: `${externalApi.baseUrl}/group?q={q}`, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '分组查询失败' },
   });

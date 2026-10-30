@@ -1030,12 +1030,39 @@ const RULE_SCOPE_LABELS = { all: '全部用户', users: '指定用户', groups: 
 const RULE_MATCH_LABELS = { contains: '包含', equals: '全等', regex: '正则' };
 const RULE_EXTRACTION_LABELS = {
   none: '不提取（直接调用接口）',
+  multi: '多参数组合提取',
+};
+// 旧版单模式仅用于打开旧规则时自动转换展示，不再出现在下拉选项中。
+const MULTI_EXTRACTOR_TYPE_LABELS = {
   trailing: '关键词后文本',
   regex: '正则命名捕获',
   json: 'JSON 消息',
   fulltext: '整句',
-  multi: '多参数（组合提取）',
 };
+const LEGACY_EXTRACTION_LABELS = {
+  trailing: '关键词后文本',
+  regex: '正则命名捕获',
+  json: 'JSON 消息',
+  fulltext: '整句',
+};
+function legacyExtractionToMulti(mode, config) {
+  const cfg = config && typeof config === 'object' ? config : {};
+  const base = { keyword: '', regex: '', path: '', required: false };
+  let extractor;
+  if (mode === 'regex') {
+    extractor = { ...base, type: 'regex', param: typeof cfg.param === 'string' ? cfg.param : '', regex: typeof cfg.regex === 'string' ? cfg.regex : '' };
+  } else if (mode === 'json') {
+    extractor = { ...base, type: 'json', param: typeof cfg.param === 'string' ? cfg.param : '', path: '' };
+  } else if (mode === 'fulltext') {
+    extractor = { ...base, type: 'fulltext', param: typeof cfg.param === 'string' && cfg.param ? cfg.param : 'text' };
+  } else {
+    extractor = { ...base, type: 'trailing', param: typeof cfg.param === 'string' && cfg.param ? cfg.param : 'arg' };
+  }
+  return {
+    extractors: [extractor],
+    required: Array.isArray(cfg.required) ? cfg.required.map(String) : [],
+  };
+}
 
 async function loadAppRules() {
   const data = await apiFetch('/api/admin/app-rules?includeDisabled=1');
@@ -1249,6 +1276,15 @@ function openAppRuleEditor(rule = null) {
   const trigger = source.trigger && typeof source.trigger === 'object' ? source.trigger : {};
   const extraction = source.extraction && typeof source.extraction === 'object' ? source.extraction : {};
   const extractionConfig = extraction.config && typeof extraction.config === 'object' ? extraction.config : {};
+  const rawExtractionMode = typeof extraction.mode === 'string' ? extraction.mode : '';
+  const legacyExtractionMode =
+    isEdit && !Object.prototype.hasOwnProperty.call(RULE_EXTRACTION_LABELS, rawExtractionMode)
+      ? rawExtractionMode || 'trailing'
+      : '';
+  const uiExtractionMode = rawExtractionMode === 'none' ? 'none' : 'multi';
+  const uiExtractionConfig = legacyExtractionMode
+    ? legacyExtractionToMulti(legacyExtractionMode, extractionConfig)
+    : extractionConfig;
   const request = source.request && typeof source.request === 'object' ? source.request : {};
   const response = source.response && typeof source.response === 'object' ? source.response : {};
   const limits = source.limits && typeof source.limits === 'object' ? source.limits : {};
@@ -1436,21 +1472,21 @@ function openAppRuleEditor(rule = null) {
     'select',
     { id: 'rule-extraction-mode', class: 'select' },
     ...Object.entries(RULE_EXTRACTION_LABELS).map(([value, label]) =>
-      el('option', { value, text: label, selected: (extraction.mode || 'trailing') === value }),
+      el('option', { value, text: label, selected: uiExtractionMode === value }),
     ),
   );
   const extractionConfigBox = el('div', { id: 'rule-extraction-config', class: 'rule-extraction-config' });
   // 多参数提取：可增删多个提取项（trailing / regex / json / fulltext），合并为参数
   const defaultMultiExtractor = () => ({ type: 'trailing', param: 'arg', keyword: '', regex: '', path: '', required: false });
-  let multiExtractors = Array.isArray(extractionConfig.extractors)
-    ? extractionConfig.extractors.map((item) => ({
+  let multiExtractors = Array.isArray(uiExtractionConfig.extractors)
+    ? uiExtractionConfig.extractors.map((item) => ({
         type: typeof item?.type === 'string' ? item.type : 'trailing',
         param: typeof item?.param === 'string' ? item.param : '',
         keyword: typeof item?.keyword === 'string' ? item.keyword : '',
         regex: typeof item?.regex === 'string' ? item.regex : '',
         path: typeof item?.path === 'string' ? item.path : '',
-        required: Array.isArray(extractionConfig.required)
-          ? extractionConfig.required.includes(item?.param)
+        required: Array.isArray(uiExtractionConfig.required)
+          ? uiExtractionConfig.required.includes(item?.param)
           : false,
       }))
     : [];
@@ -1499,7 +1535,7 @@ function openAppRuleEditor(rule = null) {
         'select',
         { class: 'select multi-extractor-type', 'aria-label': `提取项 ${index + 1} 方式` },
         ...['trailing', 'regex', 'json', 'fulltext'].map((type) =>
-          el('option', { value: type, text: RULE_EXTRACTION_LABELS[type], selected: row.type === type }),
+          el('option', { value: type, text: MULTI_EXTRACTOR_TYPE_LABELS[type], selected: row.type === type }),
         ),
       );
       typeSelect.addEventListener('change', () => {
@@ -1558,46 +1594,7 @@ function openAppRuleEditor(rule = null) {
   function renderExtractionConfig() {
     clearNode(extractionConfigBox);
     const mode = extractionModeSelect.value;
-    if (mode === 'regex') {
-      extractionConfigBox.append(
-        formField(
-          '提取正则',
-          el('input', {
-            id: 'rule-extraction-regex',
-            class: 'input',
-            type: 'text',
-            placeholder: '例如：^查(?<city>\\S+)天气$',
-            value: typeof extractionConfig.regex === 'string' ? extractionConfig.regex : '',
-          }),
-          '命名捕获组会成为参数；没有命名组时第一个捕获组命名为 arg。',
-        ),
-      );
-    } else if (mode === 'trailing' || mode === 'fulltext') {
-      const defaultParam = mode === 'trailing' ? 'arg' : 'text';
-      extractionConfigBox.append(
-        formField(
-          '参数名',
-          el('input', {
-            id: 'rule-extraction-param',
-            class: 'input input-narrow',
-            type: 'text',
-            placeholder: defaultParam,
-            value:
-              typeof extractionConfig.param === 'string' && extractionConfig.param
-                ? extractionConfig.param
-                : defaultParam,
-          }),
-          '提取结果会以该参数名传给外部接口模板（{参数名}）。',
-        ),
-      );
-    } else if (mode === 'json') {
-      extractionConfigBox.append(
-        el('p', {
-          class: 'form-hint',
-          text: 'JSON 消息模式：消息文本按 JSON 对象解析，顶层标量字段作为参数（嵌套值会 JSON.stringify）。',
-        }),
-      );
-    } else if (mode === 'multi') {
+    if (mode === 'multi') {
       renderMultiExtractorList();
     } else {
       extractionConfigBox.append(
@@ -1610,6 +1607,12 @@ function openAppRuleEditor(rule = null) {
   }
   extractionModeSelect.addEventListener('change', renderExtractionConfig);
   renderExtractionConfig();
+  const extractionNotice = legacyExtractionMode
+    ? el('p', {
+        class: 'form-hint',
+        text: `该规则原使用「${LEGACY_EXTRACTION_LABELS[legacyExtractionMode] || legacyExtractionMode}」提取，已自动转换为多参数组合提取；保存后统一为组合模式。`,
+      })
+    : null;
 
   // 请求
   const methodSelect = el('select', { id: 'rule-request-method', class: 'select' }, ...['GET', 'POST'].map((method) =>
@@ -1797,6 +1800,7 @@ function openAppRuleEditor(rule = null) {
     formSection(
       '参数提取',
       '从消息中提取变量，供请求 URL / Header / Body 模板使用；缺参时不调用接口。',
+      extractionNotice,
       el(
         'div',
         { class: 'rule-form-grid' },
@@ -1884,14 +1888,8 @@ function openAppRuleEditor(rule = null) {
             return showFormError('请输入正则表达式');
           }
           const extractionMode = extractionModeSelect.value;
-          const configInput = extractionConfigBox.querySelector('input');
           const extractionCfg = {};
-          if (extractionMode === 'regex') {
-            if (!configInput || !configInput.value.trim()) return showFormError('正则提取模式必须填写提取正则');
-            extractionCfg.regex = configInput.value.trim();
-          } else if (extractionMode === 'trailing' || extractionMode === 'fulltext') {
-            extractionCfg.param = (configInput && configInput.value.trim()) || (extractionMode === 'trailing' ? 'arg' : 'text');
-          } else if (extractionMode === 'multi') {
+          if (extractionMode === 'multi') {
             if (multiExtractors.length === 0) return showFormError('多参数模式至少需要 1 个提取项');
             const extractors = [];
             const requiredNames = [];

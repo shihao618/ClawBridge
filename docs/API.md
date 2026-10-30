@@ -624,16 +624,16 @@ maxUserCallsPerHour}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped
 **curl 示例**
 
 ```bash
-# 1) 创建规则：查天气（关键词后文本作为 arg，调用外部 API 并解析 data.answer 回复）
+# 1) 创建规则：查天气（组合提取关键词后文本作为 arg，调用外部 API 并解析 data.answer 回复）
 curl -X POST http://localhost:10380/api/admin/app-rules \
   -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
   -H "Content-Type: application/json" -d '{
     "name":"查天气","enabled":true,"priority":100,
     "scope":{"type":"all"},
     "matchMode":"contains","keywords":["查天气"],
-    "extraction":{"mode":"trailing","config":{"param":"arg"}},
+    "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
     "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}","headers":{}},
-    "response":{"type":"json","path":"data","template":"{{data.answer}}","fallbackText":"暂时无法查询天气"},
+    "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询天气"},
     "timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10
   }'
 

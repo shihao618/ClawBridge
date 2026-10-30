@@ -454,7 +454,7 @@ function v1GroupView(group) {
 // ---------------------------------------------------------------------------
 
 const APP_RULE_MATCH_MODES = new Set(['contains', 'equals', 'regex']);
-const APP_RULE_EXTRACTION_MODES = new Set(['none', 'trailing', 'regex', 'json', 'fulltext', 'multi']);
+const APP_RULE_EXTRACTION_MODES = new Set(['none', 'multi']);
 const APP_RULE_SCOPE_TYPES = new Set(['all', 'users', 'groups']);
 const APP_RULE_LOG_STATUSES = new Set(['matched', 'success', 'failed', 'skipped']);
 
@@ -566,19 +566,13 @@ function buildAppRulePatch(rawBody, { requireAll = false } = {}) {
   }
 
   if (requireAll || body.extraction !== undefined) {
-    const extraction = assertPlainObject(body.extraction ?? { mode: 'trailing', config: {} }, 'extraction');
-    const mode = extraction.mode ?? 'trailing';
+    const defaultExtraction = { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } };
+    const extraction = assertPlainObject(body.extraction ?? defaultExtraction, 'extraction');
+    const mode = extraction.mode ?? 'multi';
     if (!APP_RULE_EXTRACTION_MODES.has(mode)) {
-      throw badRequest('extraction.mode 只能是 none | trailing | regex | json | fulltext');
+      throw badRequest('extraction.mode 只能是 none | multi');
     }
     const extractionConfig = assertPlainObject(extraction.config ?? {}, 'extraction.config');
-    if (mode === 'regex') {
-      const regex = extractionConfig.regex;
-      if (typeof regex !== 'string' || regex.trim() === '') {
-        throw badRequest('regex 提取模式必须提供 extraction.config.regex');
-      }
-      if (!validRegexSource(regex)) throw badRequest('extraction.config.regex 不是合法正则');
-    }
     if (mode === 'multi') {
       const extractors = extractionConfig.extractors;
       if (!Array.isArray(extractors) || extractors.length < 1 || extractors.length > 10) {

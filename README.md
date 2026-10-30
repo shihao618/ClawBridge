@@ -343,7 +343,7 @@ curl -X PATCH http://127.0.0.1:10380/api/admin/users/u_xxxxxxxx/keepalive \
 ### 接口应用（关键词触发 → 外部接口 → 回复用户）
 
 在管理后台「接口应用」新建规则：命中「指定用户/分组 + 关键词/正则」的微信文本消息 → 从消息中提取参数
-（关键词后文本 / 正则命名组 / JSON 消息体 / 整句）→ 按模板调用外部 HTTP 接口 → 解析返回并回复用户。
+（多参数组合提取：关键词后文本 / 正则命名组 / JSON 消息体 / 整句组合）→ 按模板调用外部 HTTP 接口 → 解析返回并回复用户。
 
 ```bash
 # 创建规则：用户发「查天气 北京」→ 调天气 API → 把 data.answer 回复给用户
@@ -353,7 +353,7 @@ curl -X POST http://127.0.0.1:10380/api/admin/app-rules \
     "name":"查天气","enabled":true,"priority":100,
     "scope":{"type":"all"},
     "matchMode":"contains","keywords":["查天气"],
-    "extraction":{"mode":"trailing","config":{"param":"arg"}},
+    "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
     "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}","headers":{}},
     "response":{"type":"json","path":"data","template":"{{data.answer}}","fallbackText":"暂时无法查询天气"},
     "timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10

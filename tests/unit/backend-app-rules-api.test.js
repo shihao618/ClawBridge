@@ -94,7 +94,7 @@ function validRuleBody(overrides = {}) {
     matchMode: 'contains',
     keywords: ['查天气'],
     regexPattern: '',
-    extraction: { mode: 'trailing', config: { param: 'arg' } },
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
     request: {
       method: 'GET',
       url: `http://127.0.0.1:${apiPort}/weather?city={arg}`,
@@ -149,7 +149,7 @@ test('创建/查看：RuleView 结构、headers 只回 names、DB 内为密文',
   assert.equal(rule.enabled, true);
   assert.deepEqual(rule.scope, { type: 'all', ids: [], names: [] });
   assert.deepEqual(rule.trigger, { matchMode: 'contains', keywords: ['查天气'], regexPattern: '' });
-  assert.equal(rule.extraction.mode, 'trailing');
+  assert.equal(rule.extraction.mode, 'multi');
   assert.equal(rule.request.headerNames[0], 'Authorization');
   assert.equal(rule.request.bodyTemplate, '');
   assert.equal(rule.response.path, 'data');

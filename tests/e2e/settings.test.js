@@ -53,7 +53,7 @@ function appRuleBody(ruleName, url, userId, keyword) {
     matchMode: 'contains',
     keywords: [keyword],
     regexPattern: '',
-    extraction: { mode: 'trailing', config: { arg: 'arg' } },
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
     request: { method: 'GET', url, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: '', template: '{{data.answer}}', fallbackText: '' },
     timeoutMs: 3000,

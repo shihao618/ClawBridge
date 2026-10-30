@@ -12,7 +12,7 @@ monitor 收到入站消息并落库
      ├─ 规则启用？范围命中（全部/指定用户/指定分组）？
      ├─ 关键词/正则命中？冷却/小时限额未超？
      ├─ 按 priority 取第一条命中规则（一消息最多执行一条）
-     ├─ 参数提取（none / trailing / regex / json / fulltext / multi）
+     ├─ 参数提取（none / multi；multi 内组合 trailing/regex/json/fulltext 提取项）
      ├─ 渲染请求模板（URL/Headers/Body）→ HTTP 调用（SSRF 防护/超时/大小限制）
      ├─ 解析响应（JSON 路径或纯文本）→ 渲染回复模板（或兜底文案）
      ├─ 写 app_rule_logs（状态/耗时/HTTP 码/错误/预览，脱敏）
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS app_rules (
   match_mode TEXT NOT NULL DEFAULT 'contains', -- contains | equals | regex
   keywords TEXT NOT NULL DEFAULT '[]',       -- JSON string[]（contains/equals 用）
   regex_pattern TEXT NOT NULL DEFAULT '',    -- match_mode=regex 时使用
-  extraction_mode TEXT NOT NULL DEFAULT 'trailing', -- none | trailing | regex | json | fulltext | multi
+  extraction_mode TEXT NOT NULL DEFAULT 'multi',   -- none | multi
   extraction_config TEXT NOT NULL DEFAULT '{}',     -- JSON，见 §3
   request_method TEXT NOT NULL DEFAULT 'GET',       -- GET | POST
   request_url TEXT NOT NULL,
@@ -107,11 +107,9 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 | mode | config | 说明 |
 | --- | --- | --- |
 | `none` | `{}` | **不提取**：消息中不需要参数，直接按 URL/Header/Body 模板调用接口（模板仍可用内置变量）；不检查缺参 |
-| `trailing` | `{"param":"arg"}`（默认 arg） | 从第一个命中的关键词之后取文本并 trim；为空视为缺参 |
-| `regex` | `{"regex":"^查(?<city>\\S+)天气$"}` | 命名捕获组成为参数；无命名组时第一个捕获组命名为 `arg`；整体匹配 |
-| `json` | `{}` | 消息文本按 JSON 对象解析，顶层标量字段作为参数（嵌套值 JSON.stringify） |
-| `fulltext` | `{"param":"text"}` | 整个消息文本 trim 作为参数 |
-| `multi` | `{"extractors":[...],"required":["city"]}` | **多参数组合**：按顺序执行多个提取项并合并参数，见下方示例 |
+| `multi` | `{"extractors":[...],"required":["city"]}` | **多参数组合提取**（唯一提取模式）：按顺序执行多个提取项并合并参数，已覆盖原来的关键词后文本 / 正则 / JSON / 整句模式 |
+
+> 后台「提取模式」下拉只保留 **不提取 / 多参数组合提取**；旧版单模式规则打开编辑时会自动转换为等价的多参数组合，保存后统一为 `multi`。
 
 **多参数示例**（消息「查北京天气明天」）：
 
@@ -134,9 +132,9 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 - `required` 中的参数缺失时视为缺参（不会调用接口）；未配置 `required` 时至少提取到一个参数即可调用。
 
 > `none` 模式适用于"固定 URL/固定参数"的接口（例如只做触发通知、查询固定数据）；
-> 需要从消息中携带参数时再使用其他模式。
+> 需要从消息中携带参数时使用 `multi`（组合提取）。
 
-**内置变量**（任何提取模式下都可使用）：`{text}` 消息原文、`{arg}`（trailing/fulltext 主参数）、
+**内置变量**（两种提取模式下都可使用）：`{text}` 消息原文、`{arg}`（组合提取中 trailing/fulltext 的主参数）、
 `{userId}`、`{name}`（微信显示名）、`{now}`（毫秒时间戳）。
 
 **缺参处理**：提取后必需参数为空 → 不调用外部接口，回复 `fallback_text`（若配置），
@@ -227,7 +225,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   "id":"rule_…","name":"查天气","enabled":true,"priority":100,
   "scope":{"type":"groups","ids":["grp_…"],"names":["VIP客户"]},
   "trigger":{"matchMode":"contains","keywords":["查天气"],"regexPattern":""},
-  "extraction":{"mode":"trailing","config":{"param":"arg"}},
+  "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
   "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headerNames":["Authorization"],"bodyTemplate":""},
   "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
@@ -260,7 +258,7 @@ GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=50&offset=0
   "name":"查天气","enabled":true,"priority":100,
   "scope":{"type":"groups","ids":["grp_xxx"]},
   "matchMode":"contains","keywords":["查天气"],"regexPattern":"",
-  "extraction":{"mode":"trailing","config":{"param":"arg"}},
+  "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
   "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headers":{"Authorization":"Bearer xxx"},"bodyTemplate":""},
   "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
@@ -302,7 +300,7 @@ response.type ∈ json/text。错误 400/404/409（重名可选，本版允许�
 
 ## 10. MVP 范围（本次实现）
 
-- 文本触发；范围 all/users/groups；match contains/equals/regex；参数提取 trailing/regex/json/fulltext；
+- 文本触发；范围 all/users/groups；match contains/equals/regex；参数提取 none/multi（组合项 trailing/regex/json/fulltext）；
   GET/POST + URL/Header/Body 模板；响应 json/text + 路径 + 回复模板 + 兜底；冷却/小时限额/队列并发/
   去重；SSRF 防护与允许名单；后台规则管理 + 测试运行 + 日志；e2e（本地 mock 外部 API 全链路）；
   文档；schema v5 真实迁移验证。
