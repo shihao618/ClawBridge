@@ -212,7 +212,7 @@ test('成功链路：user scope + contains + trailing → 调外部 API → 解�
     keywords: ['查天气'],
     extraction: { mode: 'trailing', config: { param: 'city' } },
     request: { method: 'GET', url: `${externalApi.baseUrl}/weather?city={city}`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '暂时无法查询' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '暂时无法查询' },
     timeoutMs: 3000,
   });
   assert.ok(rule.scope.ids.includes(userA.id));
@@ -308,7 +308,7 @@ test('分组 scope：组内用户命中、非组内用户不触发', async () =>
     keywords: ['分组查询'],
     extraction: { mode: 'trailing', config: { param: 'q' } },
     request: { method: 'GET', url: `${externalApi.baseUrl}/group?q={q}`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '分组查询失败' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '分组查询失败' },
   });
   assert.equal(rule.scope.type, 'groups');
   assert.ok(Array.isArray(rule.scope.ids) && rule.scope.ids.includes(groupRule.id));
@@ -346,7 +346,7 @@ test('优先级：同一消息命中多条规则时只执行 priority 最小的�
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['优先级测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/low`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
   });
   const highRule = await createRuleOrFail({
     ...RULE_BASE(),
@@ -355,7 +355,7 @@ test('优先级：同一消息命中多条规则时只执行 priority 最小的�
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['优先级测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/high`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
   });
   assert.ok(lowRule.priority < highRule.priority);
 
@@ -382,7 +382,7 @@ test('失败兜底：外部接口 500 时回复 fallback_text；超时无兜底�
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['失败测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/fail`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '接口暂时不可用' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '接口暂时不可用' },
     timeoutMs: 2000,
   });
   await injectInbound(userA, accountA, '失败测试 内容');
@@ -404,7 +404,7 @@ test('失败兜底：外部接口 500 时回复 fallback_text；超时无兜底�
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['超时测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/slow`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
     timeoutMs: 1000,
   });
   const ruleMessagesBefore = (await ruleOutboundMessages(userA.id)).length;
@@ -433,7 +433,7 @@ test('冷却：同用户同规则冷却期内第二条消息不触发', async ()
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['冷却测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/cooldown`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
     cooldownMs: 60000,
   });
   await injectInbound(userA, accountA, '冷却测试 第一次');
@@ -454,7 +454,7 @@ test('规则小时上限：超过 maxUserCallsPerHour 的消息被 skipped', asy
     scope: { type: 'users', ids: [userA.id] },
     keywords: ['限额测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/quota`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
     cooldownMs: 0,
     maxUserCallsPerHour: 1,
     maxCallsPerHour: 100,
@@ -484,7 +484,7 @@ test('SSRF：未放行白名单的 app 实例拒绝访问 127.0.0.1（外部 API
       scope: { type: 'users', ids: [bound.user.id] },
       keywords: ['ssrf测试'],
       request: { method: 'GET', url: `${externalApi.baseUrl}/ssrf`, headers: {}, bodyTemplate: '' },
-      response: { type: 'json', path: 'data', template: '{{data.answer}}', fallbackText: '' },
+      response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
       timeoutMs: 2000,
     });
     assert.equal(created.status, 201, `SSRF 规则创建应 201：${created.status} ${created.text}`);

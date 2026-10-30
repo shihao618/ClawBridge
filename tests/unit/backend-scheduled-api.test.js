@@ -111,7 +111,7 @@ function validTaskBody(overrides = {}) {
       headers: { Authorization: 'Bearer top-secret-schedule' },
       bodyTemplate: '',
     },
-    response: { type: 'json', path: 'data.answer', template: '通知：{{data.answer}}', fallbackText: '兜底' },
+    response: { type: 'json', path: 'data', template: '通知：{{answer}}', fallbackText: '兜底' },
     timeoutMs: 3000,
     ...overrides,
   };

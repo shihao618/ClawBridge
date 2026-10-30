@@ -103,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
 4. 成功：`success`，按通知模板渲染文本（`{{path}}`/`{{response}}`/`{{raw}}`）。
    - **模板根**：`response.path` 选中节点后，模板根即该节点，路径直接相对它写；空路径才用完整响应对象。
      例：`response.path="data.list"` → `{{count .}}` / `{{#each .}}{{字段}}{{/each}}`；
-     旧模板写完整路径仍兼容（自动回退完整响应根）。
+     模板只按模板根/当前循环上下文查找路径，不再兼容旧版完整响应路径；需要完整响应根时用 `{{@responseRoot.字段}}`。
    - **列表/多层循环**：`{{count . where 字段=值}}`、`{{#each . where 字段=值}}...{{/each}}`；
      `each` 可嵌套多层，内层用 `{{../字段}}` 取父级、`{{../@index}}`/`{{../@number}}` 取父循环、
      `{{@root.字段}}` 取模板根、`{{@responseRoot.字段}}` 取完整响应根（可访问选中节点的兄弟字段）；

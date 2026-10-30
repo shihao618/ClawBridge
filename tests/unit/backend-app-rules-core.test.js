@@ -29,7 +29,7 @@ const baseRule = (overrides = {}) => ({
   match: { mode: 'contains', keywords: ['查天气'], regexPattern: '' },
   extraction: { mode: 'trailing', config: { param: 'arg' } },
   request: { method: 'GET', url: 'http://127.0.0.1:1/', headers: {}, bodyTemplate: '' },
-  response: { type: 'json', path: 'data.answer', template: '{{data.answer}}', fallbackText: '' },
+  response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
   limits: { timeoutMs: 2000, cooldownMs: 0, maxCallsPerHour: 60, maxUserCallsPerHour: 10 },
   ...overrides,
 });
@@ -356,7 +356,7 @@ test('requestExternal：成功/GET query/POST body/重定向复验/超时/大小
 test('executeRuleHttp：成功渲染回复；失败 fallback；缺参 fallback；不写日志', async () => {
   const rule = baseRule({
     request: { method: 'GET', url: `http://127.0.0.1:${port}/weather?city={arg}`, headers: {}, bodyTemplate: '' },
-    response: { type: 'json', path: 'data.answer', template: '天气：{{data.answer}}', fallbackText: '兜底' },
+    response: { type: 'json', path: 'data', template: '天气：{{answer}}', fallbackText: '兜底' },
   });
   const success = await appRules.executeRuleHttp(rule, { text: '查天气 北京', userId: 'u1', displayName: '张三' });
   assert.equal(success.error, '');
@@ -397,8 +397,8 @@ test('testRule dry-run：不写日志、不发消息、返回请求/响应/回�
     requestHeadersEnc: null,
     requestBodyTemplate: '',
     responseType: 'json',
-    responsePath: 'data.answer',
-    replyTemplate: '{{data.answer}}',
+    responsePath: 'data',
+    replyTemplate: '{{answer}}',
     fallbackText: '',
     timeoutMs: 2000,
     cooldownMs: 0,
@@ -466,7 +466,7 @@ test('模板根=JSON 路径选中节点：相对引用、旧全路径回退、�
 
   const relative = appRules.renderReplyTemplate(
     '共 {{count . where CQZT=2}} 人；{{#each . where CQZT=2}}{{@number}}.{{XM}}（{{FJH}}）；{{/each}}',
-    { root: parsed.templateRoot, fallbackRoot: parsed.root },
+    { root: parsed.templateRoot, responseRoot: parsed.root },
   );
   assert.equal(relative, '共 2 人；1.李四（102）；2.王五（103）；');
 
@@ -474,15 +474,19 @@ test('模板根=JSON 路径选中节点：相对引用、旧全路径回退、�
   assert.equal(
     appRules.renderReplyTemplate('pageSize={{@responseRoot.datas.cqztbg.pageSize}}；rows={{count .}}', {
       root: parsed.templateRoot,
-      fallbackRoot: parsed.root,
+      responseRoot: parsed.root,
     }),
     'pageSize=10；rows=3',
-  );  // 旧模板写完整响应路径仍可解析（自动回退到完整响应根）
-  const legacy = appRules.renderReplyTemplate('{{count datas.cqztbg.rows where CQZT=1}}', {
-    root: parsed.templateRoot,
-    fallbackRoot: parsed.root,
-  });
-  assert.equal(legacy, '1');
+  );
+
+  // 已移除旧版本兼容：非相对路径不再回退到完整响应根
+  assert.equal(
+    appRules.renderReplyTemplate('{{count datas.cqztbg.rows where CQZT=1}}', {
+      root: parsed.templateRoot,
+      responseRoot: parsed.root,
+    }),
+    '0',
+  );
 
   const nestedRoot = {
     groups: [

@@ -444,17 +444,17 @@ function filterList(list, filter) {
 }
 
 /**
- * 模板路径解析（相对当前上下文，失败时依次向上找父级/根，最后回退到完整响应根）。
- * 支持：`.`/空=当前、`../字段` 上级、`@root.字段` 完整响应根。
+ * 模板路径解析（相对当前上下文，失败时依次向上找父级/模板根）。
+ * 支持：`.`/空=当前、`../字段` 上级、`@root.字段` 模板根、`@responseRoot.字段` 完整响应根。
  */
-function resolveTemplatePath(rawPath, contextStack, fallbackRoot) {
+function resolveTemplatePath(rawPath, contextStack, responseRoot) {
   const pathText = String(rawPath ?? '').trim();
   let current = contextStack[contextStack.length - 1];
   if (!pathText || pathText === '.' || pathText === 'this' || pathText === '@this') return current;
 
-  const responseRoot = fallbackRoot !== undefined ? fallbackRoot : contextStack[0];
-  if (pathText === '@responseRoot') return responseRoot;
-  if (pathText.startsWith('@responseRoot.')) return getByPath(responseRoot, pathText.slice('@responseRoot.'.length));
+  const fullRoot = responseRoot !== undefined ? responseRoot : contextStack[0];
+  if (pathText === '@responseRoot') return fullRoot;
+  if (pathText.startsWith('@responseRoot.')) return getByPath(fullRoot, pathText.slice('@responseRoot.'.length));
   if (pathText === '@root') return contextStack[0];
   if (pathText.startsWith('@root.')) return getByPath(contextStack[0], pathText.slice(6));
 
@@ -475,14 +475,13 @@ function resolveTemplatePath(rawPath, contextStack, fallbackRoot) {
     const value = getByPath(contextStack[index], pathText);
     if (value !== undefined) return value;
   }
-  if (fallbackRoot !== undefined) return getByPath(fallbackRoot, pathText);
   return undefined;
 }
 
 /** 计算 `count path [where ...]` 的值（支持相对当前循环项/父级）。 */
-function resolveCountValue(rawSpec, contextStack, fallbackRoot) {
+function resolveCountValue(rawSpec, contextStack, responseRoot) {
   const parsed = parseListSpec(rawSpec);
-  const value = resolveTemplatePath(parsed.path, contextStack, fallbackRoot);
+  const value = resolveTemplatePath(parsed.path, contextStack, responseRoot);
   if (parsed.filter) return filterList(value, parsed.filter).length;
   return countValue(value);
 }
@@ -535,9 +534,9 @@ function resolveTemplateVariable(expr, contextStack, metaStack, options) {
   }
 
   if (text.startsWith('count ')) {
-    return valueToText(resolveCountValue(text.slice(6).trim(), contextStack, options.fallbackRoot));
+    return valueToText(resolveCountValue(text.slice(6).trim(), contextStack, options.responseRoot));
   }
-  return valueToText(resolveTemplatePath(text, contextStack, options.fallbackRoot));
+  return valueToText(resolveTemplatePath(text, contextStack, options.responseRoot));
 }
 
 const MAX_EACH_DEPTH = 8;
@@ -568,7 +567,7 @@ function renderTemplateTokens(tokens, contextStack, metaStack, options, depth = 
       const bodyEnd = endIndex === -1 ? tokens.length : endIndex;
       const body = tokens.slice(index + 1, bodyEnd);
       const parsed = parseListSpec(token.spec);
-      const value = resolveTemplatePath(parsed.path, contextStack, options.fallbackRoot);
+      const value = resolveTemplatePath(parsed.path, contextStack, options.responseRoot);
       const list = filterList(value, parsed.filter);
       for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
         output += renderTemplateTokens(
@@ -592,13 +591,13 @@ function renderTemplateTokens(tokens, contextStack, metaStack, options, depth = 
  * 支持 `{{count path [where 字段=值]}}` 与多层嵌套 `{{#each path [where ...]}}...{{/each}}`。
  * 循环内：当前项字段直接写 `{{字段}}`；父级 `{{../字段}}`；根 `{{@root.字段}}`；
  * `{{@index}}`/`{{@number}}` 为当前循环下标/序号，`{{../@index}}` 取父循环。
- * 路径查找失败时会回退到完整响应根（兼容旧模板全路径写法）。
+ * 支持 @root（模板根）与 @responseRoot（完整响应根）两种特殊根引用。
  */
-export function renderReplyTemplate(template, { root, responseText = '', rawText = '', fallbackRoot } = {}) {
+export function renderReplyTemplate(template, { root, responseText = '', rawText = '', responseRoot } = {}) {
   const tpl = String(template ?? '');
   if (tpl.trim() === '') return truncate(responseText, MAX_REPLY_LENGTH());
   const tokens = tokenizeTemplate(tpl);
-  const rendered = renderTemplateTokens(tokens, [root], [], { responseText, rawText, fallbackRoot });
+  const rendered = renderTemplateTokens(tokens, [root], [], { responseText, rawText, responseRoot });
   return truncate(rendered, MAX_REPLY_LENGTH());
 }
 
@@ -928,7 +927,7 @@ export async function executeRuleHttp(rule, { text = '', userId = '', displayNam
     const template = rule.response?.template ?? '';
     const rendered = renderReplyTemplate(template, {
       root: parsed.templateRoot,
-      fallbackRoot: parsed.root,
+      responseRoot: parsed.root,
       responseText: parsed.responseText,
       rawText: parsed.rawText,
     });

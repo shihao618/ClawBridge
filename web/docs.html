@@ -1230,7 +1230,7 @@ done</code></pre></div>
             <li><code class="code-inline">response_type=text</code>：直接使用响应文本（trim、截断）。</li>
             <li><strong>模板根</strong>：<code class="code-inline">response_path</code> 选中节点后，模板根即该节点，
               模板不用重复路径；路径为空时才是完整响应对象（如路径=data.list 时写 {{count .}}/{{#each .}}）；
-              旧模板写完整路径仍兼容。</li>
+              模板只按模板根/当前循环上下文查找路径；需要完整响应根时用 {{@responseRoot.字段}}。</li>
             <li>回复模板 <code class="code-inline">reply_template</code>：支持 <code class="code-inline">{{路径}}</code>（如
               <code class="code-inline">{{data.answer}}</code>）以及内置 <code class="code-inline">{{response}}</code>
               （解析后的文本）与 <code class="code-inline">{{raw}}</code>（原始响应文本）；为空时直接使用解析结果。</li>
@@ -1405,7 +1405,7 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
             <li><code class="code-inline">response.type=text</code>：直接使用响应文本（trim、截断）。</li>
             <li><strong>模板根</strong>：<code class="code-inline">response.path</code> 选中节点后，模板根即该节点，
               模板不用重复路径；路径为空时才是完整响应对象（如路径=data.list 时写 {{count .}}/{{#each .}}）；
-              旧模板写完整路径仍兼容。</li>
+              模板只按模板根/当前循环上下文查找路径；需要完整响应根时用 {{@responseRoot.字段}}。</li>
             <li>通知模板 <code class="code-inline">reply_template</code>：支持
               <code class="code-inline">{{path}}</code>（如 <code class="code-inline">{{data.weather}}</code>）、
               <code class="code-inline">{{response}}</code>（解析后的文本）、

@@ -101,7 +101,7 @@ function validRuleBody(overrides = {}) {
       headers: { Authorization: 'Bearer top-secret-token' },
       bodyTemplate: '',
     },
-    response: { type: 'json', path: 'data.answer', template: '{{data.answer}}', fallbackText: '暂时无法查询' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '暂时无法查询' },
     timeoutMs: 3000,
     cooldownMs: 0,
     maxCallsPerHour: 60,
@@ -152,7 +152,7 @@ test('创建/查看：RuleView 结构、headers 只回 names、DB 内为密文',
   assert.equal(rule.extraction.mode, 'trailing');
   assert.equal(rule.request.headerNames[0], 'Authorization');
   assert.equal(rule.request.bodyTemplate, '');
-  assert.equal(rule.response.path, 'data.answer');
+  assert.equal(rule.response.path, 'data');
   assert.equal(rule.response.fallbackText, '暂时无法查询');
   assert.equal(rule.limits.timeoutMs, 3000);
   assert.deepEqual(rule.stats, { lastRunAt: 0, lastStatus: '', success24h: 0, failed24h: 0, skipped24h: 0 });

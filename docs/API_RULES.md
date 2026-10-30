@@ -179,7 +179,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   路径为空时模板根才是完整响应对象。
   - 例：`response_path="data.list"`，模板直接写 `{{count .}}` / `{{#each .}}{{字段}}{{/each}}`；
   - 空路径时才写 `{{data.list}}`；
-  - 兼容旧模板：相对路径查找失败会自动回退到完整响应根，因此 `{{data.list}}` 仍可解析。
+  - 模板只按模板根/当前循环上下文查找路径，不再兼容旧版完整响应路径写法；需要访问完整响应根时用 `{{@responseRoot.字段}}`。
 - 回复模板 `reply_template`：使用 `{{路径}}` 占位；内置 `{{response}}`=解析后的文本值、
   `{{raw}}`=原始响应文本；为空时直接用解析结果。
 - **列表渲染**（数组数据一次性拼接）：`{{count 路径}}` 输出数组/对象长度；`{{#each 路径}}...{{/each}}`
