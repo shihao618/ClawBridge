@@ -791,7 +791,7 @@ export function mapAppRuleRow(row, { includeStats = true, now = nowMs() } = {}) 
       regexPattern: row.regex_pattern ?? '',
     },
     extraction: {
-      mode: row.extraction_mode ?? 'trailing',
+      mode: row.extraction_mode ?? 'none',
       config: extractionConfig,
     },
     request: {
@@ -1366,23 +1366,6 @@ export function getAttachmentsByInbound(inboundIds) {
   return result;
 }
 
-/** 批量读取 outbox 的附件原始行：Map<outbox_id, row[]>。 */
-export function getAttachmentsByOutboxIds(outboxIds) {
-  const ids = [...new Set((outboxIds ?? []).map((id) => String(id)))].filter(Boolean);
-  const result = new Map(ids.map((id) => [id, []]));
-  if (ids.length === 0) return result;
-  const placeholders = ids.map(() => '?').join(', ');
-  const rows = all(
-    `SELECT * FROM attachments WHERE outbox_id IN (${placeholders}) ORDER BY created_at ASC, rowid ASC`,
-    ...ids,
-  );
-  for (const row of rows) {
-    const list = result.get(row.outbox_id);
-    if (list) list.push(row);
-  }
-  return result;
-}
-
 /** 按 id 批量读取附件原始行：Map<id, row>（出站视图用 media_id 关联，支持同一附件发给多个用户）。 */
 export function getAttachmentsByIds(attachmentIds) {
   const ids = [...new Set((attachmentIds ?? []).map((id) => String(id)))].filter(Boolean);
@@ -1687,16 +1670,14 @@ export function getRecentOutbound(userId, limit = 20, { urlPrefix = DEFAULT_MEDI
   return attachToOutboxRows(rows, { urlPrefix });
 }
 
-/** 给 outbox 行映射视图并批量附加 attachments（media_id 优先，兼容旧 outbox_id 关联）。 */
+/** 给 outbox 行映射视图并批量附加 attachments（仅按 outbox.media_id 关联）。 */
 function attachToOutboxRows(rows, { urlPrefix = DEFAULT_MEDIA_URL_PREFIX } = {}) {
   const mediaIds = rows.map((row) => row.media_id).filter(Boolean);
   const byId = getAttachmentsByIds(mediaIds);
-  const legacyRows = rows.filter((row) => !row.media_id);
-  const byOutboxId = getAttachmentsByOutboxIds(legacyRows.map((row) => row.id));
   return rows.map((row) => {
     const view = mapOutboxRow(row);
-    const list = row.media_id ? (byId.has(row.media_id) ? [byId.get(row.media_id)] : []) : (byOutboxId.get(row.id) ?? []);
-    view.attachments = list.map((attachment) => mapAttachmentRow(attachment, { urlPrefix }));
+    const attachment = row.media_id ? byId.get(row.media_id) : null;
+    view.attachments = attachment ? [mapAttachmentRow(attachment, { urlPrefix })] : [];
     return view;
   });
 }
@@ -1975,23 +1956,15 @@ export function listMessages({
     createdAt: toNumber(row.created_at),
     source: row.source ?? '',
   }));
-  // 批量附加 attachments：入站按 inbound_messages.id、出站按 outbox.media_id（兼容旧 outbox_id 关联）
+  // 批量附加 attachments：入站按 inbound_messages.id、出站按 outbox.media_id
   const inboundRows = rows.filter((row) => row.direction === 'inbound');
   const outboundRows = rows.filter((row) => row.direction === 'outbound');
   const inboundAttachments = getAttachmentsByInbound(inboundRows.map((row) => row.id));
   const outboundAttachmentsById = getAttachmentsByIds(outboundRows.map((row) => row.media_id).filter(Boolean));
-  const legacyOutbound = getAttachmentsByOutboxIds(outboundRows.filter((row) => !row.media_id).map((row) => row.id));
   rows.forEach((row, index) => {
-    let list = [];
-    if (row.direction === 'inbound') {
-      list = inboundAttachments.get(row.id) ?? [];
-    } else if (row.media_id) {
-      const attachment = outboundAttachmentsById.get(row.media_id);
-      if (attachment) list = [attachment];
-    } else {
-      list = legacyOutbound.get(row.id) ?? [];
-    }
-    items[index].attachments = list.map((attachment) => mapAttachmentRow(attachment, { urlPrefix }));
+    const attachment = row.direction === 'outbound' && row.media_id ? outboundAttachmentsById.get(row.media_id) : null;
+    const list = row.direction === 'inbound' ? inboundAttachments.get(row.id) ?? [] : attachment ? [attachment] : [];
+    items[index].attachments = list.map((attachmentRow) => mapAttachmentRow(attachmentRow, { urlPrefix }));
   });
   return { total, items };
 }

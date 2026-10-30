@@ -511,8 +511,6 @@ function writeSecretFile(name, value) {
     } catch {
       /* Windows 等平台忽略 */
     }
-    // 标记文件由 bootstrap/reset 写入，后续启动不要把它当成旧版遗留文件清理
-    upsertSetting('security.bootstrapFiles', '1');
   } catch (err) {
     log.warn('写入机密文件失败（不影响服务运行）', { file: name, message: err?.message });
   }
@@ -566,24 +564,6 @@ export function bootstrapSecrets() {
     addSettingsEvent({ action: 'bootstrap_api_token', source: 'db' });
     log.info('初始 API Token 已生成，请查看文件', { file: `data/${API_TOKEN_FILE}` });
   }
-  const anyGenerated = result.adminPasswordGenerated || result.apiTokenGenerated;
-  if (anyGenerated) {
-    upsertSetting('security.bootstrapFiles', '1');
-  } else if (all("SELECT value FROM app_settings WHERE key = 'security.bootstrapFiles'").length === 0) {
-    // 旧版（config.js 自动生成文件）遗留的 data/admin-password.txt、data/api-token.txt 已无意义：
-    // 机密以 DB 为准，文件内容无法证明与 DB 匹配，清理掉避免误用。
-    for (const name of [ADMIN_PASSWORD_FILE, API_TOKEN_FILE]) {
-      const filePath = secretsFilePath(name);
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.rmSync(filePath);
-          log.warn('已清理旧版自动生成的机密文件（机密以 DB 为准）', { file: `data/${name}` });
-        } catch (err) {
-          log.warn('清理旧版机密文件失败', { file: `data/${name}`, message: err?.message });
-        }
-      }
-    }
-  }
   return result;
 }/**
  * 启动时加载 DB 覆盖值并写入 config（非法值忽略并 warn，不影响启动）。
@@ -598,8 +578,7 @@ export function loadOverrides() {
   for (const row of rows) {
     if (
       row.key === 'security.adminPasswordHash' ||
-      row.key === 'security.apiTokenEnc' ||
-      row.key === 'security.bootstrapFiles'
+      row.key === 'security.apiTokenEnc'
     ) {
       continue;
     }

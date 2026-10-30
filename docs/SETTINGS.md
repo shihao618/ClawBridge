@@ -161,7 +161,7 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
   reset 生成新值；非生产容器不能调用无关。前端安全卡片渲染/提交。
 - 真实环境：`env` 仅保留 6 项；重启后 loadOverrides 持久化。
 
-## 8. 不再兼容旧版本（机密仅 DB 管理）
+## 8. 机密仅 DB 管理（无旧版本兼容）
 
 用户明确「无需兼容旧版本」，因此移除旧 `.env` 机密兼容/回退，改为干净的首启引导：
 
@@ -171,15 +171,13 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
     日志只提示文件路径（不打印明文）；
   - 生成随机 API Token → AES 密文存 `security.apiTokenEnc`，明文写入 `DATA_DIR/api-token.txt`（0600），
     日志只提示文件路径；`pushApiEnabled` 默认 true。
-  - **DB 已有机密时不生成/不覆盖文件**；旧版 `config.js` 自动生成的同名文件（内容无法证明与 DB 匹配）会在启动时
-    被识别并清理（日志 warn），避免误用；之后仅在新生成/重置/rotate 时写回文件（并打标记保留）。
+  - **DB 已有机密时不生成/不覆盖文件**；仅在新生成/重置/rotate 时写回文件；不再扫描/清理旧版遗留文件。
 - **来源恒为 DB**：GET settings 的 `security.adminPasswordSource/apiTokenSource` 恒为 `'db'`。
 - **重置语义**：
   - `POST /security/password/reset`（校验当前密码）→ 生成**新的随机密码**（不是回退 env），写 DB + `admin-password.txt`，
     明文仅本次响应返回；
   - `POST /security/api-token/reset`（或 `/rotate`）→ 生成新 token，写 DB + `api-token.txt`，明文仅本次响应返回。
-- 兼容性：旧版 DB（已有 `security.*` 覆盖）升级后继续使用 DB 值，不做迁移；若为旧版仅有 env 密码/token 的部署，
-  升级后不会自动继承 env 值（env 已被忽略），请通过 `data/admin-password.txt`（如已生成）或后台重置接口获取新值；
-  `config.js` 不再读取/生成管理密码与 API Token 文件。
+- 旧版仅有 env 密码/token 的部署升级后不会继承 env 值（env 已被忽略），请通过 `data/admin-password.txt`（如已生成）
+  或后台重置接口获取新值；`config.js` 不再读取/生成管理密码与 API Token 文件。
 - `.env` 最终只保留 §7.1 六项（真实 Docker 部署下通常只需 `APP_SECRET`/`PORT`/`DATA_DIR`，其余用默认）。
 

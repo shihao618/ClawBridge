@@ -109,7 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 | `none` | `{}` | **不提取**：消息中不需要参数，直接按 URL/Header/Body 模板调用接口（模板仍可用内置变量）；不检查缺参 |
 | `multi` | `{"extractors":[...],"required":["city"]}` | **多参数组合提取**（唯一提取模式）：按顺序执行多个提取项并合并参数，已覆盖原来的关键词后文本 / 正则 / JSON / 整句模式 |
 
-> 后台「提取模式」下拉只保留 **不提取 / 多参数组合提取**；旧版单模式规则打开编辑时会自动转换为等价的多参数组合，保存后统一为 `multi`。
+> 后台「提取模式」只有 **不提取 / 多参数组合提取** 两种；旧版单模式（trailing/regex/json/fulltext）已彻底移除，不再提供兼容或自动转换。
 
 **多参数示例**（消息「查北京天气明天」）：
 
@@ -177,7 +177,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   路径为空时模板根才是完整响应对象。
   - 例：`response_path="data.list"`，模板直接写 `{{count .}}` / `{{#each .}}{{字段}}{{/each}}`；
   - 空路径时才写 `{{data.list}}`；
-  - 模板只按模板根/当前循环上下文查找路径，不再兼容旧版完整响应路径写法；需要访问完整响应根时用 `{{@responseRoot.字段}}`。
+  - 模板只按模板根/当前循环上下文查找路径；需要访问完整响应根时用 `{{@responseRoot.字段}}`。
 - 回复模板 `reply_template`：使用 `{{路径}}` 占位；内置 `{{response}}`=解析后的文本值、
   `{{raw}}`=原始响应文本；为空时直接用解析结果。
 - **列表渲染**（数组数据一次性拼接）：`{{count 路径}}` 输出数组/对象长度；`{{#each 路径}}...{{/each}}`

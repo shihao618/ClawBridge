@@ -149,7 +149,7 @@ export function parseRuleRow(row) {
       regexPattern: row.regex_pattern ?? '',
     },
     extraction: {
-      mode: row.extraction_mode ?? 'trailing',
+      mode: row.extraction_mode ?? 'none',
       config: json(row.extraction_config, {}) ?? {},
     },
     request: {
@@ -219,87 +219,25 @@ export function matchRule(rule, messageContext = {}) {
 export function extractParams(rule, options = {}) {
   const { text = '', userId = '', displayName = '', now = Date.now() } = options;
   const rawText = String(text ?? '');
-  const mode = rule.extraction?.mode ?? 'trailing';
+  const mode = rule.extraction?.mode === 'multi' ? 'multi' : 'none';
   const cfg = rule.extraction?.config ?? {};
   const params = {};
-  let primaryKey = typeof cfg.param === 'string' && cfg.param ? cfg.param : 'arg';
+  let primaryKey = 'arg';
   let primaryValue = '';
 
-  if (mode === 'trailing') {
-    const keywords = rule.match?.mode === 'equals' ? rule.match.keywords : rule.match?.keywords ?? [];
-    const lower = rawText.toLowerCase();
-    let earliest = -1;
-    let matchedKeyword = '';
-    for (const keyword of keywords) {
-      if (!keyword) continue;
-      const index = lower.indexOf(String(keyword).toLowerCase());
-      if (index >= 0 && (earliest === -1 || index < earliest)) {
-        earliest = index;
-        matchedKeyword = String(keyword);
-      }
-    }
-    primaryValue = earliest >= 0 ? rawText.slice(earliest + matchedKeyword.length).trim() : rawText.trim();
-    if (primaryValue) params[primaryKey] = primaryValue;
-  } else if (mode === 'regex') {
-    const pattern = String(cfg.regex ?? '');
-    let match = null;
-    try {
-      match = pattern ? new RegExp(pattern, 'u').exec(rawText) : null;
-    } catch {
-      match = null;
-    }
-    if (match) {
-      const groups = match.groups && Object.keys(match.groups).length > 0 ? match.groups : null;
-      if (groups) {
-        for (const [key, value] of Object.entries(groups)) {
-          if (value !== undefined && value !== '') params[key] = value;
-        }
-      } else if (match[1] !== undefined && match[1] !== '') {
-        params.arg = match[1];
-      }
-      if (groups) {
-        primaryKey = Object.keys(groups)[0] ?? 'arg';
-        primaryValue = params[primaryKey] ?? '';
-      } else {
-        primaryKey = 'arg';
-        primaryValue = params.arg ?? '';
-      }
-    }
-  } else if (mode === 'json') {
-    const parsed = safeJsonParse(rawText);
-    if (parsed.ok && parsed.value && typeof parsed.value === 'object' && !Array.isArray(parsed.value)) {
-      for (const [key, value] of Object.entries(parsed.value)) {
-        if (value === null || value === undefined) continue;
-        params[key] = typeof value === 'object' ? JSON.stringify(value) : String(value);
-      }
-    }
-    primaryKey = typeof cfg.param === 'string' && cfg.param ? cfg.param : Object.keys(params)[0] ?? 'arg';
-    primaryValue = params[primaryKey] ?? '';
-  } else if (mode === 'fulltext') {
-    primaryKey = typeof cfg.param === 'string' && cfg.param ? cfg.param : 'text';
-    primaryValue = rawText.trim();
-    if (primaryValue) params[primaryKey] = primaryValue;
-  } else if (mode === 'multi') {
+  if (mode === 'multi') {
     Object.assign(params, extractMultiParams(rule, rawText));
     primaryKey = typeof cfg.param === 'string' && cfg.param ? cfg.param : Object.keys(params)[0] ?? 'arg';
     primaryValue = params[primaryKey] ?? '';
   }
 
-  const required = mode === 'none' ? [] : Array.isArray(cfg.required) ? cfg.required.map(String) : [];
-  let missing;
-  if (mode === 'none') {
-    missing = false;
-  } else if (mode === 'multi') {
-    missing =
-      required.length > 0
-        ? required.some((key) => params[key] === undefined || params[key] === '')
-        : Object.keys(params).length === 0;
-  } else {
-    missing =
-      Object.keys(params).length === 0 ||
-      primaryValue === '' ||
-      required.some((key) => params[key] === undefined || params[key] === '');
-  }
+  const required = mode === 'multi' && Array.isArray(cfg.required) ? cfg.required.map(String) : [];
+  const missing =
+    mode === 'multi' &&
+    (required.length > 0
+      ? required.some((key) => params[key] === undefined || params[key] === '')
+      : Object.keys(params).length === 0);
+
   const vars = {
     text: rawText,
     arg: primaryValue,

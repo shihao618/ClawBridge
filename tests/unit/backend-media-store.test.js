@@ -162,8 +162,6 @@ test('attachments: 批量查询（ByInbound / ByOutboxIds / ByIds）', async () 
   const byIds = store.getAttachmentsByIds([outbound.id, 'att_missing']);
   assert.equal(byIds.get(outbound.id).id, outbound.id);
   assert.equal(byIds.has('att_missing'), false);
-  const byOutbox = store.getAttachmentsByOutboxIds([q1.id]);
-  assert.equal(byOutbox.get(q1.id).length, 1);
 
   // listMessages 入站/出站记录均带 attachments
   const messages = store.listMessages({ direction: 'all', limit: 20 });

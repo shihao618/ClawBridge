@@ -1194,7 +1194,7 @@ done</code></pre></div>
             </table>
           </div>
           <p class="doc-note">
-            后台「提取模式」下拉只保留 <strong>不提取</strong> / <strong>多参数组合提取</strong>；旧版单模式规则打开编辑时自动转换为等价组合，保存后统一为 <code class="code-inline">multi</code>。
+            后台「提取模式」只有 <strong>不提取</strong> / <strong>多参数组合提取</strong> 两种；旧版单模式已彻底移除，不提供兼容或自动转换。
           </p>
           <p>
             内置变量：<code class="code-inline">{text}</code>（消息原文）、<code class="code-inline">{arg}</code>
@@ -1646,7 +1646,7 @@ curl -X POST http://localhost:10380/api/admin/settings/reset \
             管理密码与 API Token <strong>仅保存在数据库</strong>（密码 scrypt 哈希 / Token AES 加密），
             首次启动自动生成并写入 <code class="code-inline">data/admin-password.txt</code>、
             <code class="code-inline">data/api-token.txt</code>；<strong>不再读取/回退
-            .env 的 ADMIN_PASSWORD、API_TOKEN</strong>，也不再兼容旧版自动生成文件回退。
+            .env 的 ADMIN_PASSWORD、API_TOKEN</strong>。
             <strong>永不返回密码哈希或 Token 明文</strong>；`security.pushApiEnabled` 通过 PATCH settings 修改（即时生效）。
           </p>
           <div class="endpoint-line">

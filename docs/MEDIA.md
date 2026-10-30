@@ -351,8 +351,7 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
   - v1 上传 + 发送 + 读取；Range 请求（可选）。
 - mock selftest 补充 CDN/媒体注入用例；`npm test` 全绿。
 
-## 11. 兼容与回滚
+## 11. 数据与回滚
 
 - 迁移是 additive 的，v1 数据库可直接升级；旧 outbox 行 `media_id=NULL` 走原文本路径。
-- 旧版前端（缓存）仍可只用文本发送（接口向后兼容：text 仍必填？→ 改为 text/mediaId 至少一个；纯文本调用不变）。
 - 媒体目录位于 `DATA_DIR` 下，随命名卷 `clawbridge-data` 持久化；备份策略与 DB 相同。

@@ -27,7 +27,7 @@ const baseRule = (overrides = {}) => ({
   priority: 100,
   scope: { type: 'all', ids: [] },
   match: { mode: 'contains', keywords: ['查天气'], regexPattern: '' },
-  extraction: { mode: 'trailing', config: { param: 'arg' } },
+  extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
   request: { method: 'GET', url: 'http://127.0.0.1:1/', headers: {}, bodyTemplate: '' },
   response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
   limits: { timeoutMs: 2000, cooldownMs: 0, maxCallsPerHour: 60, maxUserCallsPerHour: 10 },
@@ -108,57 +108,18 @@ test('matchRule：scope all/users/groups + contains/equals/regex', () => {
   assert.equal(appRules.matchRule(regex, { text: '天气 北京', userId: 'u1' }), false);
 });
 
-test('extractParams：trailing / regex / json / fulltext + 内置变量', () => {
-  const trailing = appRules.extractParams(baseRule(), { text: '查天气 北京 朝阳', userId: 'u1', displayName: '张三', now: 123 });
-  assert.equal(trailing.params.arg, '北京 朝阳');
-  assert.equal(trailing.vars.text, '查天气 北京 朝阳');
-  assert.equal(trailing.vars.name, '张三');
-  assert.equal(trailing.vars.userId, 'u1');
-  assert.equal(trailing.vars.now, '123');
-  assert.equal(trailing.missing, false);
-
-  const empty = appRules.extractParams(baseRule(), { text: '查天气', userId: 'u1' });
-  assert.equal(empty.missing, true, '缺参应标记 missing');
-
-  const regex = appRules.extractParams(
-    baseRule({ extraction: { mode: 'regex', config: { regex: '^查(?<city>\\S+)天气$' } } }),
-    { text: '查北京天气', userId: 'u1' },
-  );
-  assert.equal(regex.params.city, '北京');
-  assert.equal(regex.missing, false);
-
-  const regexNoName = appRules.extractParams(
-    baseRule({ extraction: { mode: 'regex', config: { regex: '^查(\\S+)天气$' } } }),
-    { text: '查上海天气', userId: 'u1' },
-  );
-  assert.equal(regexNoName.params.arg, '上海');
-
-  const json = appRules.extractParams(
-    baseRule({ extraction: { mode: 'json', config: {} } }),
-    { text: '{"city":"广州","days":3,"extra":{"a":1}}', userId: 'u1' },
-  );
-  assert.equal(json.params.city, '广州');
-  assert.equal(json.params.days, '3');
-  assert.equal(json.params.extra, '{"a":1}');
-
-  const fulltext = appRules.extractParams(
-    baseRule({ extraction: { mode: 'fulltext', config: { param: 'text' } } }),
-    { text: ' 整段文本 ', userId: 'u1' },
-  );
-  assert.equal(fulltext.params.text, '整段文本');
-
+test('extractParams：none / multi 组合提取 + 内置变量', () => {
   const none = appRules.extractParams(
     baseRule({ extraction: { mode: 'none', config: {} } }),
-    { text: '任意消息', userId: 'u1', displayName: '张三', now: 456 },
+    { text: '查天气 北京', userId: 'u1', displayName: '张三', now: 456 },
   );
   assert.deepEqual(none.params, {});
   assert.equal(none.missing, false, '不提取模式不应视为缺参');
-  assert.equal(none.vars.text, '任意消息');
+  assert.equal(none.vars.text, '查天气 北京');
   assert.equal(none.vars.userId, 'u1');
   assert.equal(none.vars.name, '张三');
   assert.equal(none.vars.now, '456');
 
-  // 多参数组合模式：正则命名组 + 关键词后文本 + 整句，合并后按 required 判定缺参
   const multiRule = baseRule({
     extraction: {
       mode: 'multi',
@@ -390,8 +351,8 @@ test('testRule dry-run：不写日志、不发消息、返回请求/响应/回�
     matchMode: 'contains',
     keywords: ['查天气'],
     regexPattern: '',
-    extractionMode: 'trailing',
-    extractionConfig: { param: 'arg' },
+    extractionMode: 'multi',
+    extractionConfig: { extractors: [{ type: 'trailing', param: 'arg' }] },
     requestMethod: 'GET',
     requestUrl: `http://127.0.0.1:${port}/weather?city={arg}`,
     requestHeadersEnc: null,

@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS app_rules (
   match_mode TEXT NOT NULL DEFAULT 'contains',
   keywords TEXT NOT NULL DEFAULT '[]',
   regex_pattern TEXT NOT NULL DEFAULT '',
-  extraction_mode TEXT NOT NULL DEFAULT 'trailing',
+  extraction_mode TEXT NOT NULL DEFAULT 'multi',
   extraction_config TEXT NOT NULL DEFAULT '{}',
   request_method TEXT NOT NULL DEFAULT 'GET',
   request_url TEXT NOT NULL,

@@ -1032,38 +1032,6 @@ const RULE_EXTRACTION_LABELS = {
   none: '不提取（直接调用接口）',
   multi: '多参数组合提取',
 };
-// 旧版单模式仅用于打开旧规则时自动转换展示，不再出现在下拉选项中。
-const MULTI_EXTRACTOR_TYPE_LABELS = {
-  trailing: '关键词后文本',
-  regex: '正则命名捕获',
-  json: 'JSON 消息',
-  fulltext: '整句',
-};
-const LEGACY_EXTRACTION_LABELS = {
-  trailing: '关键词后文本',
-  regex: '正则命名捕获',
-  json: 'JSON 消息',
-  fulltext: '整句',
-};
-function legacyExtractionToMulti(mode, config) {
-  const cfg = config && typeof config === 'object' ? config : {};
-  const base = { keyword: '', regex: '', path: '', required: false };
-  let extractor;
-  if (mode === 'regex') {
-    extractor = { ...base, type: 'regex', param: typeof cfg.param === 'string' ? cfg.param : '', regex: typeof cfg.regex === 'string' ? cfg.regex : '' };
-  } else if (mode === 'json') {
-    extractor = { ...base, type: 'json', param: typeof cfg.param === 'string' ? cfg.param : '', path: '' };
-  } else if (mode === 'fulltext') {
-    extractor = { ...base, type: 'fulltext', param: typeof cfg.param === 'string' && cfg.param ? cfg.param : 'text' };
-  } else {
-    extractor = { ...base, type: 'trailing', param: typeof cfg.param === 'string' && cfg.param ? cfg.param : 'arg' };
-  }
-  return {
-    extractors: [extractor],
-    required: Array.isArray(cfg.required) ? cfg.required.map(String) : [],
-  };
-}
-
 async function loadAppRules() {
   const data = await apiFetch('/api/admin/app-rules?includeDisabled=1');
   state.appRules.items = data && Array.isArray(data.items) ? data.items : [];
@@ -1277,14 +1245,9 @@ function openAppRuleEditor(rule = null) {
   const extraction = source.extraction && typeof source.extraction === 'object' ? source.extraction : {};
   const extractionConfig = extraction.config && typeof extraction.config === 'object' ? extraction.config : {};
   const rawExtractionMode = typeof extraction.mode === 'string' ? extraction.mode : '';
-  const legacyExtractionMode =
-    isEdit && !Object.prototype.hasOwnProperty.call(RULE_EXTRACTION_LABELS, rawExtractionMode)
-      ? rawExtractionMode || 'trailing'
-      : '';
   const uiExtractionMode = rawExtractionMode === 'none' ? 'none' : 'multi';
-  const uiExtractionConfig = legacyExtractionMode
-    ? legacyExtractionToMulti(legacyExtractionMode, extractionConfig)
-    : extractionConfig;
+  const uiExtractionConfig = extractionConfig;
+
   const request = source.request && typeof source.request === 'object' ? source.request : {};
   const response = source.response && typeof source.response === 'object' ? source.response : {};
   const limits = source.limits && typeof source.limits === 'object' ? source.limits : {};
@@ -1607,12 +1570,7 @@ function openAppRuleEditor(rule = null) {
   }
   extractionModeSelect.addEventListener('change', renderExtractionConfig);
   renderExtractionConfig();
-  const extractionNotice = legacyExtractionMode
-    ? el('p', {
-        class: 'form-hint',
-        text: `该规则原使用「${LEGACY_EXTRACTION_LABELS[legacyExtractionMode] || legacyExtractionMode}」提取，已自动转换为多参数组合提取；保存后统一为组合模式。`,
-      })
-    : null;
+
 
   // 请求
   const methodSelect = el('select', { id: 'rule-request-method', class: 'select' }, ...['GET', 'POST'].map((method) =>
@@ -1800,7 +1758,6 @@ function openAppRuleEditor(rule = null) {
     formSection(
       '参数提取',
       '从消息中提取变量，供请求 URL / Header / Body 模板使用；缺参时不调用接口。',
-      extractionNotice,
       el(
         'div',
         { class: 'rule-form-grid' },
@@ -4633,12 +4590,9 @@ async function loadSettings() {
     setHidden(els.settingsSavebar, true);
     if (els.securityCard) setHidden(els.securityCard, true);
     els.settingsUnavailable.hidden = false;
-    els.settingsUnavailable.textContent =
-      error && error.status === 404
-        ? '当前后端未提供 /api/admin/settings 配置读写接口（可能为旧版本）；下方仅展示只读配置。'
-        : `加载运行配置失败：${error && error.message ? error.message : '未知错误'}；下方仅展示只读配置。`;
+    els.settingsUnavailable.textContent = `加载运行配置失败：${error && error.message ? error.message : '未知错误'}；下方仅展示只读配置。`;
     renderConfig(state.config);
-    if (error && error.status !== 404) toastError(error, '加载运行配置失败');
+    toastError(error, '加载运行配置失败');
   }
 }
 
