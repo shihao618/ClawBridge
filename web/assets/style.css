@@ -2807,11 +2807,11 @@ body.modal-open {
     flex: 1 1 120px;
   }
 
-  .topbar-actions {
+  .admin-topbar .topbar-actions {
     width: 100%;
   }
 
-  .topbar-actions .btn {
+  .admin-topbar .topbar-actions .btn {
     flex: 1;
   }
 
@@ -3186,12 +3186,40 @@ body.admin-authed .admin-main {
 }
 
 @media (max-width: 639px) {
+  .admin-topbar-bar {
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .admin-topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .admin-topbar-bar .page-title {
+    font-size: 17px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .admin-topbar-bar .topbar-actions {
+    width: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
   .admin-topbar-bar .topbar-actions .btn {
-    padding: 6px 9px;
+    flex: 0 0 auto;
+    padding: 6px 8px;
+    font-size: 12px;
+    white-space: nowrap;
   }
 
   .admin-topbar-bar .topbar-actions .btn-ghost {
-    padding: 6px 8px;
+    padding: 6px 7px;
   }
 
   .view-title {

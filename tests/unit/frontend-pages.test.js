@@ -1250,3 +1250,16 @@ test('接口应用：参数提取支持多参数组合模式', async () => {
   assert.match(admin, /extractionCfg\.extractors = extractors/, '多参数模式保存时应写入 extractors');
   assert.match(admin, /extractionCfg\.required = requiredNames/, '多参数模式应写入必填参数');
 });
+
+test('移动端后台顶栏：标题与刷新/退出按钮不冲突', async () => {
+  const css = await readAsset('style.css');
+  for (const token of [
+    '.admin-topbar-bar .topbar-actions',
+    'text-overflow: ellipsis',
+    'flex-wrap: nowrap',
+    'flex: 0 0 auto',
+  ]) {
+    assert.ok(css.includes(token), `style.css 应包含移动端顶栏适配：${token}`);
+  }
+  assert.ok(css.includes('.admin-topbar .topbar-actions'), '旧的 topbar-actions 宽度规则应只作用于旧 .admin-topbar');
+});
