@@ -1318,3 +1318,10 @@ test('表单：GET 隐藏 Body 模板、POST 显示；定时任务弹窗遮罩�
     '规则编辑与定时任务编辑弹窗都应设置 closeOnBackdrop: false',
   );
 });
+test('移动端文档页：黑色示例框不超出屏幕', async () => {
+  const css = await readAsset('style.css');
+  for (const token of ['.doc-card .code-block', 'overflow-wrap: anywhere', '.doc-content .code-inline']) {
+    assert.ok(css.includes(token), `style.css 应包含文档页移动端防溢出：${token}`);
+  }
+  assert.match(css, /\.code-block\s*\{[\s\S]*?max-width:\s*100%/, '代码框应限制最大宽度');
+});
