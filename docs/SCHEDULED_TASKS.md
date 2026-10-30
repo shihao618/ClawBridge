@@ -100,17 +100,23 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
 3. 非 2xx / 超时 / JSON 解析失败 / 模板渲染为空 → `failed`：
    - 若 `fallback_text` 非空：把它作为通知内容发送给全部目标（避免用户完全收不到）；
    - 否则本次不发送。
-4. 成功：`success`，按通知模板渲染文本（`{{path}}`/`{{response}}`/`{{raw}}`；列表支持
-   `{{count data.list}}` 与 `{{#each data.list}}{{字段}}{{/each}}`，内层可用 `{{@number}}`/`{{@index}}`，
-   仅单层 each；支持 `where 字段=值`/`!=` 过滤）。示例（按归寝状态分组）：
+4. 成功：`success`，按通知模板渲染文本（`{{path}}`/`{{response}}`/`{{raw}}`）。
+   - **模板根**：`response.path` 选中节点后，模板根即该节点，路径直接相对它写；空路径才用完整响应对象。
+     例：`response.path="data.list"` → `{{count .}}` / `{{#each .}}{{字段}}{{/each}}`；
+     旧模板写完整路径仍兼容（自动回退完整响应根）。
+   - **列表/多层循环**：`{{count . where 字段=值}}`、`{{#each . where 字段=值}}...{{/each}}`；
+     `each` 可嵌套多层，内层用 `{{../字段}}` 取父级、`{{../@index}}`/`{{../@number}}` 取父循环、
+     `{{@root.字段}}` 取完整响应根；`@index` 从 0、`@number` 从 1。示例（`response.path=datas.rows`）：
 
    ```
-   【未归寝】{{count data.data where CQZT=1}} 人
-   {{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
-   {{/each}}【已归寝】{{count data.data where CQZT=2}} 人
-   {{#each data.data where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+   【未归寝】{{count . where CQZT=1}} 人
+   {{#each . where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+   {{/each}}【已归寝】{{count . where CQZT=2}} 人
+   {{#each . where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
    {{/each}}
    ```
+
+   多层示例：`{{#each groups}}{{name}}{{#each members}}/{{../name}}-{{name}}{{/each}}{{/each}}`。
 5. 目标收件人：
    - `target_type=users`：target_ids 中 `status=active` 的用户（unbound 跳过）；
    - `target_type=groups`：这些分组内 `status=active` 的用户（去重）；

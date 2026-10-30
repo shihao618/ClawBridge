@@ -456,7 +456,8 @@ export async function executeScheduledTask(taskRow, { dryRun = false, now = deps
       rawText: response.text,
     });
     const rendered = renderReplyTemplate(task.response.template, {
-      root: parsed.root,
+      root: parsed.templateRoot,
+      fallbackRoot: parsed.root,
       responseText: parsed.responseText,
       rawText: parsed.rawText,
     });

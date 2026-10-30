@@ -414,10 +414,13 @@ function countValue(value) {
   return 1;
 }
 
-/** 解析列表规格：`path` 或 `path where 字段=值` / `path where 字段!=值`。 */
+/**
+ * 解析列表规格：`path` 或 `path where 字段=值` / `path where 字段!=值`。
+ * path 可为 `.`（当前上下文）或空（当前上下文），支持 `../parent.field` / `@root.path`。
+ */
 function parseListSpec(rawSpec) {
   const spec = String(rawSpec ?? '').trim();
-  const whereMatch = spec.match(/^(\S+)\s+where\s+([A-Za-z0-9_.@-]+)\s*(!=|=)\s*(.+)$/i);
+  const whereMatch = spec.match(/^(\S*)\s+where\s+([A-Za-z0-9_.@-]+)\s*(!=|=)\s*(.+)$/i);
   if (!whereMatch) return { path: spec, filter: null };
   let value = whereMatch[4].trim();
   if (
@@ -440,55 +443,159 @@ function filterList(list, filter) {
   });
 }
 
-/** 计算 `count path [where ...]` 的值。 */
-function resolveCountValue(rawSpec, root) {
+/**
+ * 模板路径解析（相对当前上下文，失败时依次向上找父级/根，最后回退到完整响应根）。
+ * 支持：`.`/空=当前、`../字段` 上级、`@root.字段` 完整响应根。
+ */
+function resolveTemplatePath(rawPath, contextStack, fallbackRoot) {
+  const pathText = String(rawPath ?? '').trim();
+  let current = contextStack[contextStack.length - 1];
+  if (!pathText || pathText === '.' || pathText === 'this' || pathText === '@this') return current;
+
+  if (pathText === '@root') return contextStack[0];
+  if (pathText.startsWith('@root.')) return getByPath(contextStack[0], pathText.slice(6));
+
+  if (pathText.startsWith('../')) {
+    let levels = 0;
+    let rest = pathText;
+    while (rest.startsWith('../')) {
+      levels += 1;
+      rest = rest.slice(3);
+    }
+    const targetIndex = Math.max(0, contextStack.length - 1 - levels);
+    current = contextStack[targetIndex];
+    if (!rest || rest === '.' || rest === 'this') return current;
+    return getByPath(current, rest);
+  }
+
+  for (let index = contextStack.length - 1; index >= 0; index -= 1) {
+    const value = getByPath(contextStack[index], pathText);
+    if (value !== undefined) return value;
+  }
+  if (fallbackRoot !== undefined) return getByPath(fallbackRoot, pathText);
+  return undefined;
+}
+
+/** 计算 `count path [where ...]` 的值（支持相对当前循环项/父级）。 */
+function resolveCountValue(rawSpec, contextStack, fallbackRoot) {
   const parsed = parseListSpec(rawSpec);
-  const value = getByPath(root, parsed.path);
+  const value = resolveTemplatePath(parsed.path, contextStack, fallbackRoot);
   if (parsed.filter) return filterList(value, parsed.filter).length;
   return countValue(value);
 }
 
-/** 渲染 `{{#each path [where 字段=值]}}...{{/each}}` 列表块（单层）。 */
-function expandEachBlocks(template, root) {
-  const blockPattern = /\{\{#each\s+([^{}]+?)\s*\}\}([\s\S]*?)\{\{\/each\}\}/g;
-  return String(template).replace(blockPattern, (match, rawSpec, inner) => {
-    const parsed = parseListSpec(rawSpec);
-    const list = filterList(getByPath(root, parsed.path), parsed.filter);
-    if (list.length === 0) return '';
-    return list
-      .map((item, index) => {
-        return String(inner).replace(/\{\{([^{}]+?)\}\}/g, (placeholder, rawExpr) => {
-          const expr = String(rawExpr).trim();
-          if (expr === '@index') return String(index);
-          if (expr === '@number') return String(index + 1);
-          if (expr === 'this') return valueToText(item);
-          if (expr.startsWith('count ')) return valueToText(resolveCountValue(expr.slice(6).trim(), root));
-          const own = item && typeof item === 'object' ? getByPath(item, expr) : undefined;
-          if (own !== undefined) return valueToText(own);
-          return valueToText(getByPath(root, expr));
-        });
-      })
-      .join('');
-  });
+/** 模板 token 化：文本 / 变量 / each 开始 / each 结束。 */
+function tokenizeTemplate(template) {
+  const tokens = [];
+  const pattern = /\{\{#each(?:\s+([^{}]*?))?\s*\}\}|\{\{\/each\}\}|\{\{([^{}]+?)\}\}/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(template)) !== null) {
+    if (match.index > lastIndex) tokens.push({ type: 'text', value: template.slice(lastIndex, match.index) });
+    if (match[0].startsWith('{{#each')) tokens.push({ type: 'each', spec: String(match[1] ?? '').trim() });
+    else if (match[0] === '{{/each}}') tokens.push({ type: 'close' });
+    else tokens.push({ type: 'var', expr: String(match[2] ?? '').trim() });
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < template.length) tokens.push({ type: 'text', value: template.slice(lastIndex) });
+  return tokens;
+}
+
+/** 查找与 start 处 each 匹配的结束 token 下标（-1=未闭合）。 */
+function findMatchingEnd(tokens, start) {
+  let depth = 0;
+  for (let index = start; index < tokens.length; index += 1) {
+    if (tokens[index].type === 'each') depth += 1;
+    else if (tokens[index].type === 'close') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+/** 解析单个变量表达式（字段 / @index / @number / count / response / raw / 上级字段）。 */
+function resolveTemplateVariable(expr, contextStack, metaStack, options) {
+  const text = String(expr ?? '').trim();
+  if (text === 'response') return options.responseText ?? '';
+  if (text === 'raw') return options.rawText ?? '';
+
+  const parentIndexMatch = text.match(/^((?:\.\.\/)+)@(index|number)$/);
+  if (parentIndexMatch) {
+    const levels = (parentIndexMatch[1].match(/\.\.\//g) ?? []).length;
+    const meta = metaStack[metaStack.length - 1 - levels];
+    return meta ? String(meta[parentIndexMatch[2]]) : '';
+  }
+  if (text === '@index' || text === '@number') {
+    const meta = metaStack[metaStack.length - 1];
+    return meta ? String(meta[text.slice(1)]) : '';
+  }
+
+  if (text.startsWith('count ')) {
+    return valueToText(resolveCountValue(text.slice(6).trim(), contextStack, options.fallbackRoot));
+  }
+  return valueToText(resolveTemplatePath(text, contextStack, options.fallbackRoot));
+}
+
+const MAX_EACH_DEPTH = 8;
+
+/** 递归渲染 token 列表；contextStack[0] 为模板根，后续为当前/父级循环项。 */
+function renderTemplateTokens(tokens, contextStack, metaStack, options, depth = 0) {
+  if (depth > MAX_EACH_DEPTH) return '';
+  let output = '';
+  let index = 0;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token.type === 'text') {
+      output += token.value;
+      index += 1;
+      continue;
+    }
+    if (token.type === 'var') {
+      output += resolveTemplateVariable(token.expr, contextStack, metaStack, options);
+      index += 1;
+      continue;
+    }
+    if (token.type === 'close') {
+      index += 1;
+      continue;
+    }
+    if (token.type === 'each') {
+      const endIndex = findMatchingEnd(tokens, index);
+      const bodyEnd = endIndex === -1 ? tokens.length : endIndex;
+      const body = tokens.slice(index + 1, bodyEnd);
+      const parsed = parseListSpec(token.spec);
+      const value = resolveTemplatePath(parsed.path, contextStack, options.fallbackRoot);
+      const list = filterList(value, parsed.filter);
+      for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
+        output += renderTemplateTokens(
+          body,
+          [...contextStack, list[itemIndex]],
+          [...metaStack, { index: itemIndex, number: itemIndex + 1 }],
+          options,
+          depth + 1,
+        );
+      }
+      index = endIndex === -1 ? tokens.length : endIndex + 1;
+      continue;
+    }
+    index += 1;
+  }
+  return output;
 }
 
 /**
- * 回复/通知模板：`{{path}}` 从解析后的响应根取值；内置 `{{response}}` / `{{raw}}`；
- * 支持 `{{count path [where 字段=值]}}` 与 `{{#each path [where 字段=值]}}...{{/each}}`
- * 列表渲染（`{{@index}}` 从 0、`{{@number}}` 从 1）。
+ * 回复/通知模板：`{{path}}` 从模板根取值；内置 `{{response}}` / `{{raw}}`；
+ * 支持 `{{count path [where 字段=值]}}` 与多层嵌套 `{{#each path [where ...]}}...{{/each}}`。
+ * 循环内：当前项字段直接写 `{{字段}}`；父级 `{{../字段}}`；根 `{{@root.字段}}`；
+ * `{{@index}}`/`{{@number}}` 为当前循环下标/序号，`{{../@index}}` 取父循环。
+ * 路径查找失败时会回退到完整响应根（兼容旧模板全路径写法）。
  */
-export function renderReplyTemplate(template, { root, responseText = '', rawText = '' } = {}) {
+export function renderReplyTemplate(template, { root, responseText = '', rawText = '', fallbackRoot } = {}) {
   const tpl = String(template ?? '');
   if (tpl.trim() === '') return truncate(responseText, MAX_REPLY_LENGTH());
-  const withLists = expandEachBlocks(tpl, root);
-  const rendered = withLists.replace(/\{\{([^{}]+?)\}\}/g, (match, rawExpr) => {
-    const expr = String(rawExpr).trim();
-    if (expr === 'response') return responseText;
-    if (expr === 'raw') return rawText;
-    if (expr.startsWith('count ')) return valueToText(resolveCountValue(expr.slice(6).trim(), root));
-    const value = getByPath(root, expr);
-    return valueToText(value);
-  });
+  const tokens = tokenizeTemplate(tpl);
+  const rendered = renderTemplateTokens(tokens, [root], [], { responseText, rawText, fallbackRoot });
   return truncate(rendered, MAX_REPLY_LENGTH());
 }
 
@@ -528,13 +635,14 @@ export function parseResponse({ responseType = 'json', responsePath = '', rawTex
   const raw = String(rawText ?? '');
   if (responseType === 'text') {
     const responseText = truncate(raw.trim(), MAX_REPLY_LENGTH());
-    return { root: responseText, value: responseText, responseText, rawText: raw };
+    return { root: responseText, value: responseText, responseText, rawText: raw, templateRoot: responseText };
   }
   const parsed = safeJsonParse(raw);
   if (!parsed.ok) throw new Error('响应不是合法 JSON');
   const root = parsed.value;
+  const hasPath = String(responsePath).trim() !== '';
   let value;
-  if (String(responsePath).trim() === '') {
+  if (!hasPath) {
     if (root && typeof root === 'object' && !Array.isArray(root) && typeof root.reply === 'string' && root.reply.trim() !== '') {
       value = root.reply;
     } else {
@@ -544,7 +652,9 @@ export function parseResponse({ responseType = 'json', responsePath = '', rawTex
     value = getByPath(root, responsePath);
   }
   const responseText = truncate(valueToText(value), MAX_REPLY_LENGTH());
-  return { root, value, responseText, rawText: raw };
+  // JSON 路径命中时，模板根=选中节点（模板可直接相对引用）；空路径/路径无效时保持完整响应根。
+  const templateRoot = hasPath && value !== undefined ? value : root;
+  return { root, value, responseText, rawText: raw, templateRoot };
 }
 
 // ---------------------------------------------------------------------------
@@ -814,7 +924,8 @@ export async function executeRuleHttp(rule, { text = '', userId = '', displayNam
     result.parsed = parsed;
     const template = rule.response?.template ?? '';
     const rendered = renderReplyTemplate(template, {
-      root: parsed.root,
+      root: parsed.templateRoot,
+      fallbackRoot: parsed.root,
       responseText: parsed.responseText,
       rawText: parsed.rawText,
     });

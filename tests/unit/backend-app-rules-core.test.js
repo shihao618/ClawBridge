@@ -447,3 +447,49 @@ test('requestExternal：POST JSON body 自动补 Content-Type；网络错误诊�
   assert.match(message, /请检查目标服务是否已启动/);
   assert.match(appRules.describeFetchError(Object.assign(new Error('aborted'), { name: 'AbortError' })), /请求超时/);
 });
+test('模板根=JSON 路径选中节点：相对引用、旧全路径回退、多层嵌套循环', () => {
+  const rawText = JSON.stringify({
+    datas: {
+      cqztbg: {
+        rows: [
+          { XM: '张三', FJH: '101', CQZT: '1' },
+          { XM: '李四', FJH: '102', CQZT: '2' },
+          { XM: '王五', FJH: '103', CQZT: '2' },
+        ],
+      },
+    },
+  });
+  const parsed = appRules.parseResponse({ responseType: 'json', responsePath: 'datas.cqztbg.rows', rawText });
+  assert.ok(Array.isArray(parsed.templateRoot), '路径命中后模板根应为选中数组');
+  assert.deepEqual(parsed.templateRoot, parsed.value);
+
+  const relative = appRules.renderReplyTemplate(
+    '共 {{count . where CQZT=2}} 人；{{#each . where CQZT=2}}{{@number}}.{{XM}}（{{FJH}}）；{{/each}}',
+    { root: parsed.templateRoot, fallbackRoot: parsed.root },
+  );
+  assert.equal(relative, '共 2 人；1.李四（102）；2.王五（103）；');
+
+  // 旧模板写完整响应路径仍可解析（自动回退到完整响应根）
+  const legacy = appRules.renderReplyTemplate('{{count datas.cqztbg.rows where CQZT=1}}', {
+    root: parsed.templateRoot,
+    fallbackRoot: parsed.root,
+  });
+  assert.equal(legacy, '1');
+
+  const nestedRoot = {
+    groups: [
+      { name: 'A', members: [{ name: 'a1' }, { name: 'a2' }] },
+      { name: 'B', members: [{ name: 'b1' }] },
+    ],
+  };
+  const nestedTemplate =
+    '{{#each groups}}{{name}}:{{#each members}}{{../name}}-{{name}}#{{@number}}/{{../@index}};{{/each}}|{{/each}}';
+  assert.equal(
+    appRules.renderReplyTemplate(nestedTemplate, { root: nestedRoot }),
+    'A:A-a1#1/0;A-a2#2/0;|B:B-b1#1/1;|',
+  );
+  assert.equal(
+    appRules.renderReplyTemplate('{{#each groups}}{{#each members}}{{@root.groups.0.name}}/{{../name}}/{{name}};{{/each}}{{/each}}', { root: nestedRoot }),
+    'A/A/a1;A/A/a2;A/B/b1;',
+  );
+});

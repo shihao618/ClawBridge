@@ -1834,7 +1834,7 @@ function openAppRuleEditor(rule = null) {
         formField('响应类型', responseTypeSelect, null, 'rule-response-type'),
         formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path'),
       ),
-      formField('回复模板', replyTemplateInput, '支持 {{data.answer}}、{{reply}}、{{response}}、{{raw}}；列表可用 {{count data.list}} 与 {{#each data.list}}{{字段}}{{/each}}（@index/@number，可用 where 字段=值 过滤）逐项渲染；为空时直接使用解析结果。', 'rule-reply-template'),
+      formField('回复模板', replyTemplateInput, '支持 {{data.answer}}、{{reply}}、{{response}}、{{raw}}；JSON 路径选中节点即模板根（路径=data.list 时写 {{count .}}/{{#each .}}，空路径才写 {{data.list}}）。支持多层循环、{{../字段}}、{{../@index}}、{{@root.字段}}（@index/@number 为当前循环下标/序号），可用 where 字段=值 过滤；为空时直接使用解析结果。', 'rule-reply-template'),
       formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback'),
     ),
     formSection(
@@ -2901,7 +2901,7 @@ async function openScheduleEditor(task = null) {
         formField('响应类型', responseTypeSelect, null, 'schedule-response-type'),
         formField('JSON 路径', responsePathInput, 'response.type=json 时按点路径取值。', 'schedule-response-path'),
       ),
-      formField('通知模板', replyTemplateInput, '支持 {{路径}}、{{response}}、{{raw}}；列表可用 {{count data.list}} 与 {{#each data.list}}{{字段}}{{/each}}（@index/@number，可用 where 字段=值 过滤）逐项渲染；为空时直接使用解析结果。', 'schedule-reply-template'),
+      formField('通知模板', replyTemplateInput, '支持 {{路径}}、{{response}}、{{raw}}；JSON 路径选中节点即模板根（路径=data.list 时写 {{count .}}/{{#each .}}，空路径才写 {{data.list}}）。支持多层循环、{{../字段}}、{{../@index}}、{{@root.字段}}（@index/@number 为当前循环下标/序号），可用 where 字段=值 过滤；为空时直接使用解析结果。', 'schedule-reply-template'),
       formField('兜底文案', fallbackInput, '接口失败/解析失败时发给全部目标；为空则不发送。', 'schedule-fallback'),
       formField('超时（ms，1000-30000）', timeoutInput, null, 'schedule-timeout'),
     ),

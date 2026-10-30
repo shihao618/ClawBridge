@@ -175,23 +175,29 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   - 路径为空：若解析对象含 `reply` 不空字符串 → 用它；否则用 `JSON.stringify(解析对象)`；
   - 取到的值：字符串直接使用；对象/数组 `JSON.stringify`。
 - `response_type=text`：整个响应文本（trim、截断）。
-- 回复模板 `reply_template`：使用 `{{路径}}` 占位（相对解析后的响应根，如 `{{data.answer}}`、
-  `{{reply}}`；内置 `{{response}}`=解析后的文本值、`{{raw}}`=原始响应文本）。为空时直接用解析结果。
+- **模板根**：`response_path` 选中具体节点后，**模板根就是该节点**，模板无需重复路径；
+  路径为空时模板根才是完整响应对象。
+  - 例：`response_path="data.list"`，模板直接写 `{{count .}}` / `{{#each .}}{{字段}}{{/each}}`；
+  - 空路径时才写 `{{data.list}}`；
+  - 兼容旧模板：相对路径查找失败会自动回退到完整响应根，因此 `{{data.list}}` 仍可解析。
+- 回复模板 `reply_template`：使用 `{{路径}}` 占位；内置 `{{response}}`=解析后的文本值、
+  `{{raw}}`=原始响应文本；为空时直接用解析结果。
 - **列表渲染**（数组数据一次性拼接）：`{{count 路径}}` 输出数组/对象长度；`{{#each 路径}}...{{/each}}`
-  对内层逐项渲染，内层可用当前项字段 `{{字段}}`（当前项没有该字段时回退到响应根）、`{{@index}}`（从 0）、
-  `{{@number}}`（从 1）。支持 `where 字段=值` / `where 字段!=值` 过滤（值可加引号），如
-  `{{#each data.data where CQZT=1}}`、`{{count data.data where CQZT=1}}`。空数组渲染为空；仅支持单层 each。
-  示例（响应 `{"data":{"data":[{XSXM,FJH,CQZT_DISPLAY},…]}}`）：
+  对内层逐项渲染，内层可用当前项字段 `{{字段}}`（当前项没有该字段时依次回退父级/根响应）、`{{@index}}`（从 0）、
+  `{{@number}}`（从 1）。支持 `where 字段=值` / `where 字段!=值` 过滤（值可加引号）。
+- **多层嵌套循环**：`each` 可嵌套多层（≤8 层）；内层用 `{{../字段}}` 取父级字段、
+  `{{../@index}}`/`{{../@number}}` 取父循环下标/序号、`{{@root.字段}}` 取完整响应根。示例（路径已指向数组）：
 
   ```
-  【未归寝】{{count data.data where CQZT=1}} 人
-  {{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
-  {{/each}}【已归寝】{{count data.data where CQZT=2}} 人
-  {{#each data.data where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+  【未归寝】{{count . where CQZT=1}} 人
+  {{#each . where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+  {{/each}}【已归寝】{{count . where CQZT=2}} 人
+  {{#each . where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
   {{/each}}
   ```
 
-  渲染结果：两个状态分组、各组人数与名单；长名单受单条文本 4000 字限制截断，建议只放必要字段。
+  多层示例：`{{#each groups}}{{name}}{{#each members}}/{{../name}}-{{name}}{{/each}}{{/each}}`。
+  长名单受单条文本 4000 字限制截断，建议只放必要字段。
 - 回复长度按 `config.push.maxTextLength`（默认 4000）截断；空回复则使用 `fallback_text`。
 - 入队 outbox 文本 `source='rule'`；回包失败（非 2xx/超时/解析失败）→ 若 `fallback_text` 非空则回复
   兜底文案，日志 `status='failed'` + 错误。
@@ -220,7 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   "extraction":{"mode":"trailing","config":{"param":"arg"}},
   "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headerNames":["Authorization"],"bodyTemplate":""},
-  "response":{"type":"json","path":"data","template":"{{data.answer}}","fallbackText":"暂时无法查询"},
+  "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
   "limits":{"timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10},
   "stats":{"lastRunAt":0,"lastStatus":"","success24h":0,"failed24h":0,"skipped24h":0},
   "createdAt":0,"updatedAt":0
@@ -253,7 +259,7 @@ GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=50&offset=0
   "extraction":{"mode":"trailing","config":{"param":"arg"}},
   "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headers":{"Authorization":"Bearer xxx"},"bodyTemplate":""},
-  "response":{"type":"json","path":"data","template":"{{data.answer}}","fallbackText":"暂时无法查询"},
+  "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
   "timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10
 }
 ```

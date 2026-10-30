@@ -1228,13 +1228,16 @@ done</code></pre></div>
               （点路径，如 <code class="code-inline">data.answer</code>、<code class="code-inline">a.b.0.c</code>）取值；
               路径为空时优先取 <code class="code-inline">reply</code> 字段，否则对整个对象 <code class="code-inline">JSON.stringify</code>。</li>
             <li><code class="code-inline">response_type=text</code>：直接使用响应文本（trim、截断）。</li>
+            <li><strong>模板根</strong>：<code class="code-inline">response_path</code> 选中节点后，模板根即该节点，
+              模板不用重复路径；路径为空时才是完整响应对象（如路径=data.list 时写 {{count .}}/{{#each .}}）；
+              旧模板写完整路径仍兼容。</li>
             <li>回复模板 <code class="code-inline">reply_template</code>：支持 <code class="code-inline">{{路径}}</code>（如
               <code class="code-inline">{{data.answer}}</code>）以及内置 <code class="code-inline">{{response}}</code>
               （解析后的文本）与 <code class="code-inline">{{raw}}</code>（原始响应文本）；为空时直接使用解析结果。</li>
             <li><strong>列表渲染</strong>：<code class="code-inline">{{count data.list}}</code> 输出数量；
               <code class="code-inline">{{#each data.list}}</code> … <code class="code-inline">{{/each}}</code>
               逐项渲染（内层 <code class="code-inline">{{字段}}</code>、<code class="code-inline">{{@index}}</code> 从 0、
-              <code class="code-inline">{{@number}}</code> 从 1，仅支持单层 each）。示例：</li>
+              <code class="code-inline">{{@number}}</code> 从 1；each 可嵌套多层，内层用 <code class="code-inline">{{../字段}}</code>、<code class="code-inline">{{../@index}}</code>、<code class="code-inline">{{@root.字段}}</code>）。示例：</li>
           </ul>
           <div class="code-block"><pre><code>【未归寝】{{count data.data where CQZT=1}} 人
 {{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
@@ -1400,12 +1403,15 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
             <li><code class="code-inline">response.type=json</code>：按 <code class="code-inline">response.path</code>
               （点路径，可含数组下标）取值；路径为空时优先取 <code class="code-inline">reply</code> 字段，否则整个对象 JSON 化。</li>
             <li><code class="code-inline">response.type=text</code>：直接使用响应文本（trim、截断）。</li>
+            <li><strong>模板根</strong>：<code class="code-inline">response.path</code> 选中节点后，模板根即该节点，
+              模板不用重复路径；路径为空时才是完整响应对象（如路径=data.list 时写 {{count .}}/{{#each .}}）；
+              旧模板写完整路径仍兼容。</li>
             <li>通知模板 <code class="code-inline">reply_template</code>：支持
               <code class="code-inline">{{path}}</code>（如 <code class="code-inline">{{data.weather}}</code>）、
               <code class="code-inline">{{response}}</code>（解析后的文本）、
               <code class="code-inline">{{raw}}</code>（原始响应文本）；列表支持
               <code class="code-inline">{{count data.list}}</code> 与
-              <code class="code-inline">{{#each data.list}}{{字段}}{{/each}}</code>（<code class="code-inline">@index</code>/<code class="code-inline">@number</code>，单层）。示例：</li>
+              <code class="code-inline">{{#each data.list}}{{字段}}{{/each}}</code>（<code class="code-inline">@index</code>/<code class="code-inline">@number</code>；each 可嵌套多层，内层用 <code class="code-inline">{{../字段}}</code>、<code class="code-inline">{{../@index}}</code>、<code class="code-inline">{{@root.字段}}</code>）。示例：</li>
           </ul>
           <div class="code-block"><pre><code>【未归寝】{{count data.data where CQZT=1}} 人
 {{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
