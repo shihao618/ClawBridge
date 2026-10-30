@@ -2241,6 +2241,12 @@ main {
   font-weight: 600;
 }
 
+.doc-nav-sub {
+  padding-left: 24px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
 .doc-content {
   min-width: 0;
   padding: 20px 16px;
@@ -2275,6 +2281,17 @@ main {
   padding-left: 10px;
   border-left: 4px solid var(--wechat-green);
   margin-bottom: 10px;
+}
+
+.doc-subsection {
+  margin-top: 28px;
+}
+
+.doc-heading-nested {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--border);
+  font-size: 18px;
 }
 
 .doc-subheading {

@@ -48,7 +48,7 @@
           <a class="doc-nav-link" href="#inbound-api">入站消息 API</a>
           <a class="doc-nav-link" href="#keepalive">消息保活</a>
           <a class="doc-nav-link" href="#app-rules">接口应用</a>
-          <a class="doc-nav-link" href="#scheduled-tasks">定时通知</a>
+          <a class="doc-nav-link doc-nav-sub" href="#scheduled-tasks">└ 定时通知</a>
           <a class="doc-nav-link" href="#settings">运行配置</a>
           <a class="doc-nav-link" href="#error-codes">错误码</a>
           <a class="doc-nav-link" href="#env-vars">环境变量</a>
@@ -1341,16 +1341,15 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
             管理后台「接口应用」区块支持：规则列表（启用开关 / 范围 / 请求 / 最近运行 / 24h 成功·失败·跳过 /
             编辑·测试·日志·删除）、分组式规则表单（基本信息 / 触发范围 / 触发条件 / 参数提取 / 请求 / 响应 /
             限制）、测试运行弹窗（展示参数、实际请求、HTTP 状态、耗时、响应预览、将回复文本，且不会发给用户）
-            与运行日志（状态筛选 + 分页）。
+            与规则日志弹窗（状态筛选 + 分页）。定时通知属于接口应用的时间计划模式，见下节。
           </p>
-        </section>
 
-        <!-- 定时通知 -->
-        <section id="scheduled-tasks" class="doc-section">
-          <h2 class="doc-heading">定时通知（Scheduled Notifications）</h2>
-          <p>
-            定时通知按<strong>时间计划</strong>主动调用外部 HTTP 接口，把解析结果通过微信推送给<strong>指定用户或指定分组</strong>，
-            无需用户先发消息。与「接口应用」（收到消息才触发）互补。
+          <!-- 定时通知（属于接口应用的时间计划模式） -->
+          <section id="scheduled-tasks" class="doc-subsection">
+            <h3 class="doc-heading doc-heading-nested">定时通知（Scheduled Notifications）</h3>
+            <p>
+              定时通知按<strong>时间计划</strong>主动调用外部 HTTP 接口，把解析结果通过微信推送给<strong>指定用户或指定分组</strong>，
+              无需用户先发消息；它属于「接口应用」的时间计划模式，与关键词触发（收到消息才触发）共用请求/响应/模板能力。
           </p>
 
           <h3 class="doc-subheading">1. 处理流程</h3>
@@ -1550,6 +1549,7 @@ curl "http://localhost:10380/api/admin/scheduled-task-logs?taskId=task_xxxxxxxx&
             运行日志（任务/状态筛选 + 分页）。建议先用「测试运行」确认接口与文案，再启用或立即执行；
             注意微信 7 条/5 分钟发送限流。
           </p>
+          </section>
         </section>
 
         <!-- 运行配置（后台可改） -->

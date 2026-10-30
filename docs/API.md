@@ -564,10 +564,13 @@ curl -X POST http://localhost:10380/api/admin/groups/grp_xxxxxxxx/keepalive \
   -H "Content-Type: application/json" -d '{"enabled":true}'
 ```
 
-## 9. 接口应用（关键词触发 → 外部 HTTP 接口 → 解析回复）
+## 9. 接口应用（关键词触发 → 外部 HTTP 接口 → 解析回复；含定时通知）
 
 完整契约见 [`docs/API_RULES.md`](API_RULES.md)。后台配置规则：命中「指定用户/分组 + 关键词/正则」的
 入站文本消息 → 提取参数 → 调用外部 HTTP 接口 → 解析响应并回复该用户。
+
+接口应用包含两种触发方式：**关键词触发**（本章正文）与 **定时通知**（§9.1，按时间计划主动调用）。
+两者共用请求/响应/SSRF/模板能力，后台都位于「接口应用」区块。
 
 **管理端接口（Cookie + CSRF）**
 
@@ -644,7 +647,7 @@ curl "http://localhost:10380/api/admin/app-rule-logs?limit=20" \
   -H "Cookie: cb_session=$ADMIN_COOKIE"
 ```
 
-## 10. 定时通知（Scheduled Notifications）
+### 9.1 定时通知（Scheduled Notifications，接口应用的时间计划模式）
 
 完整契约见 [`docs/SCHEDULED_TASKS.md`](SCHEDULED_TASKS.md)：按计划定时调用外部接口 → 解析返回 →
 把结果通过微信发送给指定用户/分组（无需用户先发消息）。
@@ -706,7 +709,7 @@ curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/test
 curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
 ```
 
-## 11. 运行配置（后台可改设置）
+## 10. 运行配置（后台可改设置）
 
 完整契约见 [`docs/SETTINGS.md`](SETTINGS.md)。可用参数从 `.env`（首次默认值）迁移到数据库
 （schema v8 `app_settings`），管理员在后台「运行配置」修改，DB 持久化，尽量即时生效。
@@ -739,7 +742,7 @@ curl -X POST http://localhost:10380/api/admin/settings/reset \
   -H "Content-Type: application/json" -d '{"group":"appRules"}'
 ```
 
-## 12. 系统重启（重启容器）
+## 11. 系统重启（重启容器）
 
 运行配置页顶部「重启容器」按钮使用。仅 **生产容器环境**（`NODE_ENV=production` 且检测到容器
 `/.dockerenv` 或 `DATA_DIR=/app/data`）可用；进程收到 SIGTERM 优雅退出后由 Docker
@@ -759,7 +762,7 @@ curl -X POST http://localhost:10380/api/admin/system/restart \
 
 前端点击后轮询 `GET /health`，恢复后自动刷新页面；设置的 DB 覆盖会经 `loadOverrides()` 在重启后重新生效。
 
-## 13. 安全设置（管理密码 / API Token 后台管理）
+## 12. 安全设置（管理密码 / API Token 后台管理）
 
 运行配置页「安全」卡片使用；**仅存 DB，不再读取 `.env` 的 ADMIN_PASSWORD/API_TOKEN**，也不做旧版迁移。
 首次启动自动生成随机密码/Token（写入 `data/admin-password.txt`、`data/api-token.txt`）。
