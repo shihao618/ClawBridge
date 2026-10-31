@@ -17,6 +17,7 @@ import {
   formatCountdown,
   toast,
   toastError,
+  initSidebarDrawer,
 } from './common.js';
 
 const POLL_INTERVAL_MS = 1000;
@@ -81,6 +82,13 @@ init();
 /* ------------------------------------------------------------------ */
 
 function init() {
+  initSidebarDrawer({
+    toggleId: 'home-menu-toggle',
+    sidebarSelector: '.doc-sidebar',
+    overlayId: 'home-nav-overlay',
+    closeId: 'home-nav-close',
+    navId: 'home-nav',
+  });
   if (!els.form) return; // 非绑定页（防御）
   els.form.addEventListener('submit', (event) => {
     event.preventDefault();

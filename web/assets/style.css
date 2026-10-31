@@ -3863,3 +3863,87 @@ body.admin-authed .admin-main {
     box-shadow: 0 12px 40px rgba(15, 23, 42, 0.25);
   }
 }
+/* API 文档侧栏：对齐后台 .admin-sidebar / .menu-item / .sidebar-footer 样式 */
+.doc-sidebar {
+  z-index: 120;
+  padding: 18px 12px 14px;
+}
+
+.doc-sidebar-brand {
+  padding: 2px 8px 16px;
+  margin: 0;
+}
+
+.doc-sidebar .doc-nav {
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.doc-sidebar .doc-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.doc-sidebar .doc-nav-link:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.doc-sidebar .doc-nav-link.is-active {
+  background: var(--wechat-green-soft);
+  color: var(--success);
+}
+
+.doc-sidebar .doc-nav-link.doc-nav-sub {
+  padding-left: 34px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.doc-sidebar-footer {
+  gap: 6px;
+  margin-top: auto;
+  padding: 16px 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.doc-sidebar-footer .doc-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.doc-sidebar-footer .doc-nav-link:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+@media (max-width: 899px) {
+  .doc-sidebar {
+    padding: 52px 12px 14px;
+  }
+
+  .doc-sidebar-brand {
+    padding: 0 0 12px;
+  }
+}
+.doc-sidebar-brand .brand-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

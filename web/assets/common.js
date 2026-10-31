@@ -867,3 +867,43 @@ export function debounce(fn, wait = 250) {
   };
   return wrapped;
 }
+
+/**
+ * 移动端侧边抽屉：后台/文档/首页共用。
+ * 需存在 toggle、sidebar、overlay、close、nav 元素；<900px 时抽屉滑出。
+ */
+export function initSidebarDrawer({
+  toggleId,
+  sidebarSelector,
+  overlayId,
+  closeId,
+  navId,
+  breakpoint = '(max-width: 899px)',
+} = {}) {
+  const toggle = toggleId ? $('#' + toggleId) : null;
+  const sidebar = sidebarSelector ? $(sidebarSelector) : null;
+  const overlay = overlayId ? $('#' + overlayId) : null;
+  const closeButton = closeId ? $('#' + closeId) : null;
+  const nav = navId ? $('#' + navId) : null;
+  if (!toggle || !sidebar || !overlay || !closeButton || !nav) return;
+  const media = window.matchMedia(breakpoint);
+  const isOpen = () => document.body.classList.contains('docs-nav-open');
+  const setOpen = (open) => {
+    const active = Boolean(open && media.matches);
+    document.body.classList.toggle('docs-nav-open', active);
+    toggle.setAttribute('aria-expanded', active ? 'true' : 'false');
+    overlay.hidden = !active;
+    if (active) closeButton.focus({ preventScroll: true });
+  };
+  toggle.addEventListener('click', () => setOpen(!isOpen()));
+  overlay.addEventListener('click', () => setOpen(false));
+  closeButton.addEventListener('click', () => setOpen(false));
+  nav.addEventListener('click', (event) => {
+    if (event.target.closest('a') && media.matches) setOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isOpen()) setOpen(false);
+  });
+  media.addEventListener('change', () => setOpen(false));
+  setOpen(false);
+}

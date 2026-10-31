@@ -5,7 +5,7 @@
  * - 侧边目录高亮
  * - 返回顶部
  */
-import { $, $$, el, toast } from './common.js';
+import { $, $$, el, toast, initSidebarDrawer } from './common.js';
 
 init();
 
@@ -175,32 +175,11 @@ function initBackToTop() {
 /* ------------------------------------------------------------------ */
 
 function initTocDrawer() {
-  const toggle = $('#docs-menu-toggle');
-  const sidebar = $('.doc-sidebar');
-  const overlay = $('#docs-nav-overlay');
-  const closeButton = $('#docs-nav-close');
-  const nav = $('#docs-nav');
-  if (!toggle || !sidebar || !overlay || !closeButton || !nav) return;
-  const media = window.matchMedia('(max-width: 899px)');
-
-  const isOpen = () => document.body.classList.contains('docs-nav-open');
-  const setOpen = (open) => {
-    const active = Boolean(open && media.matches);
-    document.body.classList.toggle('docs-nav-open', active);
-    toggle.setAttribute('aria-expanded', active ? 'true' : 'false');
-    overlay.hidden = !active;
-    if (active) closeButton.focus({ preventScroll: true });
-  };
-
-  toggle.addEventListener('click', () => setOpen(!isOpen()));
-  overlay.addEventListener('click', () => setOpen(false));
-  closeButton.addEventListener('click', () => setOpen(false));
-  nav.addEventListener('click', (event) => {
-    if (event.target.closest('a') && media.matches) setOpen(false);
+  initSidebarDrawer({
+    toggleId: 'docs-menu-toggle',
+    sidebarSelector: '.doc-sidebar',
+    overlayId: 'docs-nav-overlay',
+    closeId: 'docs-nav-close',
+    navId: 'docs-nav',
   });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && isOpen()) setOpen(false);
-  });
-  media.addEventListener('change', () => setOpen(false));
-  setOpen(false);
 }

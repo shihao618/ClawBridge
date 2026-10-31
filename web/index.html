@@ -12,26 +12,48 @@
 <body class="page-public">
   <a class="skip-link" href="#main">跳到主要内容</a>
 
-  <header class="site-header">
-    <div class="site-header-inner">
-      <a class="brand" href="/" aria-label="ClawBridge 首页">
-        <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-          <rect width="64" height="64" rx="14" fill="#07C160"></rect>
-          <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
-          <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
-          <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
-        </svg>
-        <span class="brand-name">ClawBridge</span>
-      </a>
-      <nav class="site-nav" aria-label="主导航">
-        <a class="nav-link" href="/">首页</a>
-        <a class="nav-link" href="/docs">API 文档</a>
-        <a class="nav-link nav-link-strong" href="/admin">管理后台</a>
-      </nav>
-    </div>
-  </header>
+  <aside class="doc-sidebar">
+    <a class="brand doc-sidebar-brand" href="/" aria-label="ClawBridge 首页">
+      <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <rect width="64" height="64" rx="14" fill="#07C160"></rect>
+        <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
+        <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
+        <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
+      </svg>
+      <span class="brand-name">ClawBridge</span>
+      <span class="brand-tag">首页</span>
+    </a>
+    <button id="home-nav-close" class="docs-nav-close" type="button" aria-label="关闭导航">×</button>
+    <nav id="home-nav" class="doc-nav" aria-label="主导航">
+      <a class="doc-nav-link is-active" href="/"><span aria-hidden="true">🏠</span> 首页</a>
+      <a class="doc-nav-link" href="/docs"><span aria-hidden="true">📖</span> API 文档</a>
+      <a class="doc-nav-link" href="/admin"><span aria-hidden="true">⚙️</span> 管理后台</a>
+    </nav>
+  </aside>
 
-  <main id="main" class="container">
+  <div id="home-nav-overlay" class="docs-nav-overlay" hidden></div>
+
+  <div class="docs-main">
+    <header class="docs-topbar">
+      <button
+        id="home-menu-toggle"
+        class="docs-menu-toggle"
+        type="button"
+        aria-label="打开导航"
+        aria-controls="home-nav"
+        aria-expanded="false"
+      >☰</button>
+      <div class="docs-topbar-title">
+        <strong>首页</strong>
+        <span>微信扫码绑定 · ClawBridge</span>
+      </div>
+      <div class="docs-topbar-actions">
+        <a class="btn btn-secondary btn-sm" href="/docs">API 文档</a>
+        <a class="btn btn-secondary btn-sm" href="/admin">管理后台</a>
+      </div>
+    </header>
+
+    <main id="main" class="docs-content"><div class="container">
     <section class="hero" aria-labelledby="hero-title">
       <span class="hero-badge">微信 ClawBot · 消息通道</span>
       <h1 id="hero-title" class="hero-title">扫码绑定微信<br class="br-mobile">接收 ClawBridge 消息</h1>
@@ -147,9 +169,10 @@
         同一网络下 1 小时内生成次数有限；如有问题请联系部署管理员。
       </p>
     </section>
-  </main>
+      </div>
+    </main>
 
-  <footer class="site-footer">
+    <footer class="site-footer">
     <p class="footer-line">
       <span class="footer-brand">ClawBridge</span>
       <span class="footer-sep">·</span>
@@ -160,7 +183,8 @@
       <a class="footer-link" href="/admin">管理后台</a>
       <a class="footer-link" href="/docs">API 文档</a>
     </p>
-  </footer>
+    </footer>
+  </div>
 
   <script type="module" src="/assets/bind.js"></script>
 </body>

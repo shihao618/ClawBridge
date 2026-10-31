@@ -1351,3 +1351,18 @@ test('文档页：移动端目录使用侧边抽屉（与后台一致）', async
     assert.ok(css.includes(token), `style.css 应包含移动端抽屉样式：${token}`);
   }
 });
+test('首页：使用与后台一致的侧边栏/顶栏导航', async () => {
+  const html = await readPage('index.html');
+  for (const token of [
+    'class="doc-sidebar"',
+    'id="home-menu-toggle"',
+    'id="home-nav-overlay"',
+    'id="home-nav-close"',
+    'class="docs-topbar"',
+    'doc-sidebar-brand',
+  ]) {
+    assert.ok(html.includes(token), `首页应使用后台式导航壳：${token}`);
+  }
+  assert.ok(!html.includes('class="site-header"'), '首页不应再使用独立横向站点导航');
+  assert.ok(html.includes('id="bind-form"'), '首页仍应包含扫码绑定表单');
+});
