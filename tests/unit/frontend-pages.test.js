@@ -856,8 +856,8 @@ test('菜单模式：侧栏固定 7 项菜单与视图区块一一对应', async
   assert.deepStrictEqual([...positions].sort((a, b) => a - b), positions, '7 项菜单顺序必须固定');
   // 页面底部版本号
   assert.ok(html.includes('id="sidebar-version"'), '后台页面底部应有版本号');
-  assert.match(html, /class="sidebar-link"[^>]*href="\/docs"/, '侧栏底部应有 API 文档链接');
-  assert.match(html, /class="sidebar-link"[^>]*href="\/"/, '侧栏底部应有首页链接');
+  const footerLinks = [...html.matchAll(/class="sidebar-link"[^>]*href="([^"]+)"/g)].map((m) => m[1]).filter((href) => href === '/' || href === '/docs');
+  assert.deepEqual(footerLinks, ['/', '/docs'], '后台侧栏底部顺序应为 首页、API 文档');
   assert.ok(html.includes('id="btn-sidebar-toggle"'), '应有移动端菜单按钮');
   assert.ok(html.includes('id="sidebar-overlay"'), '应有抽屉遮罩');
   assert.ok(html.includes('id="view-title"'), '顶部栏应有当前视图标题');
