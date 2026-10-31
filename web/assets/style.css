@@ -3974,3 +3974,32 @@ body.admin-authed .admin-main {
   font-size: 11px;
   white-space: nowrap;
 }
+/* 长 placeholder 聚焦提示：窄输入框/表格内输入聚焦后完整展示提示，移动端自动换行 */
+.focus-hint {
+  display: none;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 7px 9px;
+  border: 1px solid var(--wechat-green-line);
+  border-radius: 8px;
+  background: var(--wechat-green-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.focus-hint.is-visible {
+  display: block;
+}
+
+@media (max-width: 639px) {
+  .focus-hint {
+    padding: 8px 10px;
+  }
+}

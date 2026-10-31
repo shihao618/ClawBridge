@@ -1319,3 +1319,12 @@ test('后台弹窗：分组加载失败禁止保存，会话过期清理弹窗',
   assert.match(admin, /for \(const modal of \[\.\.\.openModals\]\)/, '登录页应清理跟踪中的弹窗');
   assert.match(admin, /document\.querySelectorAll\('\.modal-backdrop'\)/, '登录页应移除残留遮罩/弹窗');
 });
+test('输入框聚焦提示：长 placeholder 在窄输入框下方完整展示', async () => {
+  const [common, css] = await Promise.all([readAsset('common.js'), readAsset('style.css')]);
+  for (const token of ['initFocusHints', 'focus-hint', 'focusin', 'aria-describedby', 'isPlaceholderClipped', 'measureText']) {
+    assert.ok(common.includes(token), `common.js 应实现聚焦提示：${token}`);
+  }
+  for (const token of ['.focus-hint', '.focus-hint.is-visible', 'overflow-wrap: anywhere', 'white-space: pre-line']) {
+    assert.ok(css.includes(token), `style.css 应包含聚焦提示样式：${token}`);
+  }
+});

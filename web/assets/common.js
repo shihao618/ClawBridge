@@ -872,6 +872,97 @@ export function debounce(fn, wait = 250) {
  * 移动端侧边抽屉：后台/文档/首页共用。
  * 需存在 toggle、sidebar、overlay、close、nav 元素；<900px 时抽屉滑出。
  */
+
+/**
+ * 长 placeholder 输入框的聚焦提示：
+ * 窄输入框里 placeholder 会被截断，聚焦时在字段下方完整展示提示（移动端自动换行）。
+ * 使用事件委托，兼容弹窗/表格中动态创建的输入框。
+ */
+export function initFocusHints({ minLength = 12 } = {}) {
+  if (typeof document === 'undefined' || initFocusHints.done) return;
+  initFocusHints.done = true;
+  let hintSeq = 0;
+  let active = null;
+  const measureCanvas = document.createElement('canvas');
+  const measureCtx = typeof measureCanvas.getContext === 'function' ? measureCanvas.getContext('2d') : null;
+
+  /** 判断输入框当前宽度是否能完整显示 placeholder（只给被截断的字段加提示）。 */
+  const isPlaceholderClipped = (input, text) => {
+    const style = window.getComputedStyle(input);
+    const available =
+      Number(input.clientWidth || 0) -
+      (Number.parseFloat(style.paddingLeft) || 0) -
+      (Number.parseFloat(style.paddingRight) || 0);
+    if (available <= 0 || !measureCtx) return text.length >= minLength;
+    measureCtx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    return measureCtx.measureText(text).width > available - 2;
+  };
+
+  const hide = () => {
+    if (!active) return;
+    const { input, hint } = active;
+    active = null;
+    hint.classList.remove('is-visible');
+    hint.hidden = true;
+    const describedBy = String(input.getAttribute('aria-describedby') || '');
+    input.setAttribute(
+      'aria-describedby',
+      describedBy
+        .split(/\s+/)
+        .filter((id) => id && id !== hint.id)
+        .join(' '),
+    );
+    if (!input.getAttribute('aria-describedby')) input.removeAttribute('aria-describedby');
+  };
+
+  const show = (input) => {
+    if (!input || !input.getAttribute) return;
+    const text = String(input.getAttribute('placeholder') || '').trim();
+    if (!text || !isPlaceholderClipped(input, text)) {
+      hide();
+      return;
+    }
+    if (active && active.input === input) return;
+    hide();
+    let hint = input.__focusHint;
+    if (!hint || !hint.isConnected) {
+      hint = document.createElement('span');
+      hint.className = 'focus-hint';
+      hint.id = `focus-hint-${++hintSeq}`;
+      hint.hidden = true;
+      const field = input.closest('.form-field');
+      if (field) field.append(hint);
+      else if (input.parentElement) input.parentElement.append(hint);
+      else return;
+      input.__focusHint = hint;
+    }
+    hint.textContent = text;
+    hint.hidden = false;
+    hint.classList.add('is-visible');
+    const describedBy = String(input.getAttribute('aria-describedby') || '');
+    if (!describedBy.split(/\s+/).includes(hint.id)) {
+      input.setAttribute('aria-describedby', (describedBy ? `${describedBy} ` : '') + hint.id);
+    }
+    active = { input, hint };
+  };
+
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      const target = event.target;
+      if (target && target.matches && target.matches('input[placeholder]')) show(target);
+    },
+    true,
+  );
+  document.addEventListener(
+    'focusout',
+    (event) => {
+      if (active && event.target === active.input) hide();
+    },
+    true,
+  );
+}
+
 export function initSidebarDrawer({
   toggleId,
   sidebarSelector,

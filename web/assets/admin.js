@@ -26,6 +26,7 @@ import {
   formatNumber,
   formatFileSize,
   uploadWithProgress,
+  initFocusHints,
 } from './common.js';
 
 const POLL_INTERVAL_MS = 5000;
@@ -242,6 +243,7 @@ configureApi({ csrf: true, onUnauthorized: handleUnauthorized });
 
 function init() {
   if (!els.loginForm) return; // 非管理页（防御）
+  initFocusHints();
 
   els.loginForm.addEventListener('submit', handleLogin);
   els.logoutButton.addEventListener('click', handleLogout);
