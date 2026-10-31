@@ -3967,3 +3967,10 @@ body.admin-authed .admin-main {
   flex-shrink: 0;
   margin-top: 0;
 }
+/* 后台页脚版本号（从侧栏移到底部） */
+.footer-version {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
