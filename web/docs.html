@@ -12,38 +12,17 @@
 <body class="page-docs">
   <a class="skip-link" href="#main">跳到主要内容</a>
 
-  <header class="site-header">
-    <div class="site-header-inner">
-      <button
-        id="docs-menu-toggle"
-        class="docs-menu-toggle"
-        type="button"
-        aria-label="打开文档目录"
-        aria-controls="docs-nav"
-        aria-expanded="false"
-      >☰</button>
-      <a class="brand" href="/bind" aria-label="ClawBridge 扫码绑定">
-        <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-          <rect width="64" height="64" rx="14" fill="#07C160"></rect>
-          <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
-          <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
-          <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
-        </svg>
-        <span class="brand-name">ClawBridge</span>
-        <span class="brand-tag">API 文档</span>
-      </a>
-      <nav class="site-nav" aria-label="主导航">
-        <a class="nav-link" href="/bind">扫码绑定</a>
-        <a class="nav-link nav-link-strong" href="/admin">管理后台</a>
-      </nav>
-    </div>
-  </header>
-
-  <div id="docs-nav-overlay" class="docs-nav-overlay" hidden></div>
-
-  <main id="main" class="container-wide">
-    <div class="docs-layout">
-      <aside class="doc-sidebar">
+<aside class="doc-sidebar">
+        <a class="brand doc-sidebar-brand" href="/" aria-label="ClawBridge 首页">
+          <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <rect width="64" height="64" rx="14" fill="#07C160"></rect>
+            <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
+            <circle cx="27" cy="30" r="3" fill="#07C160"></circle>
+            <circle cx="38" cy="30" r="3" fill="#07C160"></circle>
+          </svg>
+          <span class="brand-name">ClawBridge</span>
+          <span class="brand-tag">API 文档</span>
+        </a>
         <button id="docs-nav-close" class="docs-nav-close" type="button" aria-label="关闭文档目录">×</button>
         <nav id="docs-nav" class="doc-nav" aria-label="文档目录">
           <p class="doc-nav-title">目录</p>
@@ -64,9 +43,36 @@
           <a class="doc-nav-link" href="#env-vars">环境变量</a>
           <a class="doc-nav-link" href="#security">安全说明</a>
         </nav>
+        <div class="doc-sidebar-footer">
+          <a class="doc-nav-link" href="/">首页</a>
+          <a class="doc-nav-link" href="/admin">管理后台</a>
+        </div>
       </aside>
 
-      <article class="doc-content">
+<div id="docs-nav-overlay" class="docs-nav-overlay" hidden></div>
+
+  <div class="docs-main">
+<header class="docs-topbar">
+      <button
+        id="docs-menu-toggle"
+        class="docs-menu-toggle"
+        type="button"
+        aria-label="打开文档目录"
+        aria-controls="docs-nav"
+        aria-expanded="false"
+      >☰</button>
+      <div class="docs-topbar-title">
+        <strong>API 文档</strong>
+        <span>ClawBridge HTTP API</span>
+      </div>
+      <div class="docs-topbar-actions">
+        <a class="btn btn-secondary btn-sm" href="/">首页</a>
+        <a class="btn btn-secondary btn-sm" href="/admin">管理后台</a>
+      </div>
+    </header>
+
+    <main id="main" class="docs-content">
+<article class="doc-content">
         <h1 class="doc-title">ClawBridge HTTP API 文档</h1>
         <p class="doc-lead">
           ClawBridge 提供扫码绑定、管理后台与对外消息推送 API。所有 API（静态页面与二维码 SVG 除外）返回 JSON；
@@ -720,13 +726,13 @@ curl -X POST http://localhost:10380/api/v1/messages \
                 <tr>
                   <td><span class="method method-get">GET</span></td>
                   <td><code class="endpoint-path">/</code></td>
-                  <td>302 → <code class="endpoint-path">/bind</code>（统一绑定页地址）</td>
+                  <td>首页（公开绑定页）</td>
                   <td>公开</td>
                 </tr>
                 <tr>
                   <td><span class="method method-get">GET</span></td>
                   <td><code class="endpoint-path">/bind</code></td>
-                  <td>扫码绑定页（公开）</td>
+                  <td>302 → <code class="endpoint-path">/</code>（旧绑定地址）</td>
                   <td>公开</td>
                 </tr>
                 <tr>
@@ -1824,22 +1830,22 @@ curl -X POST http://localhost:10380/api/admin/security/api-token/reset \
           </ul>
         </section>
       </article>
-    </div>
-  </main>
+    </main>
 
-  <button id="back-to-top" class="back-to-top" type="button" aria-label="返回顶部" hidden>↑</button>
-
-  <footer class="site-footer">
+<footer class="site-footer">
     <p class="footer-line">
       <span class="footer-brand">ClawBridge</span>
       <span class="footer-sep">·</span>
       <span>HTTP API 文档</span>
     </p>
     <p class="footer-links">
-      <a class="footer-link" href="/bind">扫码绑定</a>
+      <a class="footer-link" href="/">首页</a>
       <a class="footer-link" href="/admin">管理后台</a>
     </p>
   </footer>
+  </div>
+
+  <button id="back-to-top" class="back-to-top" type="button" aria-label="返回顶部" hidden>↑</button>
 
   <script type="module" src="/assets/docs.js"></script>
 </body>

@@ -862,7 +862,7 @@ test('菜单模式：侧栏固定 7 项菜单与视图区块一一对应', async
   // 侧栏底部链接与版本号
   assert.ok(html.includes('id="sidebar-version"'), '侧栏底部应有版本号');
   assert.match(html, /class="sidebar-link"[^>]*href="\/docs"/, '侧栏底部应有 API 文档链接');
-  assert.match(html, /class="sidebar-link"[^>]*href="\/bind"/, '侧栏底部应有扫码绑定页链接');
+  assert.match(html, /class="sidebar-link"[^>]*href="\/"/, '侧栏底部应有首页链接');
   assert.ok(html.includes('id="btn-sidebar-toggle"'), '应有移动端菜单按钮');
   assert.ok(html.includes('id="sidebar-overlay"'), '应有抽屉遮罩');
   assert.ok(html.includes('id="view-title"'), '顶部栏应有当前视图标题');
@@ -1341,9 +1341,10 @@ test('规则基本信息：名称/启用/优先级同一行且输入框对齐', 
 });
 test('文档页：移动端目录使用侧边抽屉（与后台一致）', async () => {
   const [html, js, css] = await Promise.all([readPage('docs.html'), readAsset('docs.js'), readAsset('style.css')]);
-  for (const token of ['id="docs-menu-toggle"', 'id="docs-nav-close"', 'id="docs-nav-overlay"']) {
-    assert.ok(html.includes(token), `文档页应包含抽屉元素：${token}`);
+  for (const token of ['id="docs-menu-toggle"', 'id="docs-nav-close"', 'id="docs-nav-overlay"', 'class="docs-topbar"', 'doc-sidebar-brand', 'doc-sidebar-footer']) {
+    assert.ok(html.includes(token), `文档页应包含后台式导航元素：${token}`);
   }
+  assert.ok(!html.includes('class="site-header"'), '文档页应使用后台式导航壳，不再保留独立站点导航');
   assert.match(html, /aria-controls="docs-nav"/, '菜单按钮应关联 docs-nav');
   assert.ok(js.includes('initTocDrawer'), 'docs.js 应实现侧边抽屉');
   for (const token of ['docs-nav-open', '.doc-sidebar', '.docs-menu-toggle']) {

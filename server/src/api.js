@@ -1625,9 +1625,9 @@ export function createApp() {
   // -------------------------------------------------------------------------
 
   app.use(express.static(WEB_DIR, { index: false, fallthrough: true }));
-  // 首页与扫码绑定页是同一个页面：/ 只做 302 跳转，统一规范地址为 /bind
-  app.get('/', (req, res) => res.redirect(302, '/bind'));
-  app.get('/bind', (req, res, next) => sendPage(res, 'index.html', next));
+  // 首页与扫码绑定页是同一个页面：统一使用 /，/bind 只做 302 跳转
+  app.get('/', (req, res, next) => sendPage(res, 'index.html', next));
+  app.get('/bind', (req, res) => res.redirect(302, '/'));
   app.get('/admin', (req, res, next) => sendPage(res, 'admin.html', next));
   app.get('/docs', (req, res, next) => sendPage(res, 'docs.html', next));
 
