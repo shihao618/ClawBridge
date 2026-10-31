@@ -1339,12 +1339,14 @@ test('规则基本信息：名称/启用/优先级同一行且输入框对齐', 
   }
   assert.ok(css.includes('.rule-control-align'), 'style.css 应提供启用控件对齐样式');
 });
-test('文档页：移动端目录默认折叠并可展开', async () => {
+test('文档页：移动端目录使用侧边抽屉（与后台一致）', async () => {
   const [html, js, css] = await Promise.all([readPage('docs.html'), readAsset('docs.js'), readAsset('style.css')]);
-  assert.ok(html.includes('id="docs-nav-toggle"'), '文档页应有目录折叠按钮');
-  assert.match(html, /aria-controls="docs-nav"/, '目录按钮应关联 docs-nav');
-  assert.ok(js.includes('initTocCollapse'), 'docs.js 应实现目录折叠');
-  for (const token of ['docs-nav-collapsible', '.doc-nav-toggle']) {
-    assert.ok(css.includes(token), `style.css 应包含移动端目录折叠样式：${token}`);
+  for (const token of ['id="docs-menu-toggle"', 'id="docs-nav-close"', 'id="docs-nav-overlay"']) {
+    assert.ok(html.includes(token), `文档页应包含抽屉元素：${token}`);
+  }
+  assert.match(html, /aria-controls="docs-nav"/, '菜单按钮应关联 docs-nav');
+  assert.ok(js.includes('initTocDrawer'), 'docs.js 应实现侧边抽屉');
+  for (const token of ['docs-nav-open', '.doc-sidebar', '.docs-menu-toggle']) {
+    assert.ok(css.includes(token), `style.css 应包含移动端抽屉样式：${token}`);
   }
 });

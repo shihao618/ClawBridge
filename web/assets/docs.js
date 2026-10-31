@@ -13,7 +13,7 @@ function init() {
   initCopyButtons();
   initEndpointFilter();
   initTocHighlight();
-  initTocCollapse();
+  initTocDrawer();
   initBackToTop();
 }
 
@@ -174,26 +174,33 @@ function initBackToTop() {
 /* 移动端目录折叠                                                      */
 /* ------------------------------------------------------------------ */
 
-function initTocCollapse() {
+function initTocDrawer() {
+  const toggle = $('#docs-menu-toggle');
   const sidebar = $('.doc-sidebar');
-  const toggle = $('#docs-nav-toggle');
+  const overlay = $('#docs-nav-overlay');
+  const closeButton = $('#docs-nav-close');
   const nav = $('#docs-nav');
-  if (!sidebar || !toggle || !nav) return;
+  if (!toggle || !sidebar || !overlay || !closeButton || !nav) return;
   const media = window.matchMedia('(max-width: 899px)');
+
+  const isOpen = () => document.body.classList.contains('docs-nav-open');
   const setOpen = (open) => {
-    sidebar.classList.toggle('is-open', open);
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const active = Boolean(open && media.matches);
+    document.body.classList.toggle('docs-nav-open', active);
+    toggle.setAttribute('aria-expanded', active ? 'true' : 'false');
+    overlay.hidden = !active;
+    if (active) closeButton.focus({ preventScroll: true });
   };
-  const sync = () => {
-    sidebar.classList.toggle('docs-nav-collapsible', media.matches);
-    setOpen(!media.matches);
-  };
-  toggle.addEventListener('click', () => {
-    setOpen(!sidebar.classList.contains('is-open'));
-  });
+
+  toggle.addEventListener('click', () => setOpen(!isOpen()));
+  overlay.addEventListener('click', () => setOpen(false));
+  closeButton.addEventListener('click', () => setOpen(false));
   nav.addEventListener('click', (event) => {
     if (event.target.closest('a') && media.matches) setOpen(false);
   });
-  media.addEventListener('change', sync);
-  sync();
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isOpen()) setOpen(false);
+  });
+  media.addEventListener('change', () => setOpen(false));
+  setOpen(false);
 }
