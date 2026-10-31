@@ -1377,8 +1377,14 @@ main {
 
 .rule-form-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px 14px;
+}
+
+/* 表单行内的窄输入框跟随列宽，2 个字段等宽占满、3 个字段也等宽均分 */
+.rule-form-grid .input-narrow,
+.schedule-plan-main-row .input-narrow {
+  max-width: none;
 }
 
 .rule-form-grid-4 {
@@ -3544,7 +3550,7 @@ body.admin-authed .admin-main {
 /* 定时任务：计划类型与间隔/每日时间同一行（窄屏自动换行） */
 .schedule-plan-main-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px 14px;
   align-items: start;
 }
