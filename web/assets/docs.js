@@ -13,6 +13,7 @@ function init() {
   initCopyButtons();
   initEndpointFilter();
   initTocHighlight();
+  initTocCollapse();
   initBackToTop();
 }
 
@@ -167,4 +168,32 @@ function initBackToTop() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
   update();
+}
+
+/* ------------------------------------------------------------------ */
+/* 移动端目录折叠                                                      */
+/* ------------------------------------------------------------------ */
+
+function initTocCollapse() {
+  const sidebar = $('.doc-sidebar');
+  const toggle = $('#docs-nav-toggle');
+  const nav = $('#docs-nav');
+  if (!sidebar || !toggle || !nav) return;
+  const media = window.matchMedia('(max-width: 899px)');
+  const setOpen = (open) => {
+    sidebar.classList.toggle('is-open', open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  const sync = () => {
+    sidebar.classList.toggle('docs-nav-collapsible', media.matches);
+    setOpen(!media.matches);
+  };
+  toggle.addEventListener('click', () => {
+    setOpen(!sidebar.classList.contains('is-open'));
+  });
+  nav.addEventListener('click', (event) => {
+    if (event.target.closest('a') && media.matches) setOpen(false);
+  });
+  media.addEventListener('change', sync);
+  sync();
 }

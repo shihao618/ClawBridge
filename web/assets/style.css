@@ -3571,3 +3571,39 @@ body.admin-authed .admin-main {
   align-items: center;
   min-height: 46px;
 }
+/* 文档页移动端：目录默认折叠，避免全部菜单堆在内容上方 */
+.doc-nav-toggle {
+  display: none;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-nav-toggle-icon {
+  transition: transform 0.15s ease;
+}
+
+.doc-sidebar.is-open .doc-nav-toggle-icon {
+  transform: rotate(180deg);
+}
+
+.doc-sidebar.docs-nav-collapsible .doc-nav-toggle {
+  display: flex;
+}
+
+.doc-sidebar.docs-nav-collapsible .doc-nav {
+  margin-top: 8px;
+}
+
+.doc-sidebar.docs-nav-collapsible:not(.is-open) .doc-nav {
+  display: none;
+}

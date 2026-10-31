@@ -1339,3 +1339,12 @@ test('规则基本信息：名称/启用/优先级同一行且输入框对齐', 
   }
   assert.ok(css.includes('.rule-control-align'), 'style.css 应提供启用控件对齐样式');
 });
+test('文档页：移动端目录默认折叠并可展开', async () => {
+  const [html, js, css] = await Promise.all([readPage('docs.html'), readAsset('docs.js'), readAsset('style.css')]);
+  assert.ok(html.includes('id="docs-nav-toggle"'), '文档页应有目录折叠按钮');
+  assert.match(html, /aria-controls="docs-nav"/, '目录按钮应关联 docs-nav');
+  assert.ok(js.includes('initTocCollapse'), 'docs.js 应实现目录折叠');
+  for (const token of ['docs-nav-collapsible', '.doc-nav-toggle']) {
+    assert.ok(css.includes(token), `style.css 应包含移动端目录折叠样式：${token}`);
+  }
+});
