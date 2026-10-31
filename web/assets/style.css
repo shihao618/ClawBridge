@@ -3565,3 +3565,9 @@ body.admin-authed .admin-main {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* 规则基本信息：启用复选框与输入框同高对齐 */
+.rule-control-align {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+}
