@@ -36,8 +36,9 @@
           <a class="doc-nav-link" href="#groups-api">用户分组 API</a>
           <a class="doc-nav-link" href="#inbound-api">入站消息 API</a>
           <a class="doc-nav-link" href="#keepalive">消息保活</a>
-          <a class="doc-nav-link" href="#app-rules">接口应用</a>
-          <a class="doc-nav-link doc-nav-sub" href="#scheduled-tasks">└ 定时通知</a>
+          <a class="doc-nav-link" href="#app-rules">规则列表</a>
+
+          <a class="doc-nav-link" href="#scheduled-tasks">定时通知</a>
           <a class="doc-nav-link" href="#error-codes">错误码</a>
         </nav>
         <div class="doc-sidebar-footer">
@@ -1107,7 +1108,7 @@ done</code></pre></div>
 
         <!-- 接口应用 -->
         <section id="app-rules" class="doc-section">
-          <h2 class="doc-heading">接口应用（关键词触发 → 外部 HTTP 接口 → 解析回复）</h2>
+          <h2 class="doc-heading">规则列表（关键词触发 → 外部 HTTP 接口 → 解析回复）</h2>
           <p>
             当<strong>指定范围</strong>的微信用户发来<strong>包含关键词</strong>的消息时，ClawBridge 可调用配置的
             外部 HTTP 接口，把消息中的参数传给接口，解析接口返回并<strong>自动回复</strong>给该用户。
@@ -1298,9 +1299,17 @@ curl -X POST http://localhost:10380/api/admin/app-rules/rule_xxxxxxxx/test \
 curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status=success&limit=20&offset=0" \
   -H "Cookie: cb_session=$ADMIN_COOKIE"</code></pre></div>
 
-          <!-- 定时通知（属于接口应用的时间计划模式） -->
-          <section id="scheduled-tasks" class="doc-subsection">
-            <h3 class="doc-heading doc-heading-nested">定时通知（Scheduled Notifications）</h3>
+          </section>
+
+
+
+          <!-- 定时通知 -->
+
+
+          <section id="scheduled-tasks" class="doc-section">
+
+
+            <h2 class="doc-heading">定时通知（Scheduled Notifications）</h2>
             <p>
               定时通知按<strong>时间计划</strong>主动调用外部 HTTP 接口，把解析结果通过微信推送给<strong>指定用户或指定分组</strong>，
               无需用户先发消息；它属于「接口应用」的时间计划模式，与关键词触发（收到消息才触发）共用请求/响应/模板能力。
@@ -1476,8 +1485,6 @@ curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run 
 # 运行日志（任务/状态筛选 + 分页）
 curl "http://localhost:10380/api/admin/scheduled-task-logs?taskId=task_xxxxxxxx&status=success&limit=20&offset=0" \
   -H "Cookie: cb_session=$ADMIN_COOKIE"</code></pre></div>
-
-          </section>
         </section>
 
         <!-- 错误码 -->

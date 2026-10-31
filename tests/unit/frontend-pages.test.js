@@ -1116,6 +1116,10 @@ test('文档页接口应用章节与 docs/API_RULES.md 一致', async () => {
     readPage('docs.html'),
   ]);
   assert.match(html, /<section id="app-rules"/, 'docs.html 应有 #app-rules 章节');
+  assert.match(html, /href="#app-rules">规则列表</, '文档目录应有「规则列表」入口');
+  assert.match(html, /href="#scheduled-tasks">定时通知</, '文档目录应有「定时通知」独立入口');
+  assert.ok(!html.includes('href="#app-rules">接口应用'), '接口应用应拆分为规则列表和定时通知');
+  assert.match(html, /<section id="scheduled-tasks" class="doc-section"/, '定时通知应为独立章节');
   for (const token of [
     '/api/admin/app-rules',
     '/api/admin/app-rules/{id}',
