@@ -150,6 +150,20 @@ test('管理端上传：鉴权/CSRF/缺文件名/成功 201 与字段', async ()
   assert.deepEqual(await media.readMediaFile(attachments.path), PNG_BYTES);
 });
 
+test('管理端上传：application/json 的 .json 文件不被全局 JSON parser 消费', async () => {
+  const jsonBytes = Buffer.from('{"name":"clawbridge","enabled":true}');
+  const ok = await request('POST', '/api/admin/media', {
+    raw: jsonBytes,
+    headers: uploadHeaders({ fileName: 'config.json', mime: 'application/json' }),
+  });
+  assert.equal(ok.status, 201, ok.buffer.toString('utf8'));
+  assert.equal(ok.json.media.fileName, 'config.json');
+  assert.equal(ok.json.media.kind, 'file');
+  assert.equal(ok.json.media.size, jsonBytes.length);
+  const row = store.getAttachment(ok.json.media.id);
+  assert.deepEqual(await media.readMediaFile(row.path), jsonBytes);
+});
+
 test('管理端读取媒体：字节一致 / inline / download / Range / 404', async () => {
   const upload = await request('POST', '/api/admin/media', {
     raw: PNG_BYTES,

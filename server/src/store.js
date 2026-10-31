@@ -53,7 +53,7 @@ function clampInt(value, { min = 0, max = 500, fallback = 50 } = {}) {
 }
 
 function likePattern(q) {
-  return `%${String(q).replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  return `%${String(q).replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,10 +1540,11 @@ export function markOutboxSent(id, { serverMessageId = null, clientId = null, ts
   return Number(result.changes) > 0;
 }
 
-/** 发送失败（终态）。 */
-export function markOutboxFailed(id, { error = '', ts = nowMs() } = {}) {
+/** 发送失败（终态）；incrementAttempts=false 用于真正的发送尝试之前的预检查失败。 */
+export function markOutboxFailed(id, { error = '', ts = nowMs(), incrementAttempts = true } = {}) {
+  const attemptsSql = incrementAttempts ? 'attempts = attempts + 1, ' : '';
   const result = run(
-    "UPDATE outbox SET status = 'failed', attempts = attempts + 1, error = ?, updated_at = ? WHERE id = ?",
+    `UPDATE outbox SET status = 'failed', ${attemptsSql}error = ?, updated_at = ? WHERE id = ?`,
     String(error ?? '').slice(0, 1000),
     ts,
     String(id),

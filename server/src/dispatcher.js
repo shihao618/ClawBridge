@@ -28,6 +28,13 @@ const limiter = new TokenBucketLimiter({
   windowMs: config.push.rateLimitWindowMs,
 });
 
+/** 应用运行配置中的限流值；必须在 start() 时（loadOverrides 之后）同步一次。 */
+export function refreshLimiterConfig() {
+  limiter.max = Math.max(1, config.push.rateLimitMax);
+  limiter.windowMs = Math.max(1, config.push.rateLimitWindowMs);
+  limiter.clear();
+}
+
 let running = false;
 /** @type {AbortController|null} */
 let controller = null;
@@ -87,6 +94,7 @@ function isStaleTokenLike(err) {
 /** 启动 worker（幂等）。 */
 export function start() {
   if (running) return false;
+  refreshLimiterConfig();
   running = true;
   controller = new AbortController();
   // 进程重启恢复：残留 sending 记录重新入队
@@ -151,17 +159,17 @@ export async function processOne(now = Date.now()) {
 
   const user = store.getUserRow(candidate.user_id);
   if (!user) {
-    store.markOutboxFailed(candidate.id, { error: '用户不存在', ts: now });
+    store.markOutboxFailed(candidate.id, { error: '用户不存在', ts: now, incrementAttempts: false });
     log.warn('消息投递失败：用户不存在', { outboxId: candidate.id });
     return true;
   }
   if (user.status !== 'active') {
-    store.markOutboxFailed(candidate.id, { error: '用户未绑定（凭证已清除），消息未发送', ts: now });
+    store.markOutboxFailed(candidate.id, { error: '用户未绑定（凭证已清除），消息未发送', ts: now, incrementAttempts: false });
     log.warn('消息投递失败：用户未绑定', { outboxId: candidate.id, userId: user.id });
     return true;
   }
   if (Number(user.pause_until) > now) {
-    store.markOutboxFailed(candidate.id, { error: '账号冷却中（bot token 失效），消息未发送', ts: now });
+    store.markOutboxFailed(candidate.id, { error: '账号冷却中（bot token 失效），消息未发送', ts: now, incrementAttempts: false });
     log.warn('消息投递失败：账号冷却中', { outboxId: candidate.id, userId: user.id });
     return true;
   }
@@ -171,7 +179,7 @@ export async function processOne(now = Date.now()) {
   if (candidate.media_id) {
     attachment = store.getAttachment(candidate.media_id);
     if (!attachment || attachment.direction !== 'outbound' || attachment.status !== 'ready') {
-      store.markOutboxFailed(candidate.id, { error: '媒体附件不存在或未就绪，无法发送', ts: now });
+      store.markOutboxFailed(candidate.id, { error: '媒体附件不存在或未就绪，无法发送', ts: now, incrementAttempts: false });
       log.warn('消息投递失败：媒体附件缺失/未就绪', { outboxId: candidate.id, mediaId: candidate.media_id });
       return true;
     }
@@ -180,7 +188,7 @@ export async function processOne(now = Date.now()) {
   if (!store.markOutboxSending(candidate.id, now)) return true;
   const secrets = store.getUserSecrets(user.id);
   if (!secrets?.token) {
-    store.markOutboxFailed(candidate.id, { error: '缺少 bot_token，需要用户重新扫码绑定', ts: now });
+    store.markOutboxFailed(candidate.id, { error: '缺少 bot_token，需要用户重新扫码绑定', ts: now, incrementAttempts: false });
     return true;
   }
   const contextToken = secrets.contextToken || undefined;

@@ -120,7 +120,25 @@ process.env.PUSH_MAX_ATTEMPTS = '5';
 const store = await import('../../server/src/store.js');
 const media = await import('../../server/src/media.js');
 const dispatcher = await import('../../server/src/dispatcher.js');
+const { config } = await import('../../server/src/config.js');
 const { closeDb } = await import('../../server/src/db.js');
+
+test('限流器在 start/refresh 时应用运行配置（DB 覆盖后重启仍生效）', () => {
+  const originalMax = config.push.rateLimitMax;
+  const originalWindow = config.push.rateLimitWindowMs;
+  try {
+    config.push.rateLimitMax = 3;
+    config.push.rateLimitWindowMs = 1234;
+    dispatcher.refreshLimiterConfig();
+    const limiter = dispatcher.getLimiter();
+    assert.equal(limiter.max, 3);
+    assert.equal(limiter.windowMs, 1234);
+  } finally {
+    config.push.rateLimitMax = originalMax;
+    config.push.rateLimitWindowMs = originalWindow;
+    dispatcher.refreshLimiterConfig();
+  }
+});
 
 after(async () => {
   closeDb();
@@ -307,6 +325,7 @@ test('媒体发送：附件不存在 → 直接 failed 不重试、不发 sendme
   const outbox = store.getOutbox(queued.id);
   assert.equal(outbox.status, 'failed');
   assert.match(outbox.error, /附件不存在/);
+  assert.equal(outbox.attempts, 0, '发送前预检查失败不应增加 attempts');
   assert.equal(state.sendRequests.length, 0);
 });
 

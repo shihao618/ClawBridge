@@ -170,6 +170,8 @@ docker exec clawbridge-app cat /app/data/admin-password.txt   # 管理后台初�
 docker exec clawbridge-app cat /app/data/api-token.txt        # 推送 API Token
 ```
 
+> 旧数据卷升级时若这两个文件不存在，说明凭据已在旧 DB 中初始化；可在已登录后台「运行配置 → 安全」重置，或在备份 DB 后按 docs/SETTINGS.md 重新引导。
+
 > 登录后可在「运行配置 → 安全」里修改密码、重置 Token；数据卷 `/app/data/` 下文件会同步更新，旧凭据立即失效。
 
 常用运维命令：
@@ -277,7 +279,7 @@ mock 的控制面 API（扫码/确认/配对码/过期/失效 token/限流错误
    或相关会话记录找到）；
 4. 在管理后台“用户列表”里点击「发消息」，或调用推送 API，即可给该用户发送微信消息。
 
-示例：调用推送 API（`API_TOKEN` 来自 `.env`）：
+示例：调用推送 API（`API_TOKEN` 来自管理后台「运行配置 → 安全」或数据卷中的 `data/api-token.txt`）：
 
 ```bash
 # 指定用户发送（用户 id 可在管理后台 URL / 用户接口中获得）
@@ -487,7 +489,7 @@ npm test                  # 单元测试 + e2e（需先安装依赖）
 npm run test:unit         # 单元测试（config/crypto/ilink 客户端/store/限流/API 契约）
 npm run test:e2e          # 端到端：真实 app 进程 + mock 微信 API，全 HTTP 黑盒
 npm run mock              # 单独启动模拟微信 API（默认 127.0.0.1:3100）
-node mock/selftest.mjs    # mock 自身自测（21 项协议行为断言）
+node mock/selftest.mjs    # mock 自身自测（25 项协议行为断言）
 ```
 
 本地不带 Docker 的演示：
@@ -524,13 +526,13 @@ Dockerfile · docker-compose*.yml · .env.example
 
 | 验证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、DB 迁移、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、移动端顶栏布局） | `npm run test:unit` | 257 项通过 |
-| 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token） | `npm run test:e2e` | 91 项通过（约 10s，确定性，连跑多次稳定） |
+| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、DB 迁移、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、移动端顶栏布局） | `npm run test:unit` | 262 项通过 |
+| 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
 | mock 自身协议自测 | `node mock/selftest.mjs` | 25 项通过 |
 | 浏览器真实交互（Edge headless + CDP，绑定页/管理后台菜单路由与移动抽屉/文档页/媒体上传预览/分组/保活/分组保活继承/接口应用/定时通知/运行配置设置（含安全卡片）/重启容器 UI，CSP 与控制台异常检查） | 见交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项通过 |
 
 > 说明：mock 用于本地/CI 验证协议与业务逻辑，真实微信 ClawBot 需在手机微信上扫码绑定后才能端到端体验；
-> 上线前请替换 `.env` 中的示例密码/Token 并建议启用 HTTPS。
+> 首次启动会生成随机管理密码/API Token 并写入数据卷 `data/`；上线前请备份数据卷与 `APP_SECRET`，建议启用 HTTPS。
 
 ## 常见问题
 
@@ -567,7 +569,7 @@ Dockerfile · docker-compose*.yml · .env.example
 
 **Q：端口 10380 被占用？**
 修改 `docker-compose.yml` 的 `ports`（例如 `"18080:10380"`）后 `docker compose up -d`；
-fnOS 同理修改 `docker-compose.fnos.yml`。内外端口一致，改映射时两侧保持同一个值即可。
+fnOS 同理修改 `docker-compose.fnos.yml`。只改宿主机侧映射，容器内监听端口保持 `10380`。
 
 **Q：Docker 镜像拉取慢/失败？**
 本仓库镜像基于 `node:24-alpine`；配置 Docker 镜像加速器，或预先 `docker pull node:24-alpine` 后

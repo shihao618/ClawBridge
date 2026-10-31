@@ -125,6 +125,23 @@ test('auth: API Key 限流（默认 60 次/分钟）', () => {
   auth.apiKeyLimiter.reset(key);
 });
 
+test('auth: API Key 限流跟随运行配置更新', async () => {
+  const { config } = await import('../../server/src/config.js');
+  const original = config.push.apiRateLimitPerMinute;
+  try {
+    config.push.apiRateLimitPerMinute = 3;
+    auth.syncApiKeyLimiter();
+    auth.apiKeyLimiter.clear();
+    assert.equal(auth.apiKeyLimiter.limit, 3);
+    for (let i = 0; i < 3; i += 1) assert.equal(auth.apiKeyLimiter.hit('cfg-key').allowed, true);
+    assert.equal(auth.apiKeyLimiter.peek('cfg-key').allowed, false);
+  } finally {
+    config.push.apiRateLimitPerMinute = original;
+    auth.syncApiKeyLimiter();
+    auth.apiKeyLimiter.clear();
+  }
+});
+
 test('auth: requireAdmin 中间件（已登录放行 / 未登录 401）', () => {
   const cookieValue = signAdminSession();
   let passed = false;

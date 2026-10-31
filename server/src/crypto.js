@@ -98,6 +98,25 @@ export function hashPassword(password) {
   return ['scrypt', SCRYPT_N, SCRYPT_R, SCRYPT_P, salt.toString('base64url'), hash.toString('base64url')].join('$');
 }
 
+/** 校验 scrypt 密码哈希记录的格式（不解密、不派生，用于启动时拒绝脏数据）。 */
+export function isPasswordHashRecord(record) {
+  if (typeof record !== 'string') return false;
+  const parts = record.split('$');
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+  const n = Number.parseInt(parts[1], 10);
+  const r = Number.parseInt(parts[2], 10);
+  const p = Number.parseInt(parts[3], 10);
+  if (!Number.isInteger(n) || !Number.isInteger(r) || !Number.isInteger(p)) return false;
+  if (n < 1024 || n > 1 << 20 || r < 1 || r > 32 || p < 1 || p > 16) return false;
+  try {
+    const salt = Buffer.from(parts[4], 'base64url');
+    const hash = Buffer.from(parts[5], 'base64url');
+    return salt.length >= 8 && salt.length <= 64 && hash.length >= 16 && hash.length <= 128;
+  } catch {
+    return false;
+  }
+}
+
 /** 校验密码与 hashPassword 生成的记录；格式非法/不匹配返回 false。 */
 export function verifyPassword(password, record) {
   if (typeof record !== 'string' || typeof password !== 'string') return false;

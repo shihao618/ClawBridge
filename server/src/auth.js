@@ -29,6 +29,11 @@ export const apiKeyLimiter = new SlidingWindowLimiter({
   windowMs: 60 * 1000,
 });
 
+/** 应用运行配置中的 API 限流值（DB 覆盖加载或 PATCH settings 后调用）。 */
+export function syncApiKeyLimiter() {
+  apiKeyLimiter.limit = Math.max(1, config.push.apiRateLimitPerMinute);
+}
+
 /** 获取客户端 IP（尊重 trust proxy 配置）。 */
 export function getClientIp(req) {
   return req?.ip || req?.socket?.remoteAddress || 'unknown';
@@ -89,6 +94,11 @@ export function getAdminSession(req) {
   return verifyAdminSession(value);
 }
 
+/** Cookie 是否加 Secure：显式配置或对外地址为 https 时自动开启（运行配置可即时影响新 Cookie）。 */
+function cookieSecureEffective() {
+  return Boolean(config.session.cookieSecure) || /^https:\/\//i.test(String(config.publicBaseUrl || ''));
+}
+
 /** 生成并下发管理会话 Cookie。 */
 export function setAdminSessionCookie(res) {
   const value = signAdminSession({ ttlMs: config.session.ttlMs });
@@ -96,7 +106,7 @@ export function setAdminSessionCookie(res) {
   res.cookie(config.session.cookieName, value, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: Boolean(config.session.cookieSecure),
+    secure: cookieSecureEffective(),
     path: '/',
     maxAge: config.session.ttlMs,
   });
@@ -108,7 +118,7 @@ export function clearAdminSessionCookie(res) {
   res.clearCookie(config.session.cookieName, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: Boolean(config.session.cookieSecure),
+    secure: cookieSecureEffective(),
     path: '/',
   });
 }
@@ -165,6 +175,7 @@ export function isApiKeyValid(token) {
 export function requireApiKey(req, res, next) {
   try {
     if (!config.pushApiEnabled) throw notFound('推送 API 已禁用（API_TOKEN=off）');
+    syncApiKeyLimiter();
     const token = extractApiKey(req);
     if (!isApiKeyValid(token)) throw unauthorized('API Key 无效；请使用 Authorization: Bearer <API_TOKEN> 或 X-Api-Key');
     const keyId = hashToken(token);

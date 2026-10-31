@@ -15,6 +15,7 @@ import * as appRules from './app-rules.js';
 import * as binding from './binding.js';
 import * as dispatcher from './dispatcher.js';
 import * as keepalive from './keepalive.js';
+import * as media from './media.js';
 import * as monitor from './monitor.js';
 import * as scheduler from './scheduler.js';
 import * as settings from './settings.js';
@@ -155,6 +156,8 @@ async function main() {
   settings.loadOverrides();
   // 首次启动引导：DB 无管理密码/API Token 时自动生成并写入 data/ 文件（幂等；无 env 回退）
   settings.bootstrapSecrets();
+  // 旧数据卷的 media 目录可能是 0777，启动时统一收口为 0700。
+  await media.ensureMediaDirs();
   // 运行配置中的日志级别即时生效（DB 覆盖优先于 env LOG_LEVEL）
   setLogLevel(config.logLevel);
   const app = createApp();
@@ -170,8 +173,8 @@ async function main() {
     });
   });
   server.on('error', (err) => {
-    log.error('HTTP 服务启动失败', { message: err?.message, code: err?.code });
-    process.exitCode = 1;
+    log.error('HTTP 服务启动/运行失败，进程退出以触发容器重启', { message: err?.message, code: err?.code });
+    process.exit(1);
   });
 
   // 出站队列 worker

@@ -10,7 +10,9 @@ data/
 
 # local env & test artifacts
 .env
-.env.local
+.env.*
+!.env.example
+*.key
 coverage/
 test-results/
 mock/.tmp-*.log

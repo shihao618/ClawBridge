@@ -35,8 +35,6 @@ const WEB_DIR = path.join(ROOT_DIR, 'web');
 /** 管理端 / 对外 API 的媒体读取 URL 前缀。 */
 const MEDIA_ADMIN_PREFIX = '/api/admin/media';
 const MEDIA_V1_PREFIX = '/api/v1/media';
-/** 媒体上传：原始二进制解析器（限制 MEDIA_MAX_BYTES）。 */
-const parseRawMediaBody = express.raw({ type: () => true, limit: config.media.outboundMaxBytes });
 
 /** docs/ARCHITECTURE.md §8 规定的安全响应头（media-src 供后台 <video> 同源播放）。 */
 const SECURITY_HEADERS = Object.freeze({
@@ -825,6 +823,10 @@ export function createApp() {
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', true);
 
+  // 媒体上传原始二进制解析器必须在运行配置覆盖加载后创建（createApp 由 index 在 loadOverrides 后调用），
+  // 否则 media.maxBytes 的 restartRequired 设置即使重启也不会生效。
+  const parseRawMediaBody = express.raw({ type: () => true, limit: config.media.outboundMaxBytes });
+
   // 1) 安全响应头（所有响应，包含静态资源）
   app.use((req, res, next) => {
     for (const [key, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(key, value);
@@ -842,7 +844,16 @@ export function createApp() {
   app.get('/api/health', (req, res) => res.json(healthPayload()));
 
   // 4) JSON body 解析：上限 64KB
-  app.use(express.json({ limit: '64kb' }));
+  // 媒体上传路由必须由后面的 express.raw 读取原始字节，不能让全局 JSON parser 抢先消费
+  // （否则上传 Content-Type: application/json 的 .json 文件时会导致 req.body 变成对象而 400）。
+  const jsonBodyParser = express.json({ limit: '64kb' });
+  app.use((req, res, next) => {
+    if (req.method === 'POST' && (req.path === '/api/admin/media' || req.path === '/api/v1/media')) {
+      next();
+      return;
+    }
+    jsonBodyParser(req, res, next);
+  });
 
   // -------------------------------------------------------------------------
   // 公开接口：扫码绑定
@@ -888,6 +899,8 @@ export function createApp() {
       auth.recordLoginEvent(store, { success: false, ip });
       throw new AppError(ErrorCodes.UNAUTHORIZED, '密码错误', { status: 401 });
     }
+    // 成功登录不占用失败限流额度，避免同一出口 IP 反复登录后被误锁。
+    auth.loginLimiter.reset(ip);
     const payload = auth.setAdminSessionCookie(res);
     auth.recordLoginEvent(store, { success: true, ip });
     res.json({ ok: true, expiresAt: payload?.exp ?? Date.now() + config.session.ttlMs });

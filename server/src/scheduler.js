@@ -10,6 +10,7 @@
  */
 import { config } from './config.js';
 import { decryptSecretOrNull } from './crypto.js';
+import { conflict } from './errors.js';
 import { logger } from './logger.js';
 import {
   parseResponse,
@@ -21,6 +22,9 @@ import {
 import * as store from './store.js';
 
 const log = logger.child({ mod: 'scheduler' });
+
+/** 正在执行的任务 id：手动执行与 tick 共用，避免同一任务并发重复调用外部接口/发消息。 */
+const inFlightTasks = new Set();
 
 const MAX_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CATCHUP_MS = 5 * 60 * 1000;
@@ -398,9 +402,30 @@ function createEmptyResult(task) {
 
 /**
  * 执行一次任务（dryRun=true：真实调用但不发送/不写日志/不更新 next_run_at）。
+ * 同一任务同一时刻只允许一个执行实例；并发调用返回 409。
  * @returns {Promise<object>}
  */
-export async function executeScheduledTask(taskRow, { dryRun = false, now = deps.now() } = {}) {
+export async function executeScheduledTask(taskRow, options = {}) {
+  const task = parseScheduledTaskRow(taskRow);
+  if (!task) return null;
+  const taskId = String(task.id);
+  if (inFlightTasks.has(taskId)) {
+    throw conflict('定时任务正在执行，请稍后重试');
+  }
+  inFlightTasks.add(taskId);
+  try {
+    return await executeScheduledTaskInternal(taskRow, options);
+  } finally {
+    inFlightTasks.delete(taskId);
+  }
+}
+
+/** 任务是否正在执行（tick 用于跳过，避免重复写失败日志）。 */
+export function isScheduledTaskInFlight(taskId) {
+  return inFlightTasks.has(String(taskId));
+}
+
+async function executeScheduledTaskInternal(taskRow, { dryRun = false, now = deps.now() } = {}) {
   const task = parseScheduledTaskRow(taskRow);
   if (!task) return null;
   const startedAt = Number(now);
@@ -537,6 +562,7 @@ export async function tick(now = deps.now()) {
   try {
     const dueTasks = store.listDueScheduledTasks(now, TICK_BATCH);
     for (const row of dueTasks) {
+      if (isScheduledTaskInFlight(row.id)) continue;
       try {
         await executeScheduledTask(row, { now: deps.now(), dryRun: false });
         executed += 1;

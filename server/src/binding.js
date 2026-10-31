@@ -62,6 +62,9 @@ const STATUS_MESSAGES = Object.freeze({
 /** @type {Map<string, object>} */
 const sessions = new Map();
 
+/** 正在申请上游二维码、尚未写入 sessions 的预留名额（防止并发绕过 maxActiveSessions）。 */
+let pendingSessionReservations = 0;
+
 /** 绑定页创建会话的 IP 限流（默认 20 次/小时）。 */
 const ipLimiter = new SlidingWindowLimiter({
   limit: Math.max(1, config.binding.ipLimitPerHour),
@@ -201,15 +204,19 @@ export async function createSession({ displayName = '', ip = '' } = {}) {
     if (name.length > 40) throw badRequest('displayName 最长 40 个字符');
   }
 
-  if (countActiveSessions() >= config.binding.maxActiveSessions) {
+  const reserved = countActiveSessions() + pendingSessionReservations;
+  if (reserved >= config.binding.maxActiveSessions) {
     throw unavailable(`并发绑定会话已达上限（${config.binding.maxActiveSessions}），请稍后重试`);
   }
+  ipLimiter.limit = Math.max(1, config.binding.ipLimitPerHour);
   const ipLimit = ipLimiter.hit(String(ip || 'unknown'));
   if (!ipLimit.allowed) {
     log.warn('绑定会话创建被 IP 限流', { ip });
     throw rateLimited(`创建绑定会话过于频繁，请 ${Math.ceil(ipLimit.retryAfterMs / 1000)} 秒后重试`);
   }
 
+  pendingSessionReservations += 1;
+  try {
   let qr;
   try {
     qr = await ilink.getBotQrcode({ localTokenList: store.getRecentBindingTokens(10) });
@@ -271,6 +278,9 @@ export async function createSession({ displayName = '', ip = '' } = {}) {
     qr: qrView(session),
     createdAt: session.createdAt,
   };
+  } finally {
+    pendingSessionReservations -= 1;
+  }
 }
 
 /** 查询会话状态（前端 1s 轮询）。 */

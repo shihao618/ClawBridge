@@ -129,6 +129,31 @@ test('立即执行成功：真实调用→解析→逐目标入队 source=schedu
   assert.ok(Number(row.next_run_at) > Number(row.last_run_at), 'interval 下一次 = 执行开始 + 间隔');
 });
 
+test('同一任务并发执行：第二个请求 409，不会重复调用外部接口/发消息', async () => {
+  const user = createUser();
+  const task = createTask({ name: '并发任务', targetIds: [user.id] });
+  const realFetch = globalThis.fetch;
+  scheduler.configureDependencies({
+    fetch: async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return realFetch(...args);
+    },
+  });
+  try {
+    const first = scheduler.runScheduledTaskNow(task.id, { dryRun: false });
+    await assert.rejects(
+      scheduler.runScheduledTaskNow(task.id, { dryRun: false }),
+      (err) => err?.code === 'CONFLICT' && /正在执行/.test(err.message),
+    );
+    const result = await first;
+    assert.equal(result.status, 'success');
+    assert.equal(outboxFor(user.id).length, 1, '并发请求不应重复入队');
+    assert.equal(logsFor(task.id).length, 1, '并发请求不应重复写日志');
+  } finally {
+    scheduler.resetDependencies();
+  }
+});
+
 test('失败 fallback：非 2xx → failed 日志 + fallback 文案发给全部目标', async () => {
   const user = createUser();
   const task = createTask({

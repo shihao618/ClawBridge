@@ -126,6 +126,49 @@ function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || config.ilink.defaultBaseUrl).replace(/\/+$/, '');
 }
 
+/** iLink 响应体硬上限（防止被篡改/异常上游返回超大响应拖垮内存）。 */
+const MAX_ILINK_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+/** 流式读取 iLink 响应文本并限制大小；无 body 的测试 mock 回退到 res.text()。 */
+async function readResponseTextLimited(res, maxBytes = MAX_ILINK_RESPONSE_BYTES) {
+  const declared = Number(res.headers?.get?.('content-length') ?? 0);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new ILinkError('iLink 响应体超过上限', { body: `${declared} > ${maxBytes}` });
+  }
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const text = await res.text();
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new ILinkError('iLink 响应体超过上限');
+    return text;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* 已超限 */
+        }
+        throw new ILinkError('iLink 响应体超过上限');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      /* 忽略 */
+    }
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
+}
+
 /**
  * 通用 JSON 请求。超时 / 外部中止分别抛出带 timeout / aborted 标记的 ILinkError。
  */
@@ -158,7 +201,7 @@ async function requestJson({ method, baseUrl, endpoint, body, token, timeoutMs =
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });
-    const text = await res.text();
+    const text = await readResponseTextLimited(res);
     if (!res.ok) {
       throw new ILinkError(`${label} HTTP ${res.status}`, {
         endpoint: label,

@@ -54,7 +54,14 @@ function readOrCreateSecret(dataDir, filename, generate, { env, name }) {
   const filePath = path.join(dataDir, filename);
   try {
     const existing = fs.readFileSync(filePath, 'utf8').trim();
-    if (existing) return existing;
+    if (existing) {
+      try {
+        fs.chmodSync(filePath, 0o600);
+      } catch {
+        /* Windows/受限环境忽略 */
+      }
+      return existing;
+    }
   } catch {
     /* not found — generate below */
   }

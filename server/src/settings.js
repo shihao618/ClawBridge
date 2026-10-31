@@ -12,8 +12,8 @@ import net from 'node:net';
 import path from 'node:path';
 
 import { config } from './config.js';
-import { decryptSecretOrNull, encryptSecret, hashPassword, randomToken, verifyPassword, timingSafeEqualStr } from './crypto.js';
-import { all, nowMs, run } from './db.js';
+import { decryptSecretOrNull, encryptSecret, hashPassword, isPasswordHashRecord, randomToken, verifyPassword, timingSafeEqualStr } from './crypto.js';
+import { all, nowMs, run, transaction } from './db.js';
 import { badRequest, unauthorized } from './errors.js';
 import { logger, setLogLevel } from './logger.js';
 import * as store from './store.js';
@@ -99,7 +99,7 @@ const GROUPS = [
     key: 'server',
     label: '服务与日志',
     fields: [
-      { key: 'publicBaseUrl', label: '对外访问地址', type: 'url', allowEmpty: true, description: '如 https://bot.example.com；空=按请求推断（Cookie Secure 自动判断）' },
+      { key: 'publicBaseUrl', label: '对外访问地址', type: 'url', allowEmpty: true, description: '如 https://bot.example.com；非空且为 https 时管理 Cookie 自动加 Secure（运行配置即时生效）' },
       { key: 'trustProxy', label: '信任反向代理', type: 'boolean', restartRequired: true, description: '反向代理后需开启以获取真实 IP，修改后需重启生效' },
       { key: 'cookieSecure', label: 'Cookie 仅 HTTPS', type: 'boolean', description: '管理会话 Cookie 是否带 Secure 标记' },
       { key: 'logLevel', label: '日志级别', type: 'enum', options: ['debug', 'info', 'warn', 'error', 'silent'], description: '即时生效' },
@@ -464,10 +464,10 @@ function loadSecretOverrides(rows) {
     if (row.key === 'security.adminPasswordHash') {
       try {
         const parsed = JSON.parse(row.value);
-        if (typeof parsed === 'string' && parsed.startsWith('scrypt$')) {
+        if (typeof parsed === 'string' && isPasswordHashRecord(parsed)) {
           adminPasswordHashRecord = parsed;
         } else {
-          log.warn('忽略非法管理密码哈希覆盖值');
+          log.warn('忽略非法的管理密码哈希覆盖值（将重新引导生成新密码）');
         }
       } catch {
         log.warn('忽略非法 JSON 的管理密码哈希覆盖值');
@@ -500,19 +500,15 @@ function secretsFilePath(name) {
   return path.join(config.dataDir, name);
 }
 
-/** 写机密文件（0600；失败仅 warn，不影响服务启动）。 */
+/** 写机密文件（0600）；失败直接抛错，避免“DB 已有密码但无人知道明文”的锁死状态。 */
 function writeSecretFile(name, value) {
   const filePath = secretsFilePath(name);
+  fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(filePath, `${value}\n`, { mode: 0o600 });
   try {
-    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(filePath, `${value}\n`, { mode: 0o600 });
-    try {
-      fs.chmodSync(filePath, 0o600);
-    } catch {
-      /* Windows 等平台忽略 */
-    }
-  } catch (err) {
-    log.warn('写入机密文件失败（不影响服务运行）', { file: name, message: err?.message });
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    /* Windows 等平台忽略 */
   }
   return filePath;
 }
@@ -544,25 +540,30 @@ export function bootstrapSecrets() {
   if (!adminPasswordHashRecord) {
     const password = generateAdminPassword();
     const record = hashPassword(password);
+    // 先写文件再落 DB：文件写失败会启动失败，不会留下“哈希已存在但无人知道密码”的死状态。
+    writeSecretFile(ADMIN_PASSWORD_FILE, password);
     upsertSetting('security.adminPasswordHash', JSON.stringify(record));
     adminPasswordHashRecord = record;
-    writeSecretFile(ADMIN_PASSWORD_FILE, password);
     result.adminPasswordGenerated = true;
     addSettingsEvent({ action: 'bootstrap_admin_password', source: 'db' });
     log.info('初始管理密码已生成，请查看文件', { file: `data/${ADMIN_PASSWORD_FILE}` });
+  } else if (!fs.existsSync(secretsFilePath(ADMIN_PASSWORD_FILE))) {
+    log.warn('DB 已有管理密码，但 data/admin-password.txt 不存在（旧卷升级）；如忘记密码，请在已登录后台重置，或先备份 DB 后删除 security.adminPasswordHash 行重新引导');
   }
   if (!apiTokenEncPresent) {
     const token = generateApiToken();
+    writeSecretFile(API_TOKEN_FILE, token);
     upsertSetting('security.apiTokenEnc', JSON.stringify(encryptSecret(token)));
     apiTokenEncPresent = true;
     config.secrets.apiToken = token;
     config.secrets.apiTokenAuto = false;
     upsertSetting('security.pushApiEnabled', 'true');
     config.pushApiEnabled = true;
-    writeSecretFile(API_TOKEN_FILE, token);
     result.apiTokenGenerated = true;
     addSettingsEvent({ action: 'bootstrap_api_token', source: 'db' });
     log.info('初始 API Token 已生成，请查看文件', { file: `data/${API_TOKEN_FILE}` });
+  } else if (!fs.existsSync(secretsFilePath(API_TOKEN_FILE))) {
+    log.warn('DB 已有 API Token，但 data/api-token.txt 不存在（旧卷升级）；可在后台安全卡片重置 Token');
   }
   return result;
 }/**
@@ -710,8 +711,13 @@ export function updateSettings(patch) {
   }
 
   const now = nowMs();
+  // 先原子落库；全部成功后再写内存 config/hooks，避免请求中途失败留下部分覆盖。
+  transaction(() => {
+    for (const change of changes) {
+      upsertSetting(change.field.fullKey, JSON.stringify(change.value), now);
+    }
+  });
   for (const change of changes) {
-    upsertSetting(change.field.fullKey, JSON.stringify(change.value), now);
     writeConfigField(change.field, change.value);
   }
 
@@ -733,10 +739,12 @@ export function resetGroup(groupKey) {
   const group = GROUPS.find((item) => item.key === groupKey);
   if (!group) fail(`未知配置分组：${groupKey}`);
   const placeholders = group.fields.map(() => '?').join(', ');
-  run(
-    `DELETE FROM app_settings WHERE key IN (${placeholders})`,
-    ...group.fields.map((field) => field.fullKey),
-  );
+  transaction(() => {
+    run(
+      `DELETE FROM app_settings WHERE key IN (${placeholders})`,
+      ...group.fields.map((field) => field.fullKey),
+    );
+  });
   for (const field of group.fields) writeConfigField(field, cloneValue(DEFAULTS.get(field.fullKey)));
   if (group.key === 'server') setLogLevel(config.logLevel);
   runRuntimeHooks([group.key]);

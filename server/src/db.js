@@ -386,6 +386,26 @@ export function openDatabase(dbPath = config.dbPath) {
 
 database = openDatabase();
 
+// 旧数据卷可能以 0777 创建（历史镜像/volume），启动时收口权限；
+// WAL/SHM 由 SQLite 在 umask 077 下创建，但旧文件也一并修正。
+function normalizeDatabasePermissions() {
+  const dbPath = config.dbPath;
+  try {
+    fs.chmodSync(path.dirname(dbPath), 0o700);
+    fs.chmodSync(dbPath, 0o600);
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        fs.chmodSync(`${dbPath}${suffix}`, 0o600);
+      } catch {
+        /* 文件可能不存在 */
+      }
+    }
+  } catch (err) {
+    log.warn('修正数据库文件权限失败（Windows/受限环境可忽略）', { message: err?.message });
+  }
+}
+normalizeDatabasePermissions();
+
 /** 返回底层 DatabaseSync（测试/特殊维护用；正常业务请用 run/get/all）。 */
 export function getDb() {
   return database;

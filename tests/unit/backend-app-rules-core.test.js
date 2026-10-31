@@ -59,6 +59,9 @@ test.before(async () => {
       } else if (url.pathname === '/redirect') {
         res.writeHead(302, { location: '/weather?city=redirected' });
         res.end();
+      } else if (url.pathname === '/redirect-cross') {
+        res.writeHead(302, { location: `http://localhost:${port}/weather` });
+        res.end();
       } else if (url.pathname === '/binary') {
         res.writeHead(200, { 'content-type': 'image/png' });
         res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
@@ -70,6 +73,16 @@ test.before(async () => {
       } else if (url.pathname === '/big') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ data: { answer: 'x'.repeat(5000) } }));
+      } else if (url.pathname === '/big-chunked') {
+        // 不设置 Content-Length，模拟 chunked 大响应，验证流式读取上限
+        res.writeHead(200, { 'content-type': 'application/json' });
+        for (let i = 0; i < 8; i += 1) res.write('x'.repeat(512));
+        res.end();
+      } else if (url.pathname === '/slow-body') {
+        // 响应头已返回但 body 迟迟不结束：验证超时覆盖 body 读取阶段
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.write('start');
+        setTimeout(() => res.end('end'), 1500);
       } else {
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'boom' }));
@@ -295,6 +308,11 @@ test('requestExternal：成功/GET query/POST body/重定向复验/超时/大小
   const redirected = await appRules.requestExternal({ url: `http://127.0.0.1:${port}/redirect`, timeoutMs: 2000 });
   assert.equal(redirected.status, 200);
   assert.match(redirected.text, /redirected/);
+  await assert.rejects(
+    appRules.requestExternal({ url: `http://127.0.0.1:${port}/redirect-cross`, timeoutMs: 2000 }),
+    /跨源重定向/,
+    '跨源重定向必须拒绝，避免请求头凭据被转发',
+  );
 
   const postEcho = await appRules.requestExternal({
     url: `http://127.0.0.1:${port}/echo_post`,
@@ -310,6 +328,16 @@ test('requestExternal：成功/GET query/POST body/重定向复验/超时/大小
     (err) => /aborted|abort/i.test(String(err?.name ?? err?.message ?? err)),
   );
   await assert.rejects(appRules.requestExternal({ url: `http://127.0.0.1:${port}/big`, maxResponseBytes: 1024 }), /大小上限/);
+  await assert.rejects(
+    appRules.requestExternal({ url: `http://127.0.0.1:${port}/big-chunked`, maxResponseBytes: 1024 }),
+    /大小上限/,
+    '无 Content-Length 的 chunked 响应也必须在流式读取时截断',
+  );
+  await assert.rejects(
+    appRules.requestExternal({ url: `http://127.0.0.1:${port}/slow-body`, timeoutMs: 300 }),
+    (err) => /aborted|abort/i.test(String(err?.name ?? err?.message ?? err)),
+    '超时必须在 body 读取阶段仍然生效',
+  );
   await assert.rejects(appRules.requestExternal({ url: `http://127.0.0.1:${port}/binary` }), /响应类型/);
   await assert.rejects(appRules.requestExternal({ url: 'http://10.0.0.1/x' }), /SSRF/);
 });

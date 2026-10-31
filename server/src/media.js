@@ -304,10 +304,10 @@ export function extractInboundMediaItems(message) {
 export async function ensureMediaDirs() {
   await fs.mkdir(path.join(config.media.dir, 'outbound'), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(config.media.dir, 'inbound'), { recursive: true, mode: 0o700 });
-  // 修正已存在目录的权限（volume 首次创建可能是 0755）
-  for (const sub of ['outbound', 'inbound']) {
+  // 修正已存在目录的权限（volume 首次创建可能是 0755/0777）
+  for (const dir of [config.media.dir, path.join(config.media.dir, 'outbound'), path.join(config.media.dir, 'inbound')]) {
     try {
-      await fs.chmod(path.join(config.media.dir, sub), 0o700);
+      await fs.chmod(dir, 0o700);
     } catch {
       /* Windows/受限环境忽略 */
     }

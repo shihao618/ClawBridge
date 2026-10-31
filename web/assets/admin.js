@@ -482,6 +482,18 @@ function showLogin(message = '') {
   state.authenticated = false;
   stopAutoRefresh();
   closeDrawer();
+  // 会话过期时清理所有弹窗，避免一次性密码/Token 等明文残留在登录页，
+  // 也避免 openModals 残留导致重新登录后自动刷新永久停摆。
+  for (const modal of [...openModals]) {
+    try {
+      modal.close('unauthorized');
+    } catch {
+      /* 忽略关闭异常 */
+    }
+  }
+  openModals.clear();
+  for (const node of document.querySelectorAll('.modal-backdrop')) node.remove();
+  document.body.classList.remove('modal-open');
   document.body.classList.remove('admin-authed');
   setHidden(els.loadingView, true);
   setHidden(els.dashboard, true);
@@ -3370,6 +3382,8 @@ async function deleteGroup(group) {
 }
 
 async function openUserGroupsModal(user) {
+  let groups = Array.isArray(state.groups) ? state.groups : [];
+  let groupsLoaded = false;
   const modal = openTrackedModal({
     title: `编辑用户分组：${user.displayName || user.id}`,
     content: [el('p', { class: 'form-hint', text: '正在加载分组…' })],
@@ -3380,6 +3394,10 @@ async function openUserGroupsModal(user) {
         class: 'btn btn-primary',
         closeOnClick: false,
         onClick: async (modalRef) => {
+          if (!groupsLoaded) {
+            toast('分组列表仍在加载（或加载失败），请稍候重试，避免提交空分组', 'error');
+            return;
+          }
           const selected = [...modalRef.body.querySelectorAll('input[data-group-id]:checked')].map(
             (input) => input.dataset.groupId,
           );
@@ -3413,15 +3431,24 @@ async function openUserGroupsModal(user) {
     ],
   });
 
-  let groups = state.groups;
   try {
     const data = await apiFetch('/api/admin/groups');
     groups = data && Array.isArray(data.items) ? data.items : [];
+    groupsLoaded = true;
     state.groups = groups;
     renderGroups();
     updateGroupFilterOptions();
   } catch {
-    groups = state.groups;
+    groups = Array.isArray(state.groups) ? state.groups : [];
+    groupsLoaded = false;
+  }
+
+  if (!groupsLoaded) {
+    clearNode(modal.body);
+    modal.body.append(
+      el('p', { class: 'alert alert-error', text: '加载分组失败，请关闭弹窗后重试；为避免误清空用户分组，本次禁止保存。' }),
+    );
+    return;
   }
 
   const currentIds = new Set(

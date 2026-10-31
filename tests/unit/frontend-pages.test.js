@@ -1315,3 +1315,10 @@ test('首页：使用与后台一致的侧边栏/顶栏导航', async () => {
   assert.ok(!html.includes('docs-topbar-actions'), '首页右上角不再放导航按钮');
   assert.ok(html.includes('id="bind-form"'), '首页仍应包含扫码绑定表单');
 });
+test('后台弹窗：分组加载失败禁止保存，会话过期清理弹窗', async () => {
+  const admin = await readAsset('admin.js');
+  assert.match(admin, /if \(!groupsLoaded\)/, '分组弹窗保存前必须检查分组是否加载成功');
+  assert.ok(admin.includes('加载分组失败，请关闭弹窗后重试'), '分组加载失败应给出明确提示且禁止保存');
+  assert.match(admin, /for \(const modal of \[\.\.\.openModals\]\)/, '登录页应清理跟踪中的弹窗');
+  assert.match(admin, /document\.querySelectorAll\('\.modal-backdrop'\)/, '登录页应移除残留遮罩/弹窗');
+});

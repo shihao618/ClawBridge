@@ -719,6 +719,51 @@ export function describeFetchError(err) {
 }
 
 /**
+ * 读取外部响应体并强制大小上限。
+ * 不能直接 arrayBuffer()：chunked / 无 Content-Length 响应会在内存中无限增长；
+ * 这里按流累计，超过上限立即取消读取并抛错。
+ */
+async function readResponseBodyLimited(response, maxBytes) {
+  const limit = Math.max(1, Number(maxBytes) || config.appRules.maxResponseBytes);
+  const declaredSize = Number(response.headers.get('content-length') ?? 0);
+  if (declaredSize > limit) throw new Error('响应体超过大小上限');
+
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > limit) throw new Error('响应体超过大小上限');
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* 已超限，取消失败不影响错误返回 */
+        }
+        throw new Error('响应体超过大小上限');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      /* 忽略 */
+    }
+  }
+  return Buffer.concat(chunks, total);
+}
+
+/**
  * 调用外部接口（SSRF 校验 + 重定向逐跳复验 + 超时 + 响应大小限制 + 仅文本）。
  * @returns {Promise<{status:number, text:string, headers:object, finalUrl:string, latencyMs:number}>}
  */
@@ -744,52 +789,60 @@ export async function requestExternal({
     await validateTargetUrl(currentUrl, { allowedHosts, dnsLookup });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || config.appRules.timeoutMs));
-    let response;
     try {
-      response = await fetchImpl(currentUrl, {
+      const response = await fetchImpl(currentUrl, {
         method: currentMethod,
         headers: withDefaultJsonContentType(currentMethod, currentBody, requestHeaders),
         body: currentMethod === 'GET' ? undefined : currentBody,
         redirect: 'manual',
         signal: controller.signal,
       });
+
+      if ([301, 302, 303, 307, 308].includes(Number(response.status))) {
+        if (redirect === redirectLimit) throw new Error('重定向次数过多');
+        const location = response.headers.get('location');
+        if (!location) throw new Error('重定向响应缺少 Location');
+        const nextUrl = new URL(location, currentUrl);
+        const fromUrl = new URL(currentUrl);
+        const sameHost = nextUrl.hostname.toLowerCase() === fromUrl.hostname.toLowerCase();
+        const secureUpgrade = fromUrl.protocol === 'http:' && nextUrl.protocol === 'https:';
+        if (!sameHost || (!secureUpgrade && nextUrl.origin !== fromUrl.origin)) {
+          throw new Error('拒绝跨源重定向，避免自定义请求头/凭据被转发到其他主机');
+        }
+        currentUrl = nextUrl.toString();
+        if (Number(response.status) === 303) {
+          currentMethod = 'GET';
+          currentBody = '';
+        }
+        try {
+          await response.body?.cancel?.();
+        } catch {
+          /* 重定向响应体不需要读取 */
+        }
+        continue;
+      }
+
+      const contentType = String(response.headers.get('content-type') ?? '').toLowerCase();
+      if (
+        contentType &&
+        !/^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(contentType)
+      ) {
+        throw new Error(`不支持的响应类型（仅接受文本/JSON）：${contentType}`);
+      }
+      const buffer = await readResponseBodyLimited(response, maxResponseBytes);
+      const text = buffer.toString('utf8');
+      const responseHeaders = {};
+      for (const [key, value] of response.headers.entries()) responseHeaders[key] = value;
+      return {
+        status: Number(response.status),
+        text,
+        headers: responseHeaders,
+        finalUrl: currentUrl,
+        latencyMs: Math.max(0, deps.now() - startedAt),
+      };
     } finally {
       clearTimeout(timer);
     }
-
-    if ([301, 302, 303, 307, 308].includes(Number(response.status))) {
-      if (redirect === redirectLimit) throw new Error('重定向次数过多');
-      const location = response.headers.get('location');
-      if (!location) throw new Error('重定向响应缺少 Location');
-      currentUrl = new URL(location, currentUrl).toString();
-      if (Number(response.status) === 303) {
-        currentMethod = 'GET';
-        currentBody = '';
-      }
-      continue;
-    }
-
-    const contentType = String(response.headers.get('content-type') ?? '').toLowerCase();
-    if (
-      contentType &&
-      !/^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(contentType)
-    ) {
-      throw new Error(`不支持的响应类型（仅接受文本/JSON）：${contentType}`);
-    }
-    const declaredSize = Number(response.headers.get('content-length') ?? 0);
-    if (declaredSize > maxResponseBytes) throw new Error('响应体超过大小上限');
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > maxResponseBytes) throw new Error('响应体超过大小上限');
-    const text = buffer.toString('utf8');
-    const responseHeaders = {};
-    for (const [key, value] of response.headers.entries()) responseHeaders[key] = value;
-    return {
-      status: Number(response.status),
-      text,
-      headers: responseHeaders,
-      finalUrl: currentUrl,
-      latencyMs: Math.max(0, deps.now() - startedAt),
-    };
   }
   throw new Error('重定向次数过多');
 }
