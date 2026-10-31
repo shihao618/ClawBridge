@@ -2829,10 +2829,14 @@ async function openScheduleEditor(task = null) {
     formSection(
       '计划',
       '间隔任务从上次执行时间 + 间隔计算下次；每日任务按服务端时区 HH:mm 执行。',
-      formField('计划类型', typeSelect, null, 'schedule-type'),
-      intervalField,
+      el(
+        'div',
+        { class: 'schedule-plan-main-row' },
+        formField('计划类型', typeSelect, null, 'schedule-type'),
+        intervalField,
+        dailyField,
+      ),
       windowField,
-      dailyField,
       timezoneHint,
     ),
     formSection(

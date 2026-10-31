@@ -913,6 +913,7 @@ test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立
     'openScheduleLogsModal',
     'deleteScheduledTask',
     'schedule-type',
+    'schedule-plan-main-row',
     'schedule-interval-minutes',
     'schedule-daily-time',
     'schedule-user-list',

@@ -3540,3 +3540,22 @@ body.admin-authed .admin-main {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 定时任务：计划类型与间隔/每日时间同一行（窄屏自动换行） */
+.schedule-plan-main-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px 14px;
+  align-items: start;
+}
+
+.schedule-plan-main-row .form-field {
+  min-width: 0;
+  margin: 0;
+}
+
+@media (max-width: 639px) {
+  .schedule-plan-main-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
