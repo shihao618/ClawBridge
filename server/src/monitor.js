@@ -19,6 +19,9 @@ import * as store from './store.js';
 
 const log = logger.child({ mod: 'monitor' });
 
+/** last_poll_at 落库节流：轮询本身仍在进行，但无需每一轮都写 SQLite/WAL。 */
+const POLL_PERSIST_INTERVAL_MS = 5 * 60 * 1000;
+
 /** @type {Map<string, {controller: AbortController, promise: Promise<void>, startedAt: number}>} */
 const workers = new Map();
 
@@ -125,7 +128,7 @@ export function start(userOrId) {
   }
 
   const controller = new AbortController();
-  const worker = { controller, startedAt: Date.now(), promise: Promise.resolve() };
+  const worker = { controller, startedAt: Date.now(), promise: Promise.resolve(), lastPollPersistedAt: 0 };
   workers.set(userId, worker);
   worker.promise = runLoop(row, secrets.token, controller, worker)
     .catch((err) => log.error('入站监控循环异常退出', { userId, message: err?.message, stack: err?.stack }))
@@ -405,10 +408,8 @@ async function runLoop(row, token, controller, worker) {
 
     consecutiveFailures = 0;
     const newBuf = typeof resp?.get_updates_buf === 'string' ? resp.get_updates_buf : '';
-    if (newBuf && newBuf !== getUpdatesBuf) {
-      getUpdatesBuf = newBuf;
-      store.updateGetUpdatesBuf(userId, getUpdatesBuf);
-    }
+    const bufChanged = Boolean(newBuf && newBuf !== getUpdatesBuf);
+    if (bufChanged) getUpdatesBuf = newBuf;
     const serverTimeout = Number(resp?.longpolling_timeout_ms);
     if (Number.isFinite(serverTimeout) && serverTimeout > 0) {
       // 服务端建议值优先，但限制在合理区间
@@ -416,8 +417,16 @@ async function runLoop(row, token, controller, worker) {
     }
     const messages = Array.isArray(resp?.msgs) ? resp.msgs : [];
     if (messages.length > 0) processMessages(userId, messages);
-    store.touchPoll(userId, Date.now());
-    worker.lastPollAt = Date.now();
+    const polledAt = Date.now();
+    worker.lastPollAt = polledAt;
+    const persistDue = polledAt - Number(worker.lastPollPersistedAt || 0) >= POLL_PERSIST_INTERVAL_MS;
+    // 有消息时立即持久化游标；空轮询仅在节流周期到期时落库，
+    // 避免上游每次返回新 get_updates_buf 都写 SQLite/WAL。
+    if (messages.length > 0 || persistDue) {
+      if (bufChanged) store.updateGetUpdatesBuf(userId, getUpdatesBuf, polledAt);
+      else store.touchPoll(userId, polledAt);
+      worker.lastPollPersistedAt = polledAt;
+    }
   }
 }
 
