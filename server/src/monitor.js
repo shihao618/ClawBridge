@@ -19,8 +19,11 @@ import * as store from './store.js';
 
 const log = logger.child({ mod: 'monitor' });
 
-/** last_poll_at 落库节流：轮询本身仍在进行，但无需每一轮都写 SQLite/WAL。 */
-const POLL_PERSIST_INTERVAL_MS = 5 * 60 * 1000;
+/**
+ * 空闲时 getupdates 游标只保存在内存：不产生周期性 SQLite/WAL 写入，允许数据盘休眠。
+ * 有入站消息时立即持久化游标；若进程异常重启，从上次已持久化游标回放，
+ * 入站消息按 wechat message_id 去重，最多产生可去重的重复处理。
+ */
 
 /** @type {Map<string, {controller: AbortController, promise: Promise<void>, startedAt: number}>} */
 const workers = new Map();
@@ -128,7 +131,7 @@ export function start(userOrId) {
   }
 
   const controller = new AbortController();
-  const worker = { controller, startedAt: Date.now(), promise: Promise.resolve(), lastPollPersistedAt: 0 };
+  const worker = { controller, startedAt: Date.now(), promise: Promise.resolve(), pendingBuf: '' };
   workers.set(userId, worker);
   worker.promise = runLoop(row, secrets.token, controller, worker)
     .catch((err) => log.error('入站监控循环异常退出', { userId, message: err?.message, stack: err?.stack }))
@@ -410,23 +413,19 @@ async function runLoop(row, token, controller, worker) {
     const newBuf = typeof resp?.get_updates_buf === 'string' ? resp.get_updates_buf : '';
     const bufChanged = Boolean(newBuf && newBuf !== getUpdatesBuf);
     if (bufChanged) getUpdatesBuf = newBuf;
+    worker.pendingBuf = getUpdatesBuf;
     const serverTimeout = Number(resp?.longpolling_timeout_ms);
     if (Number.isFinite(serverTimeout) && serverTimeout > 0) {
       // 服务端建议值优先，但限制在合理区间
       nextTimeoutMs = Math.min(Math.max(1000, serverTimeout), 120000);
     }
     const messages = Array.isArray(resp?.msgs) ? resp.msgs : [];
-    if (messages.length > 0) processMessages(userId, messages);
-    const polledAt = Date.now();
-    worker.lastPollAt = polledAt;
-    const persistDue = polledAt - Number(worker.lastPollPersistedAt || 0) >= POLL_PERSIST_INTERVAL_MS;
-    // 有消息时立即持久化游标；空轮询仅在节流周期到期时落库，
-    // 避免上游每次返回新 get_updates_buf 都写 SQLite/WAL。
-    if (messages.length > 0 || persistDue) {
-      if (bufChanged) store.updateGetUpdatesBuf(userId, getUpdatesBuf, polledAt);
-      else store.touchPoll(userId, polledAt);
-      worker.lastPollPersistedAt = polledAt;
+    if (messages.length > 0) {
+      processMessages(userId, messages);
+      // 只有真正收到消息时才落盘游标；空轮询不写 DB。
+      if (bufChanged) store.updateGetUpdatesBuf(userId, getUpdatesBuf, Date.now());
     }
+    worker.lastPollAt = Date.now();
   }
 }
 
@@ -448,6 +447,17 @@ export async function stop(userOrId, { notify = true, reason = '' } = {}) {
   }
   // 最多等待 5 秒让循环收尾（在途请求可能未被中止）
   await Promise.race([worker.promise.catch(() => {}), sleep(5000)]);
+  // 仅在优雅退出时补写一次内存游标，避免重启后重复回放；日常空闲不写盘。
+  if (reason === 'shutdown' && worker.pendingBuf) {
+    try {
+      const row = store.getUserRow(userId);
+      if (row && row.get_updates_buf !== worker.pendingBuf) {
+        store.updateGetUpdatesBuf(userId, worker.pendingBuf, Date.now());
+      }
+    } catch (err) {
+      log.warn('退出时持久化 getupdates 游标失败（忽略）', { userId, message: err?.message });
+    }
+  }
   if (notify) {
     try {
       const row = store.getUserRow(userId);
