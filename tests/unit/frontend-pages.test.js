@@ -1086,12 +1086,14 @@ test('运行配置：第二批分组与安全卡片（改密/API Token）', asyn
   assert.ok(html.includes('data/admin-password.txt') && html.includes('data/api-token.txt'), '应说明新密码/Token 写入 data/ 文件');
 });
 
-test('运行配置：文档页与 docs/SETTINGS.md 一致', async () => {
+test('运行配置：后台说明不在文档页重复，契约保留在 docs/SETTINGS.md', async () => {
   const [contract, html] = await Promise.all([
     fs.readFile(path.join(ROOT, 'docs', 'SETTINGS.md'), 'utf8'),
     readPage('docs.html'),
   ]);
-  assert.match(html, /<section id="settings"/, 'docs.html 应有 #settings 章节');
+  assert.ok(!html.includes('<section id="settings"'), '文档页不应再重复运行配置章节');
+  assert.ok(!html.includes('href="#settings"'), '文档页目录不应再列出运行配置');
+  assert.match(html, /本文档只描述 HTTP API 契约/, '文档页应说明只描述 API 契约');
   for (const token of [
     '/api/admin/settings',
     '/api/admin/settings/reset',
@@ -1101,71 +1103,18 @@ test('运行配置：文档页与 docs/SETTINGS.md 一致', async () => {
     'allowedHosts',
     'APP_SECRET',
     'rateLimitMax',
-    'rateLimitWindowMs',
-    'maxAttempts',
     'retryDelaysMs',
-    'apiRateLimitPerMinute',
     'maxTextLength',
-    'windowMs',
-    'leadMs',
-    'tickMs',
-    'maxPerTick',
-    'maxResponseBytes',
-    'workerConcurrency',
-    'maxQueue',
-    'timezone',
-    'maxRecipients',
-    'maxBytes',
-    'inboundMaxBytes',
-    'ttlMs',
-    'maxRefreshes',
-    'maxActive',
-    'ipLimitPerHour',
-    'verifyTimeoutMs',
-    '/api/admin/security/password',
-    '/api/admin/security/password/reset',
-    '/api/admin/security/api-token/rotate',
-    '/api/admin/security/api-token/reset',
     'publicBaseUrl',
-    'trustProxy',
-    'cookieSecure',
-    'logLevel',
-    'sessionTtlMs',
-    'pushApiEnabled',
-    'loginBaseUrl',
-    'defaultBaseUrl',
-    'cdnBaseUrl',
-    'appId',
-    'channelVersion',
-    'botAgent',
-    'botType',
-    'routeTag',
-    'clientVersion',
-    'requestTimeoutMs',
-    'qrPollTimeoutMs',
-    'longPollTimeoutMs',
-    'maxAccounts',
-    'downloadTimeoutMs',
-    'uploadTimeoutMs',
-    'allowedImageMime',
-    'allowedVideoMime',
-    'networkErrorLimit',
-    'pollGapMs',
     'adminPasswordSource',
-    'apiTokenSource',
-    'apiTokenPreview',
-    '随机密码',
-    'admin-password.txt',
-    'api-token.txt',
-    'scrypt',
-    'AES',
     'MEDIA_DIR',
     'NODE_ENV',
+    'scrypt',
+    'AES',
   ]) {
     assert.ok(contract.includes(token), `docs/SETTINGS.md 应描述：${token}`);
-    assert.ok(html.includes(token), `docs.html 运行配置章节缺少：${token}`);
   }
-  assert.ok(/curl -X PATCH[^\n]*api\/admin\/settings/.test(html), 'docs.html 应包含保存运行配置 curl 示例');
+  assert.ok(!/curl -X PATCH[^\n]*api\/admin\/settings/.test(html), '文档页不再重复运行配置 curl 示例');
 });
 
 test('文档页接口应用章节与 docs/API_RULES.md 一致', async () => {

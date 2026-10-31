@@ -38,7 +38,6 @@
           <a class="doc-nav-link" href="#keepalive">消息保活</a>
           <a class="doc-nav-link" href="#app-rules">接口应用</a>
           <a class="doc-nav-link doc-nav-sub" href="#scheduled-tasks">└ 定时通知</a>
-          <a class="doc-nav-link" href="#settings">运行配置</a>
           <a class="doc-nav-link" href="#error-codes">错误码</a>
           <a class="doc-nav-link" href="#env-vars">环境变量</a>
           <a class="doc-nav-link" href="#security">安全说明</a>
@@ -73,6 +72,11 @@
         <p class="doc-lead">
           ClawBridge 提供扫码绑定、管理后台与对外消息推送 API。所有 API（静态页面与二维码 SVG 除外）返回 JSON；
           时间字段统一为 <strong>Unix 毫秒整数</strong>；写接口接受 <code class="code-inline">Content-Type: application/json</code>。
+        </p>
+
+        <p class="doc-note">
+          本文档只描述 HTTP API 契约。运行配置、接口应用、定时通知等后台操作说明，
+          请直接在管理后台对应页面查看，本文档不再重复列出。
         </p>
 
         <!-- 概览 -->
@@ -327,11 +331,6 @@ curl -X POST http://localhost:10380/api/v1/messages \
             <li>一条带 caption 的媒体消息在服务端会拆成 <strong>最多 2 次</strong> <code class="code-inline">sendmessage</code>（文字 + 媒体），每次都会消耗该账号的发送限流令牌。</li>
             <li>媒体发送失败会按重试策略重新上传；附件文件缺失时该条消息直接标记 <code class="code-inline">failed</code>。</li>
           </ul>
-          <p class="doc-note">
-            管理后台「发消息」弹窗已内置：选择文件 → 客户端大小校验（读取
-            <code class="code-inline">/api/admin/config</code> 的 <code class="code-inline">media.maxBytes</code>）→
-            图片/视频预览 → 上传进度 → 发送；消息记录与用户详情中会展示图片缩略图、视频播放器与文件下载链接。
-          </p>
         </section>
 
         <!-- 端点总表 -->
@@ -1150,12 +1149,6 @@ done</code></pre></div>
               </tbody>
             </table>
           </div>
-          <p class="doc-note">
-            管理后台「用户管理」每行有「保活」开关，用户详情显示最近保活发送时间；「用户分组」每行有
-            「保活」行内开关（一键同步当前成员并持久化分组默认，之后加入该分组的成员自动开启；
-            分组编辑弹窗不再包含该开关）；「运行配置」展示保活全局开关、窗口、提前量、扫描间隔与文本。
-            真实环境上线默认不开启（<code class="code-inline">keepalive_enabled=0</code>），由管理员按需开启。
-          </p>
         </section>
 
         <!-- 接口应用 -->
@@ -1354,12 +1347,6 @@ curl -X POST http://localhost:10380/api/admin/app-rules/rule_xxxxxxxx/test \
 # 运行日志（支持 ruleId/status/userId/limit/offset）
 curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status=success&limit=20&offset=0" \
   -H "Cookie: cb_session=$ADMIN_COOKIE"</code></pre></div>
-          <p class="doc-note">
-            管理后台「接口应用」区块支持：规则列表（启用开关 / 范围 / 请求 / 最近运行 / 24h 成功·失败·跳过 /
-            编辑·测试·日志·删除）、分组式规则表单（基本信息 / 触发范围 / 触发条件 / 参数提取 / 请求 / 响应 /
-            限制）、测试运行弹窗（展示参数、实际请求、HTTP 状态、耗时、响应预览、将回复文本，且不会发给用户）
-            与规则日志弹窗（状态筛选 + 分页）。定时通知属于接口应用的时间计划模式，见下节。
-          </p>
 
           <!-- 定时通知（属于接口应用的时间计划模式） -->
           <section id="scheduled-tasks" class="doc-subsection">
@@ -1559,175 +1546,7 @@ curl "http://localhost:10380/api/admin/scheduled-task-logs?taskId=task_xxxxxxxx&
               </tbody>
             </table>
           </div>
-          <p class="doc-note">
-            管理后台「接口应用 → 定时通知」Tab 支持任务列表（启用开关/计划/目标/最近执行/下次执行）、
-            分区式任务表单（基本信息/计划/目标/请求/响应/超时）、测试运行（展示实际请求、HTTP/耗时、响应预览、
-            响应头诊断、将发送文本与收件人数，且<strong>不会发送</strong>）、立即执行（确认后真实发送并写日志）、
-            运行日志（任务/状态筛选 + 分页）。建议先用「测试运行」确认接口与文案，再启用或立即执行；
-            注意微信 7 条/5 分钟发送限流。
-          </p>
           </section>
-        </section>
-
-        <!-- 运行配置（后台可改） -->
-        <section id="settings" class="doc-section">
-          <h2 class="doc-heading">运行配置（后台可改设置）</h2>
-          <p>
-            能在后台修改的参数已从 <code class="code-inline">.env</code> 迁移到数据库
-            （schema v8 <code class="code-inline">app_settings</code> 表）：管理员在「运行配置」页修改后保存，
-            DB 持久化，尽量即时生效。第二批迁移后 <code class="code-inline">.env</code> 只保留启动必须项
-            （<code class="code-inline">APP_SECRET</code>、<code class="code-inline">DATA_DIR</code>、
-            <code class="code-inline">MEDIA_DIR</code>、<code class="code-inline">PORT</code>、
-            <code class="code-inline">HOST</code>、<code class="code-inline">NODE_ENV</code>）与机密回退值；
-            只有启动期固定或无法安全热更新的少量字段会提示「需重启」。
-          </p>
-          <p>
-            页面顶部提供 <strong>「🔄 重启容器」</strong> 按钮：确认后调用
-            <code class="code-inline">POST /api/admin/system/restart</code>（202），后台优雅退出后由 Docker
-            <code class="code-inline">restart: unless-stopped</code> 自动拉起（通常 5-15 秒不可用）；
-            前端轮询 <code class="code-inline">/health</code>，恢复后自动刷新页面。
-            仅生产容器环境可用；测试/非容器环境返回 <strong>409</strong>，需手动重启服务。
-          </p>
-
-          <h3 class="doc-subheading">1. 可后台修改的分组与字段</h3>
-          <div class="table-wrap">
-            <table class="doc-table">
-              <thead>
-                <tr>
-                  <th scope="col">分组</th>
-                  <th scope="col">字段</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td>推送 / 限流（push）</td><td><code class="code-inline">rateLimitMax</code>、<code class="code-inline">rateLimitWindowMs</code>、<code class="code-inline">maxAttempts</code>、<code class="code-inline">retryDelaysMs</code>、<code class="code-inline">apiRateLimitPerMinute</code>、<code class="code-inline">maxTextLength</code>、<code class="code-inline">tickMs</code></td></tr>
-                <tr><td>会话保活（keepalive）</td><td><code class="code-inline">enabled</code>、<code class="code-inline">windowMs</code>、<code class="code-inline">leadMs</code>、<code class="code-inline">tickMs</code>、<code class="code-inline">text</code>、<code class="code-inline">maxPerTick</code></td></tr>
-                <tr><td>接口应用（appRules）</td><td><code class="code-inline">enabled</code>、<code class="code-inline">timeoutMs</code>、<code class="code-inline">maxResponseBytes</code>、<code class="code-inline">workerConcurrency</code>、<code class="code-inline">allowedHosts</code>、<code class="code-inline">maxQueue</code></td></tr>
-                <tr><td>定时通知（scheduler）</td><td><code class="code-inline">enabled</code>、<code class="code-inline">tickMs</code>、<code class="code-inline">timezone</code>、<code class="code-inline">maxRecipients</code>、<code class="code-inline">timeoutMs</code></td></tr>
-                <tr><td>媒体（media）</td><td><code class="code-inline">maxBytes</code>、<code class="code-inline">inboundMaxBytes</code>、<code class="code-inline">downloadTimeoutMs</code>、<code class="code-inline">uploadTimeoutMs</code>、<code class="code-inline">allowedImageMime</code>、<code class="code-inline">allowedVideoMime</code></td></tr>
-                <tr><td>绑定（binding）</td><td><code class="code-inline">ttlMs</code>、<code class="code-inline">maxRefreshes</code>、<code class="code-inline">maxActive</code>、<code class="code-inline">ipLimitPerHour</code>、<code class="code-inline">verifyTimeoutMs</code>、<code class="code-inline">networkErrorLimit</code>、<code class="code-inline">pollGapMs</code></td></tr>
-                <tr><td>服务端（server）</td><td><code class="code-inline">publicBaseUrl</code>、<code class="code-inline">trustProxy</code>、<code class="code-inline">cookieSecure</code>、<code class="code-inline">logLevel</code>（enum：debug/info/warn/error/silent）</td></tr>
-                <tr><td>会话与安全（security）</td><td><code class="code-inline">sessionTtlMs</code>、<code class="code-inline">pushApiEnabled</code></td></tr>
-                <tr><td>微信接口（ilink）</td><td><code class="code-inline">loginBaseUrl</code>、<code class="code-inline">defaultBaseUrl</code>、<code class="code-inline">cdnBaseUrl</code>、<code class="code-inline">appId</code>、<code class="code-inline">channelVersion</code>、<code class="code-inline">botAgent</code>、<code class="code-inline">botType</code>、<code class="code-inline">routeTag</code>、<code class="code-inline">clientVersion</code>、<code class="code-inline">requestTimeoutMs</code>、<code class="code-inline">qrPollTimeoutMs</code>、<code class="code-inline">longPollTimeoutMs</code></td></tr>
-                <tr><td>入站监控（monitor）</td><td><code class="code-inline">longPollTimeoutMs</code>、<code class="code-inline">maxAccounts</code></td></tr>
-                <tr><td>管理密码 / API Token</td><td>「安全」卡片：管理密码修改/恢复、API Token 重新生成/恢复、推送 API 开关；密码哈希与 Token 明文永不在页面回显</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <p>
-            <code class="code-inline">allowedHosts</code> 支持数组或逗号/换行分隔字符串，
-            空数组表示清空白名单（恢复默认拒绝私网/本机）；<code class="code-inline">retryDelaysMs</code> 为逗号分隔的毫秒值。
-            字段会显示默认值（.env）、min/max 范围、「已修改」标记与「需重启」标记。
-          </p>
-
-          <h3 class="doc-subheading">2. 管理端接口（Cookie + CSRF）</h3>
-          <div class="endpoint-line">
-            <span class="method method-get">GET</span>
-            <code class="endpoint-path">/api/admin/settings</code>
-          </div>
-          <div class="endpoint-line">
-            <span class="method method-patch">PATCH</span>
-            <code class="endpoint-path">/api/admin/settings</code>
-          </div>
-          <div class="endpoint-line">
-            <span class="method method-post">POST</span>
-            <code class="endpoint-path">/api/admin/settings/reset</code>
-          </div>
-          <p>
-            <code class="code-inline">GET</code> 返回
-            <code class="code-inline">{ groups:[{key,label,fields:[{key,label,type,value,default,min,max,restartRequired,description}]}], envOnly:[...] }</code>；
-            <code class="code-inline">PATCH</code> 只提交修改过的字段（按分组嵌套），返回
-            <code class="code-inline">{ ok:true, groups:[...], restartRequired:[...] }</code>；
-            <code class="code-inline">reset</code> 恢复某分组为环境变量默认值。
-            校验失败 400（未知分组/字段、类型/范围/时区错误）；未登录 401、缺 CSRF 403。
-          </p>
-          <div class="code-block"><pre><code># 修改接口应用内网白名单 + 保活文本
-curl -X PATCH http://localhost:10380/api/admin/settings \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" \
-  -H "X-Requested-With: ClawBridge-Admin" \
-  -H "Content-Type: application/json" \
-  -d '{"appRules":{"allowedHosts":["192.168.88.10"]},
-       "keepalive":{"text":"【保活】回复任意内容继续接收通知"}}'
-
-# 恢复「接口应用」分组默认值
-curl -X POST http://localhost:10380/api/admin/settings/reset \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" \
-  -H "X-Requested-With: ClawBridge-Admin" \
-  -H "Content-Type: application/json" \
-  -d '{"group":"appRules"}'</code></pre></div>
-
-          <h3 class="doc-subheading">3. 安全卡片（管理密码 / API Token）</h3>
-          <p>
-            <code class="code-inline">GET /api/admin/settings</code> 额外返回
-            <code class="code-inline">security</code>：
-            <code class="code-inline">{ adminPasswordSource:'db', apiTokenSource:'db',
-            apiTokenPreview, pushApiEnabled, sessionTtlMs }</code>。
-            管理密码与 API Token <strong>仅保存在数据库</strong>（密码 scrypt 哈希 / Token AES 加密），
-            首次启动自动生成并写入 <code class="code-inline">data/admin-password.txt</code>、
-            <code class="code-inline">data/api-token.txt</code>；<strong>不再读取/回退
-            .env 的 ADMIN_PASSWORD、API_TOKEN</strong>。
-            <strong>永不返回密码哈希或 Token 明文</strong>；`security.pushApiEnabled` 通过 PATCH settings 修改（即时生效）。
-          </p>
-          <div class="endpoint-line">
-            <span class="method method-post">POST</span>
-            <code class="endpoint-path">/api/admin/security/password</code>
-          </div>
-          <div class="endpoint-line">
-            <span class="method method-post">POST</span>
-            <code class="endpoint-path">/api/admin/security/password/reset</code>
-          </div>
-          <div class="endpoint-line">
-            <span class="method method-post">POST</span>
-            <code class="endpoint-path">/api/admin/security/api-token/rotate</code>
-          </div>
-          <div class="endpoint-line">
-            <span class="method method-post">POST</span>
-            <code class="endpoint-path">/api/admin/security/api-token/reset</code>
-          </div>
-          <div class="code-block"><pre><code># 修改管理密码（newPassword 8..128）
-curl -X POST http://localhost:10380/api/admin/security/password \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" \
-  -H "X-Requested-With: ClawBridge-Admin" \
-  -H "Content-Type: application/json" \
-  -d '{"currentPassword":"old-pass","newPassword":"new-pass-123"}'
-
-# 重置为随机密码（需当前密码；明文仅在本次响应返回并写入 data/admin-password.txt）
-curl -X POST http://localhost:10380/api/admin/security/password/reset \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" \
-  -H "X-Requested-With: ClawBridge-Admin" \
-  -H "Content-Type: application/json" -d '{"currentPassword":"new-pass-123"}'
-# → { "ok":true, "password":"…随机明文，仅本次…", "source":"db" }
-
-# 重新生成 API Token（明文仅返回一次 + preview，旧 Token 立即失效）
-curl -X POST http://localhost:10380/api/admin/security/api-token/rotate \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
-
-# 重置 Token（生成新 Token，明文仅本次返回并写入 data/api-token.txt）
-curl -X POST http://localhost:10380/api/admin/security/api-token/reset \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"</code></pre></div>
-          <p>
-            后台「安全」卡片：管理密码（当前/新/确认 + 修改、重置为随机密码）、API Token（预览 + 来源「数据库」、
-            重新生成/重置后弹窗一次性显示新值并支持复制）、推送 API 开关。
-            密码/Token 只存数据库（scrypt/AES），首次启动自动生成并写入 data/ 文件；
-            修改密码不会强制下线已登录会话（会话到期后需使用新密码登录）；新密码/新 Token 明文只显示一次。
-          </p>
-
-          <h3 class="doc-subheading">4. 只读环境变量（envOnly）</h3>
-          <p>
-            仍必须由 <code class="code-inline">.env</code> 管理的最终名单（后台只读展示、脱敏/路径，不能修改）：
-            <code class="code-inline">APP_SECRET</code>（加密主密钥）、<code class="code-inline">DATA_DIR</code>、
-            <code class="code-inline">MEDIA_DIR</code>、<code class="code-inline">PORT</code>、
-            <code class="code-inline">HOST</code>、<code class="code-inline">NODE_ENV</code>。
-            其余参数均在后台「运行配置」可改并持久化到数据库；
-            <code class="code-inline">ADMIN_PASSWORD</code> / <code class="code-inline">API_TOKEN</code>
-            已迁移到数据库管理（首次启动自动生成并写入 data/ 文件），
-            <strong>不再读取这两个环境变量</strong>。
-          </p>
-          <p class="doc-note">
-            后台「运行配置」页按分组展示可编辑表单：number 输入、boolean 开关、text/textarea 文本、
-            <code class="code-inline">allowedHosts</code> 文本域（逗号/换行分隔）；「保存修改」只提交变化字段，
-            成功 toast 会包含需重启提示；每组「恢复默认」可清除该分组的后台覆盖。
-            未修改的字段使用环境变量默认值；DB 覆盖优先于 <code class="code-inline">.env</code>。
-          </p>
         </section>
 
         <!-- 错误码 -->

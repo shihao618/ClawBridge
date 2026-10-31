@@ -711,35 +711,14 @@ curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run 
 
 ## 10. 运行配置（后台可改设置）
 
-完整契约见 [`docs/SETTINGS.md`](SETTINGS.md)。可用参数从 `.env`（首次默认值）迁移到数据库
-（schema v8 `app_settings`），管理员在后台「运行配置」修改，DB 持久化，尽量即时生效。
-
-**可后台修改**：推送/限流（rateLimitMax/window/maxAttempts/retryDelaysMs/apiRateLimitPerMinute/maxTextLength）、
-会话保活（enabled/windowMs/leadMs/tickMs/text/maxPerTick）、接口应用（enabled/timeoutMs/maxResponseBytes/
-workerConcurrency/allowedHosts/maxQueue）、定时通知（enabled/tickMs/timezone/maxRecipients/timeoutMs）、
-媒体（maxBytes/inboundMaxBytes）、绑定（ttlMs/maxRefreshes/maxActive/ipLimitPerHour/verifyTimeoutMs）。
-
-**仍只由 .env 管理（启动必须）**：`APP_SECRET`、`DATA_DIR`、`MEDIA_DIR`、`PORT`、`HOST`、`NODE_ENV`。
-管理密码/API Token 由 DB 管理（后台「安全」卡片，首启自动生成）；其余运行参数均可在后台修改。
+字段、默认值与后台操作说明以管理后台「运行配置」页及 [`docs/SETTINGS.md`](SETTINGS.md) 为准，
+本文档不再重复列出。API 契约摘要：
 
 ```
 GET   /api/admin/settings            → { groups:[...], envOnly:[...] }
 PATCH /api/admin/settings            Body: {"appRules":{"allowedHosts":["192.168.88.10"]}}
   → 200 { ok:true, groups:[...], restartRequired:[...] }
 POST  /api/admin/settings/reset      Body: {"group":"appRules"} → 200 { ok:true, groups:[...] }
-```
-
-```bash
-# 在后台允许访问内网接口（替代 .env 的 APP_RULES_ALLOWED_HOSTS）
-curl -X PATCH http://localhost:10380/api/admin/settings \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
-  -H "Content-Type: application/json" \
-  -d '{"appRules":{"allowedHosts":["192.168.88.10"]}}'
-
-# 恢复接口应用组的默认值（清空白名单，重新拒绝私网）
-curl -X POST http://localhost:10380/api/admin/settings/reset \
-  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
-  -H "Content-Type: application/json" -d '{"group":"appRules"}'
 ```
 
 ## 11. 系统重启（重启容器）
