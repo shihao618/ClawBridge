@@ -158,7 +158,7 @@ docker compose up -d --build
 
 | 地址 | 说明 |
 | --- | --- |
-| `http://<服务器IP>:10380/` | 公开绑定页（微信扫码绑定入口） |
+| `http://<服务器IP>:10380/bind` | 公开绑定页（微信扫码绑定入口；`/` 会 302 到此） |
 | `http://<服务器IP>:10380/admin` | 管理后台（初始密码见下方 data 文件） |
 | `http://<服务器IP>:10380/docs` | 推送 API 使用文档 |
 | `http://<服务器IP>:10380/health` | 健康检查（Docker healthcheck 同款） |

@@ -862,7 +862,7 @@ test('菜单模式：侧栏固定 7 项菜单与视图区块一一对应', async
   // 侧栏底部链接与版本号
   assert.ok(html.includes('id="sidebar-version"'), '侧栏底部应有版本号');
   assert.match(html, /class="sidebar-link"[^>]*href="\/docs"/, '侧栏底部应有 API 文档链接');
-  assert.match(html, /class="sidebar-link"[^>]*href="\/"/, '侧栏底部应有公开绑定页链接');
+  assert.match(html, /class="sidebar-link"[^>]*href="\/bind"/, '侧栏底部应有扫码绑定页链接');
   assert.ok(html.includes('id="btn-sidebar-toggle"'), '应有移动端菜单按钮');
   assert.ok(html.includes('id="sidebar-overlay"'), '应有抽屉遮罩');
   assert.ok(html.includes('id="view-title"'), '顶部栏应有当前视图标题');

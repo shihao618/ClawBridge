@@ -22,7 +22,7 @@
         aria-controls="docs-nav"
         aria-expanded="false"
       >☰</button>
-      <a class="brand" href="/" aria-label="ClawBridge 首页">
+      <a class="brand" href="/bind" aria-label="ClawBridge 扫码绑定">
         <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
           <rect width="64" height="64" rx="14" fill="#07C160"></rect>
           <path d="M22 16h20a10 10 0 0 1 10 10v8a10 10 0 0 1-10 10H34l-9 8v-8h-3a10 10 0 0 1-10-10v-8a10 10 0 0 1 10-10z" fill="#ffffff"></path>
@@ -33,7 +33,6 @@
         <span class="brand-tag">API 文档</span>
       </a>
       <nav class="site-nav" aria-label="主导航">
-        <a class="nav-link" href="/">首页</a>
         <a class="nav-link" href="/bind">扫码绑定</a>
         <a class="nav-link nav-link-strong" href="/admin">管理后台</a>
       </nav>
@@ -720,8 +719,14 @@ curl -X POST http://localhost:10380/api/v1/messages \
                 </tr>
                 <tr>
                   <td><span class="method method-get">GET</span></td>
-                  <td><code class="endpoint-path">/</code> <code class="endpoint-path">/bind</code></td>
-                  <td>公开绑定页</td>
+                  <td><code class="endpoint-path">/</code></td>
+                  <td>302 → <code class="endpoint-path">/bind</code>（统一绑定页地址）</td>
+                  <td>公开</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/bind</code></td>
+                  <td>扫码绑定页（公开）</td>
                   <td>公开</td>
                 </tr>
                 <tr>
@@ -1831,7 +1836,6 @@ curl -X POST http://localhost:10380/api/admin/security/api-token/reset \
       <span>HTTP API 文档</span>
     </p>
     <p class="footer-links">
-      <a class="footer-link" href="/">公开绑定页</a>
       <a class="footer-link" href="/bind">扫码绑定</a>
       <a class="footer-link" href="/admin">管理后台</a>
     </p>
