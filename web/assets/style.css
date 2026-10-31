@@ -3947,3 +3947,23 @@ body.admin-authed .admin-main {
   flex-shrink: 0;
   white-space: nowrap;
 }
+/* 文档侧栏：品牌固定顶部，目录区域滚动，首页/管理后台固定在底部 */
+.doc-sidebar {
+  overflow: hidden;
+}
+
+.doc-sidebar-brand,
+.doc-sidebar > .docs-nav-close {
+  flex-shrink: 0;
+}
+
+.doc-sidebar .doc-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.doc-sidebar-footer {
+  flex-shrink: 0;
+  margin-top: 0;
+}

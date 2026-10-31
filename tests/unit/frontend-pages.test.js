@@ -1345,11 +1345,14 @@ test('文档页：移动端目录使用侧边抽屉（与后台一致）', async
     assert.ok(html.includes(token), `文档页应包含后台式导航元素：${token}`);
   }
   assert.ok(!html.includes('class="site-header"'), '文档页应使用后台式导航壳，不再保留独立站点导航');
+  assert.ok(!html.includes('docs-topbar-actions'), '文档页右上角不再放导航按钮');
   assert.match(html, /aria-controls="docs-nav"/, '菜单按钮应关联 docs-nav');
   assert.ok(js.includes('initTocDrawer'), 'docs.js 应实现侧边抽屉');
   for (const token of ['docs-nav-open', '.doc-sidebar', '.docs-menu-toggle']) {
     assert.ok(css.includes(token), `style.css 应包含移动端抽屉样式：${token}`);
   }
+  assert.match(css, /\.doc-sidebar \.doc-nav\s*\{[\s\S]*?overflow-y:\s*auto/, '文档目录应在侧栏内部滚动');
+  assert.match(css, /\.doc-sidebar-footer\s*\{[\s\S]*?flex-shrink:\s*0/, '文档侧栏底部导航应固定');
 });
 test('首页：使用与后台一致的侧边栏/顶栏导航', async () => {
   const html = await readPage('index.html');
@@ -1364,5 +1367,6 @@ test('首页：使用与后台一致的侧边栏/顶栏导航', async () => {
     assert.ok(html.includes(token), `首页应使用后台式导航壳：${token}`);
   }
   assert.ok(!html.includes('class="site-header"'), '首页不应再使用独立横向站点导航');
+  assert.ok(!html.includes('docs-topbar-actions'), '首页右上角不再放导航按钮');
   assert.ok(html.includes('id="bind-form"'), '首页仍应包含扫码绑定表单');
 });
