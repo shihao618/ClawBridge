@@ -39,8 +39,6 @@
           <a class="doc-nav-link" href="#app-rules">接口应用</a>
           <a class="doc-nav-link doc-nav-sub" href="#scheduled-tasks">└ 定时通知</a>
           <a class="doc-nav-link" href="#error-codes">错误码</a>
-          <a class="doc-nav-link" href="#env-vars">环境变量</a>
-          <a class="doc-nav-link" href="#security">安全说明</a>
         </nav>
         <div class="doc-sidebar-footer">
           <a class="doc-nav-link" href="/"><span aria-hidden="true">🌐</span> 首页</a>
@@ -718,30 +716,6 @@ curl -X POST http://localhost:10380/api/v1/messages \
                   <td>健康检查 <code class="code-inline">{status, version, uptimeMs}</code>（也兼容 <code class="code-inline">/api/health</code>）</td>
                   <td>公开</td>
                 </tr>
-                <tr>
-                  <td><span class="method method-get">GET</span></td>
-                  <td><code class="endpoint-path">/</code></td>
-                  <td>首页（公开绑定页）</td>
-                  <td>公开</td>
-                </tr>
-                <tr>
-                  <td><span class="method method-get">GET</span></td>
-                  <td><code class="endpoint-path">/bind</code></td>
-                  <td>302 → <code class="endpoint-path">/</code>（旧绑定地址）</td>
-                  <td>公开</td>
-                </tr>
-                <tr>
-                  <td><span class="method method-get">GET</span></td>
-                  <td><code class="endpoint-path">/admin</code></td>
-                  <td>管理后台（未登录展示登录表单）</td>
-                  <td>公开（页面）</td>
-                </tr>
-                <tr>
-                  <td><span class="method method-get">GET</span></td>
-                  <td><code class="endpoint-path">/docs</code></td>
-                  <td>本 API 文档页</td>
-                  <td>公开</td>
-                </tr>
                 <tr id="endpoint-empty" hidden>
                   <td colspan="4" class="empty-cell"><span class="empty-text">没有匹配的端点</span></td>
                 </tr>
@@ -1129,27 +1103,7 @@ done</code></pre></div>
               <code class="code-inline">keepaliveEnabled</code>，便于外部系统感知。</li>
           </ul>
 
-          <h3 class="doc-subheading">4. 配置项（环境变量）</h3>
-          <div class="table-wrap">
-            <table class="doc-table">
-              <thead>
-                <tr>
-                  <th scope="col">变量</th>
-                  <th scope="col">默认</th>
-                  <th scope="col">说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td><code class="code-inline">KEEPALIVE_ENABLED</code></td><td><code class="code-inline">true</code></td><td>全局调度开关（false=完全不扫描，便于运维临时关闭）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_WINDOW_MS</code></td><td><code class="code-inline">86400000</code></td><td>会话窗口长度（24 小时）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_LEAD_MS</code></td><td><code class="code-inline">3600000</code></td><td>提前触发量（最后入站满 window-lead 时触发，默认提前 1 小时）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_TICK_MS</code></td><td><code class="code-inline">300000</code></td><td>扫描间隔（默认 5 分钟）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_TEXT</code></td><td><code class="code-inline">【消息通道保活】回复任意内容即可继续接收通知。</code></td><td>保活文本模板，支持 <code class="code-inline">{name}</code> 昵称占位</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_MAX_PER_TICK</code></td><td><code class="code-inline">100</code></td><td>单次扫描最多处理用户数（防御上限）</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
+          </section>
 
         <!-- 接口应用 -->
         <section id="app-rules" class="doc-section">
@@ -1170,10 +1124,6 @@ done</code></pre></div>
   → 解析响应（JSON 点路径或纯文本）→ 渲染回复模板（或兜底文案）
   → 写 app_rule_logs（脱敏预览）
   → 入队 outbox（source='rule'）→ 微信回复用户（复用限流 / -2 / -14 / context_token）</code></pre></div>
-          <p class="doc-note">
-            <code class="code-inline">APP_RULES_ENABLED=false</code> 时规则引擎不启动（不触发），但后台仍可管理规则。
-            规则默认不启用；一消息最多命中一条规则。
-          </p>
 
           <h3 class="doc-subheading">2. 触发范围与匹配</h3>
           <ul class="doc-list">
@@ -1527,25 +1477,6 @@ curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run 
 curl "http://localhost:10380/api/admin/scheduled-task-logs?taskId=task_xxxxxxxx&status=success&limit=20&offset=0" \
   -H "Cookie: cb_session=$ADMIN_COOKIE"</code></pre></div>
 
-          <h3 class="doc-subheading">8. 配置项（环境变量）</h3>
-          <div class="table-wrap">
-            <table class="doc-table">
-              <thead>
-                <tr>
-                  <th scope="col">变量</th>
-                  <th scope="col">默认</th>
-                  <th scope="col">说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td><code class="code-inline">SCHEDULER_ENABLED</code></td><td><code class="code-inline">true</code></td><td>调度器全局开关（false=不自动触发）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_TICK_MS</code></td><td><code class="code-inline">15000</code></td><td>扫描间隔</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_TIMEZONE</code></td><td><code class="code-inline">Asia/Shanghai</code></td><td>每日任务时区（IANA）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_MAX_RECIPIENTS</code></td><td><code class="code-inline">200</code></td><td>单任务单次最多收件人数</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_TIMEOUT_MS</code></td><td><code class="code-inline">8000</code></td><td>外部请求超时上限</td></tr>
-              </tbody>
-            </table>
-          </div>
           </section>
         </section>
 
@@ -1576,75 +1507,7 @@ curl "http://localhost:10380/api/admin/scheduled-task-logs?taskId=task_xxxxxxxx&
           </div>
         </section>
 
-        <!-- 环境变量 -->
-        <section id="env-vars" class="doc-section">
-          <h2 class="doc-heading">环境变量摘要</h2>
-          <p>Docker 部署时通过环境变量（或 <code class="code-inline">.env</code> 文件）配置，完整列表见部署说明：</p>
-          <div class="table-wrap">
-            <table class="doc-table">
-              <thead>
-                <tr>
-                  <th scope="col">变量</th>
-                  <th scope="col">默认值</th>
-                  <th scope="col">说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td><code class="code-inline">PORT</code> / <code class="code-inline">HOST</code></td><td><code class="code-inline">3000</code> / <code class="code-inline">0.0.0.0</code></td><td>HTTP 监听端口与地址</td></tr>
-                <tr><td><code class="code-inline">DATA_DIR</code></td><td><code class="code-inline">&lt;repo&gt;/data</code>（Docker <code class="code-inline">/app/data</code>）</td><td>SQLite 数据库与密钥目录</td></tr>
-                <tr><td><code class="code-inline">APP_SECRET</code></td><td>自动生成 <code class="code-inline">data/app-secret.key</code></td><td>加密主密钥（AES-256-GCM）</td></tr>
-                <tr><td><code class="code-inline">ADMIN_PASSWORD</code></td><td>不使用（数据库管理）</td><td>管理后台登录密码由数据库保存（首启自动生成并写 data/admin-password.txt），不再读取该环境变量</td></tr>
-                <tr><td><code class="code-inline">API_TOKEN</code></td><td>不使用（数据库管理）</td><td>推送 API Key 由数据库保存（首启自动生成并写 data/api-token.txt），不再读取该环境变量</td></tr>
-                <tr><td><code class="code-inline">PUBLIC_BASE_URL</code></td><td>空</td><td>公网访问地址（展示/文档用）</td></tr>
-                <tr><td><code class="code-inline">TRUST_PROXY</code> / <code class="code-inline">COOKIE_SECURE</code></td><td><code class="code-inline">false</code></td><td>反向代理场景 / 强制 Secure Cookie</td></tr>
-                <tr><td><code class="code-inline">LOG_LEVEL</code></td><td><code class="code-inline">info</code>（生产）/ <code class="code-inline">debug</code>（开发）</td><td>日志级别</td></tr>
-                <tr><td><code class="code-inline">ILINK_LOGIN_BASE_URL</code> / <code class="code-inline">ILINK_BASE_URL</code></td><td><code class="code-inline">https://ilinkai.weixin.qq.com</code></td><td>微信 ClawBot API 基址（演示/测试可指向 mock）</td></tr>
-                <tr><td><code class="code-inline">ILINK_APP_ID</code> / <code class="code-inline">ILINK_CLIENT_VERSION</code> / <code class="code-inline">CHANNEL_VERSION</code> / <code class="code-inline">BOT_AGENT</code> / <code class="code-inline">ILINK_BOT_TYPE</code></td><td><code class="code-inline">bot</code> / <code class="code-inline">132106</code> / <code class="code-inline">2.4.10</code> / <code class="code-inline">OpenClaw</code> / <code class="code-inline">3</code></td><td>协议常量覆盖</td></tr>
-                <tr><td><code class="code-inline">BINDING_TTL_MS</code> / <code class="code-inline">BINDING_MAX_REFRESHES</code> / <code class="code-inline">BINDING_MAX_ACTIVE</code> / <code class="code-inline">BINDING_IP_LIMIT_PER_HOUR</code></td><td><code class="code-inline">600000</code> / <code class="code-inline">3</code> / <code class="code-inline">50</code> / <code class="code-inline">20</code></td><td>绑定会话有效期 / 二维码刷新次数 / 并发会话上限 / 单 IP 每小时创建次数</td></tr>
-                <tr><td><code class="code-inline">RATE_LIMIT_MAX</code> / <code class="code-inline">RATE_LIMIT_WINDOW_MS</code></td><td><code class="code-inline">7</code> / <code class="code-inline">300000</code></td><td>每个微信账号的发送限流（条 / 窗口毫秒）</td></tr>
-                <tr><td><code class="code-inline">PUSH_MAX_ATTEMPTS</code> / <code class="code-inline">MAX_TEXT_LENGTH</code> / <code class="code-inline">API_RATE_LIMIT_PER_MINUTE</code></td><td><code class="code-inline">5</code> / <code class="code-inline">4000</code> / <code class="code-inline">60</code></td><td>投递重试次数 / 文本上限 / API Key 每分钟限流</td></tr>
-                <tr><td><code class="code-inline">MONITOR_MAX_ACCOUNTS</code> / <code class="code-inline">MONITOR_LONGPOLL_TIMEOUT_MS</code></td><td><code class="code-inline">200</code> / <code class="code-inline">35000</code></td><td>入站监控账号上限 / 长轮询超时</td></tr>
-                <tr><td><code class="code-inline">ADMIN_SESSION_TTL_MS</code></td><td><code class="code-inline">43200000</code></td><td>管理后台会话时长（12 小时）</td></tr>
-                <tr><td><code class="code-inline">MEDIA_MAX_BYTES</code></td><td><code class="code-inline">26214400</code></td><td>出站（上传/发送）单文件上限，默认 25MB</td></tr>
-                <tr><td><code class="code-inline">INBOUND_MEDIA_MAX_BYTES</code></td><td><code class="code-inline">104857600</code></td><td>入站媒体下载上限，默认 100MB</td></tr>
-                <tr><td><code class="code-inline">MEDIA_DIR</code></td><td><code class="code-inline">{DATA_DIR}/media</code></td><td>媒体文件目录（随命名卷持久化）</td></tr>
-                <tr><td><code class="code-inline">ILINK_CDN_BASE_URL</code></td><td><code class="code-inline">https://novac2c.cdn.weixin.qq.com/c2c</code></td><td>微信 CDN 基址（演示/测试可指向 mock）</td></tr>
-                <tr><td><code class="code-inline">MEDIA_UPLOAD_TIMEOUT_MS</code> / <code class="code-inline">MEDIA_DOWNLOAD_TIMEOUT_MS</code></td><td><code class="code-inline">60000</code></td><td>出站上传 / 入站下载超时（毫秒）</td></tr>
-                <tr><td><code class="code-inline">MEDIA_ALLOWED_IMAGE_MIME</code> / <code class="code-inline">MEDIA_ALLOWED_VIDEO_MIME</code></td><td>常见 image/video MIME</td><td>逗号分隔的图片/视频 MIME 白名单（未命中按普通文件发送）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_ENABLED</code></td><td><code class="code-inline">true</code></td><td>保活全局调度开关（false=完全不扫描）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_WINDOW_MS</code></td><td><code class="code-inline">86400000</code></td><td>会话窗口长度（24 小时）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_LEAD_MS</code></td><td><code class="code-inline">3600000</code></td><td>提前触发量（最后入站满 window-lead 时触发，默认提前 1 小时）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_TICK_MS</code></td><td><code class="code-inline">300000</code></td><td>扫描间隔（默认 5 分钟）</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_TEXT</code></td><td><code class="code-inline">【消息通道保活】回复任意内容即可继续接收通知。</code></td><td>保活文本模板，支持 <code class="code-inline">{name}</code> 占位</td></tr>
-                <tr><td><code class="code-inline">KEEPALIVE_MAX_PER_TICK</code></td><td><code class="code-inline">100</code></td><td>单次扫描最多处理的用户数（防御上限）</td></tr>
-                <tr><td><code class="code-inline">APP_RULES_ENABLED</code></td><td><code class="code-inline">true</code></td><td>接口应用规则引擎全局开关（false=不触发，后台仍可管理规则）</td></tr>
-                <tr><td><code class="code-inline">APP_RULE_TIMEOUT_MS</code></td><td><code class="code-inline">8000</code></td><td>单次外部接口超时上限（规则可配更小值）</td></tr>
-                <tr><td><code class="code-inline">APP_RULE_MAX_RESPONSE_BYTES</code></td><td><code class="code-inline">1048576</code></td><td>外部接口响应体大小上限（超过判失败）</td></tr>
-                <tr><td><code class="code-inline">APP_RULES_WORKER_CONCURRENCY</code></td><td><code class="code-inline">2</code></td><td>规则执行并发数</td></tr>
-                <tr><td><code class="code-inline">APP_RULES_ALLOWED_HOSTS</code></td><td>空</td><td>允许访问内网/本机的主机白名单（逗号分隔；为空时只允许公网地址）</td></tr>
-                <tr><td><code class="code-inline">APP_RULE_MAX_QUEUE</code></td><td><code class="code-inline">200</code></td><td>规则执行内存队列上限（超出丢弃并记日志）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_ENABLED</code></td><td><code class="code-inline">true</code></td><td>定时通知调度器全局开关（false=不自动触发，后台仍可管理/手动执行）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_TICK_MS</code></td><td><code class="code-inline">15000</code></td><td>调度器扫描间隔（毫秒）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_TIMEZONE</code></td><td><code class="code-inline">Asia/Shanghai</code></td><td>每日定时任务的时区（IANA）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_MAX_RECIPIENTS</code></td><td><code class="code-inline">200</code></td><td>单个任务单次最多收件人数（超出按用户 id 稳定排序截断）</td></tr>
-                <tr><td><code class="code-inline">SCHEDULER_TIMEOUT_MS</code></td><td><code class="code-inline">8000</code></td><td>定时任务外部请求超时上限（任务可配更小值）</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <!-- 安全说明 -->
-        <section id="security" class="doc-section">
-          <h2 class="doc-heading">安全说明</h2>
-          <ul class="doc-list">
-            <li>微信 <code class="code-inline">bot_token</code> / <code class="code-inline">context_token</code> 均以 AES-256-GCM 加密落库，任何接口与日志都不会返回明文。</li>
-            <li>绑定会话的 <code class="code-inline">token</code> 只在创建时返回一次，服务端仅保存其哈希。</li>
-            <li>管理后台 Cookie 为 HttpOnly + SameSite=Lax；写接口强制校验 <code class="code-inline">X-Requested-With: ClawBridge-Admin</code>。</li>
-            <li>绑定页公开但按 IP 限流；登录失败也会按 IP 限流。</li>
-            <li>响应头包含严格的 CSP、<code class="code-inline">X-Frame-Options: DENY</code>、<code class="code-inline">X-Content-Type-Options: nosniff</code> 与 <code class="code-inline">Referrer-Policy: no-referrer</code>。</li>
-          </ul>
-        </section>
-      </article>
+                </article>
     </main>
 
 <footer class="site-footer">

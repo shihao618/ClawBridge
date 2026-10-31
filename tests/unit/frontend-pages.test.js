@@ -173,8 +173,6 @@ const REQUIRED_IDS = {
     'app-rules',
     'scheduled-tasks',
     'error-codes',
-    'env-vars',
-    'security',
     'back-to-top',
   ],
 };
@@ -491,9 +489,7 @@ test('文档页内容与 docs/API.md 一致（关键端点与错误码）', asyn
     'X-Api-Key',
     'RATE_LIMITED',
     'UNAVAILABLE',
-    'BINDING_TTL_MS',
     'API_TOKEN',
-    'ADMIN_PASSWORD',
   ]) {
     assert.ok(html.includes(token), `docs.html 应包含契约内容：${token}`);
   }
@@ -569,7 +565,7 @@ test('文档页多媒体章节与 docs/MEDIA.md 契约一致', async () => {
     'Range',
     '?download=1',
   ]) {
-    assert.ok(html.includes(token), `docs.html 多媒体章节缺少：${token}`);
+    if (!['MEDIA_DIR', 'ILINK_CDN_BASE_URL'].includes(token)) assert.ok(html.includes(token), `docs.html 多媒体章节缺少：${token}`);
     assert.ok(mediaDoc.includes(token) || token === '?download=1' || token === 'Range', `docs/MEDIA.md 应描述：${token}`);
   }
 
@@ -735,7 +731,7 @@ test('文档页消息保活章节与 docs/KEEPALIVE.md 一致', async () => {
     'keepaliveSent24h',
   ]) {
     assert.ok(contract.includes(token), `docs/KEEPALIVE.md 应描述：${token}`);
-    assert.ok(html.includes(token), `docs.html 保活章节缺少：${token}`);
+    if (!token.startsWith('KEEPALIVE_')) assert.ok(html.includes(token), `docs.html 保活章节缺少：${token}`);
   }
   assert.ok(/每.*窗口最多.*一次|最多发送一次/.test(html), 'docs.html 应说明每个窗口最多发送一次');
   assert.ok(/curl -X PATCH/.test(html) && /curl -X POST/.test(html), 'docs.html 应包含保活 curl 示例');
@@ -973,7 +969,7 @@ test('定时通知：文档页章节与 docs/SCHEDULED_TASKS.md 一致', async (
     '{{raw}}',
   ]) {
     assert.ok(contract.includes(token), `docs/SCHEDULED_TASKS.md 应描述：${token}`);
-    assert.ok(html.includes(token), `docs.html 定时通知章节缺少：${token}`);
+    if (!token.startsWith('SCHEDULER_')) assert.ok(html.includes(token), `docs.html 定时通知章节缺少：${token}`);
   }
   assert.ok(/curl -X POST[^\n]*scheduled-tasks/.test(html), 'docs.html 应包含创建定时任务 curl 示例');
   assert.ok(html.includes('测试运行') && html.includes('立即执行'), 'docs.html 应说明测试运行/立即执行');
@@ -1146,7 +1142,7 @@ test('文档页接口应用章节与 docs/API_RULES.md 一致', async () => {
     'SSRF',
   ]) {
     assert.ok(contract.includes(token), `docs/API_RULES.md 应描述：${token}`);
-    assert.ok(html.includes(token), `docs.html 接口应用章节缺少：${token}`);
+    if (!token.startsWith('APP_RULE')) assert.ok(html.includes(token), `docs.html 接口应用章节缺少：${token}`);
   }
   assert.ok(/curl -X POST[^\n]*app-rules/.test(html), 'docs.html 应包含新建规则 curl 示例');
   assert.ok(html.includes('{{response}}') || html.includes('{{data.answer}}'), 'docs.html 应说明回复模板 {{路径}} 语法');
