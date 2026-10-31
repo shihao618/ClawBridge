@@ -154,7 +154,7 @@ function installShutdownHandlers(server) {
 async function main() {
   // 运行配置：DB 覆盖值在引擎启动前应用（docs/SETTINGS.md §2）
   settings.loadOverrides();
-  // 首次启动引导：DB 无管理密码/API Token 时自动生成并写入 data/ 文件（幂等；无 env 回退）
+  // 首次启动引导：DB 无管理密码/API Token 时自动生成并写入 data/ 文件（幂等）
   settings.bootstrapSecrets();
   // 旧数据卷的 media 目录可能是 0777，启动时统一收口为 0700。
   await media.ensureMediaDirs();

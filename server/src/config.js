@@ -1,9 +1,9 @@
 /**
  * ClawBridge 配置加载（唯一配置入口）。
  *
- * 所有配置来自环境变量；缺省值见下方 DEFAULTS。敏感值（APP_SECRET、
- * ADMIN_PASSWORD、API_TOKEN）在未通过环境变量提供时会自动生成并持久化到
- * dataDir（权限 0600），保证零配置也能安全启动、且重启后密钥不丢。
+ * 所有配置来自环境变量；缺省值见下方 DEFAULTS。APP_SECRET 未配置时会自动生成到
+ * dataDir/app-secret.key（0600）；管理密码与 API Token 只由 DB/bootstrap 管理，
+ * 不再读取 ADMIN_PASSWORD / API_TOKEN 环境变量。
  *
  * 注意：config 在模块加载时求值一次。测试请通过 spawn 子进程 + 环境变量注入，
  * 或在 import 前设置 process.env。
@@ -91,13 +91,10 @@ export function loadConfig(env = process.env) {
       name: 'APP_SECRET',
     });
 
-  // 机密（管理密码 / API Token）只由 DB 管理：env 仅用于测试/显式注入的初始化值，
-  // 生产环境不再读取/生成 data/admin-password.txt、data/api-token.txt（由 settings.bootstrapSecrets 管理）。
-  const adminPassword = envStr(env, 'ADMIN_PASSWORD', '');
-  const adminPasswordAuto = false;
-  const apiToken = envStr(env, 'API_TOKEN', '');
-  const apiTokenAuto = false;
-  const pushApiEnabled = !['off', 'disabled', 'none', 'false'].includes(apiToken.toLowerCase());
+  // 管理密码 / API Token 只由 DB 管理；config.secrets.apiToken 仅作为运行时缓存，
+  // 由 settings.bootstrapSecrets/loadOverrides/rotate 写入，不再读取旧 env。
+  const apiToken = '';
+  const pushApiEnabled = true;
 
   const publicBaseUrl = envStr(env, 'PUBLIC_BASE_URL', '').replace(/\/+$/, '');
   const trustProxy = envBool(env, 'TRUST_PROXY', false);
@@ -218,10 +215,7 @@ export function loadConfig(env = process.env) {
     logLevel: envStr(env, 'LOG_LEVEL', isProduction ? 'info' : 'debug'),
     secrets: {
       appSecret,
-      adminPassword,
-      adminPasswordAuto,
       apiToken,
-      apiTokenAuto,
     },
     pushApiEnabled,
     session: {

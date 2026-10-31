@@ -94,7 +94,6 @@ test('GET /api/admin/settings：401/200、10 分组、envOnly 仅 6 项、securi
   assert.equal(typeof result.json.security.sessionTtlMs, 'number');
 
   // 不得泄漏任何机密明文/哈希
-  assert.ok(!result.text.includes(config.secrets.adminPassword), '不得泄漏 ADMIN_PASSWORD');
   assert.ok(!result.text.includes(config.secrets.apiToken), '不得泄漏 API_TOKEN');
   assert.ok(!result.text.includes(config.secrets.appSecret), '不得泄漏 APP_SECRET');
   assert.ok(!/scrypt\$/.test(result.text), '不得泄漏密码哈希');

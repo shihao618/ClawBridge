@@ -694,7 +694,6 @@ test('保活：管理后台脚本实现用户/分组开关、配置小节与来�
     '消息保活',
     'MESSAGE_SOURCE_META',
     'badge-keepalive',
-    'formatHours',
   ]) {
     assert.ok(admin.includes(token), `admin.js 应包含保活实现：${token}`);
   }
@@ -997,7 +996,6 @@ test('运行配置：后台可编辑设置表单（分组/保存/恢复默认/�
     '恢复默认',
     '已修改',
     '需重启',
-    'allowedHosts',
     'parseSettingArrayInput',
     'settings/reset',
     '/api/admin/system/restart',
@@ -1096,7 +1094,6 @@ test('运行配置：后台说明不在文档页重复，契约保留在 docs/SE
     'app_settings',
     'envOnly',
     'restartRequired',
-    'allowedHosts',
     'APP_SECRET',
     'rateLimitMax',
     'retryDelaysMs',

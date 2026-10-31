@@ -1371,9 +1371,6 @@ export function createApp() {
       },
       pushApiEnabled: config.pushApiEnabled,
       apiTokenPreview: config.pushApiEnabled ? previewToken(config.secrets.apiToken) : '已禁用',
-      // 无 env 回退后管理密码只由 DB 管理（首次启动随机生成），不存在“默认密码”状态
-      adminPasswordIsDefault: false,
-      adminPasswordSource: 'db',
       dataDir: config.dataDir,
       media: { ...media.getMediaLimits(), dir: config.media.dir },
       keepalive: {
@@ -1429,7 +1426,7 @@ export function createApp() {
       throw badRequest('currentPassword 必须是非空字符串');
     }
     const result = settings.resetAdminPassword(body.currentPassword);
-    log.info('管理密码已恢复环境变量默认', { source: result.adminPasswordSource });
+    log.info('管理密码已重置为随机密码', { source: result.adminPasswordSource });
     res.json(result);
   });
 

@@ -240,7 +240,6 @@ GET /api/admin/config
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
   "apiTokenPreview": "claw…c9f2",      // 仅前 4 + 后 4
-  "adminPasswordIsDefault": false,
   "dataDir": "/app/data"
 }
 ```

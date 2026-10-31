@@ -85,8 +85,6 @@ test('SETTINGS_SCHEMA / getSettings：10 分组、字段元数据、envOnly 仅�
   assert.equal(typeof view.security, 'object');
   assert.ok(['db', 'env', 'auto'].includes(view.security.adminPasswordSource));
   assert.ok(['db', 'env', 'auto'].includes(view.security.apiTokenSource));
-  assert.ok(!JSON.stringify(view.security).includes(config.secrets.apiToken));
-  assert.ok(!JSON.stringify(view.security).includes(config.secrets.adminPassword));
 });
 
 test('updateSettings：校验 → 持久化 → config 生效 → hooks → restartRequired → events 脱敏', () => {

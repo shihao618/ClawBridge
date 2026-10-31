@@ -44,7 +44,7 @@ Express (api.js) ── 静态页面(web/) + /health + /api/...
 
 进程生命周期（`index.js`）：
 
-1. 加载 config/logger → 初始化 DB（`db.js` 建表/迁移）；
+1. 加载 config/logger → 初始化 DB（`db.js` 建表/校验当前 schema 版本）；
 2. 启动 HTTP server（0.0.0.0:PORT）；
 3. 启动 dispatcher worker；
 4. 为所有 `status='active'` 且 `pause_until<=now` 的用户启动入站监控（按 `MONITOR_MAX_ACCOUNTS` 限并发，
@@ -136,10 +136,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   `crypto.decryptSecretOrNull()` 读取；任何 API/日志不得返回明文 token。
 - 时间统一为毫秒整数。
 - 开启 WAL；`db.js` 内设置 `busy_timeout`（如 5000）。单进程写，无需连接池。
-- 迁移：`meta` 表存 `schema_version`；当前版本 9（v2 = 多媒体扩展见 §12；v3 = 用户分组 + 入站消息
-  API 见 §13；v4 = 24h 会话保活见 §14；v5 = 接口应用见 §15；v6 = 分组级保活开关见 §14；
-  v7 = 定时通知见 §16；v8 = 运行配置后台可改见 §17；v9 = 定时通知每日生效时间段见 §16），用
-  `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN` 幂等迁移。
+- schema：`meta` 表存 `schema_version`，当前版本 9；**不再支持旧版本迁移**。启动时若发现非当前
+  版本（且非全新库）直接失败，要求备份后使用新版空库；当前 schema 使用 `CREATE TABLE IF NOT EXISTS` 建表。
 
 
 ## 4. 绑定会话（binding.js，内存态）

@@ -66,10 +66,7 @@ test('config: APP_SECRET 自动生成并持久化；管理密码/API Token 不�
   const tmp = path.join(tmpDir, 'cfg-auto');
   const cfgA = loadConfig({ DATA_DIR: tmp });
   assert.ok(cfgA.secrets.appSecret.length >= 32);
-  assert.equal(cfgA.secrets.adminPassword, '');
   assert.equal(cfgA.secrets.apiToken, '');
-  assert.equal(cfgA.secrets.adminPasswordAuto, false);
-  assert.equal(cfgA.secrets.apiTokenAuto, false);
   const secretFile = path.join(tmp, 'app-secret.key');
   await fs.stat(secretFile);
   // 机密只由 settings.bootstrapSecrets()（DB）管理，config 不再生成这两个文件

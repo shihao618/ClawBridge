@@ -70,7 +70,6 @@ const MEDIA_KIND_META = {
 };
 
 /** 后端未返回 media 限制时的保守提示值（仅用于文案，实际以服务端校验为准）。 */
-const FALLBACK_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 
 /** 分组名称/描述长度限制（docs/GROUPS_AND_INBOUND.md §3.1）。 */
 const GROUP_NAME_MAX = 40;
@@ -3711,10 +3710,8 @@ function openSendMessageModal(target) {
     ? `/api/admin/groups/${encodeURIComponent(group.id)}/messages`
     : `/api/admin/users/${encodeURIComponent(user.id)}/messages`;
   const mediaLimits = state.mediaLimits && typeof state.mediaLimits === 'object' ? state.mediaLimits : null;
-  const maxBytes = Number(mediaLimits && mediaLimits.maxBytes) > 0
-    ? Number(mediaLimits.maxBytes)
-    : FALLBACK_MEDIA_MAX_BYTES;
-  const maxBytesKnown = Boolean(mediaLimits && Number(mediaLimits.maxBytes) > 0);
+  const maxBytes = Number(mediaLimits && mediaLimits.maxBytes) > 0 ? Number(mediaLimits.maxBytes) : 0;
+  const maxBytesKnown = maxBytes > 0;
 
   const textarea = el('textarea', {
     id: 'message-text',
@@ -3742,9 +3739,7 @@ function openSendMessageModal(target) {
   const limitHint = el('span', {
     id: 'media-limit-hint',
     class: 'form-hint',
-    text: `支持图片 / 视频 / 任意文件，单个不超过 ${formatFileSize(maxBytes)}${
-      maxBytesKnown ? '' : '（以服务端实际配置为准）'
-    }`,
+    text: `支持图片 / 视频 / 任意文件，单个不超过 ${maxBytesKnown ? formatFileSize(maxBytes) : '服务端限制'}`,
   });
   const pickerRow = el('div', { class: 'media-picker' }, pickButton, fileInput, limitHint);
 
@@ -3865,7 +3860,7 @@ function openSendMessageModal(target) {
       resetMediaSelection();
       return;
     }
-    if (file.size > maxBytes) {
+    if (maxBytesKnown && file.size > maxBytes) {
       toast(`附件不能超过 ${formatFileSize(maxBytes)}（当前 ${formatFileSize(file.size)}）`, 'warning', 5200);
       resetMediaSelection();
       return;
@@ -3951,7 +3946,7 @@ function openSendMessageModal(target) {
             toast(`消息不能超过 ${MAX_TEXT_LENGTH} 个字符`, 'warning');
             return;
           }
-          if (selectedFile && selectedFile.size > maxBytes) {
+          if (selectedFile && maxBytesKnown && selectedFile.size > maxBytes) {
             toast(`附件不能超过 ${formatFileSize(maxBytes)}`, 'warning');
             return;
           }
@@ -4501,9 +4496,7 @@ async function loadConfig() {
   state.config = data;
   state.mediaLimits =
     data && data.media && typeof data.media === 'object' ? data.media : null;
-  // 设置接口可用时，只读区块仅展示服务/版本信息；否则回退到只读配置列表
-  if (state.settings.available) renderServiceInfo(data);
-  else renderConfig(data);
+  renderServiceInfo(data);
 }
 
 /* ------------------------------------------------------------------ */
@@ -4627,8 +4620,7 @@ async function loadSettings() {
     setHidden(els.settingsSavebar, true);
     if (els.securityCard) setHidden(els.securityCard, true);
     els.settingsUnavailable.hidden = false;
-    els.settingsUnavailable.textContent = `加载运行配置失败：${error && error.message ? error.message : '未知错误'}；下方仅展示只读配置。`;
-    renderConfig(state.config);
+    els.settingsUnavailable.textContent = `加载运行配置失败：${error && error.message ? error.message : '未知错误'}。`;
     toastError(error, '加载运行配置失败');
   }
 }
@@ -5076,12 +5068,6 @@ function renderServiceInfo(config) {
     { tone: data.pushApiEnabled === false ? 'warning' : 'success' },
   );
   appendKv(els.configList, 'API Key 预览', data.apiTokenPreview || '（推送 API 未启用）');
-  appendKv(
-    els.configList,
-    '管理员密码为默认值',
-    data.adminPasswordIsDefault === true ? '是（请修改 ADMIN_PASSWORD）' : '否',
-    { tone: data.adminPasswordIsDefault === true ? 'warning' : null },
-  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -5353,162 +5339,6 @@ async function copyTextToClipboard(text) {
     return false;
   }
 }
-
-function renderConfig(config) {
-  const data = config && typeof config === 'object' ? config : {};
-  const rateLimit = data.rateLimit && typeof data.rateLimit === 'object' ? data.rateLimit : {};
-  const binding = data.binding && typeof data.binding === 'object' ? data.binding : {};
-  const media = data.media && typeof data.media === 'object' ? data.media : null;
-  const keepalive = data.keepalive && typeof data.keepalive === 'object' ? data.keepalive : null;
-  const appRules = data.appRules && typeof data.appRules === 'object' ? data.appRules : null;
-  clearNode(els.configList);
-  appendKv(els.configList, '服务版本', data.version);
-  appendKv(
-    els.configList,
-    '推送 API',
-    data.pushApiEnabled === true ? '已启用' : data.pushApiEnabled === false ? '已禁用' : null,
-    { tone: data.pushApiEnabled === false ? 'warning' : 'success' },
-  );
-  appendKv(els.configList, 'API Key 预览', data.apiTokenPreview || '（推送 API 未启用）');
-  appendKv(
-    els.configList,
-    '发送限流',
-    rateLimit.max !== undefined && rateLimit.max !== null
-      ? `${formatNumber(rateLimit.max)} 条 / ${formatDuration(rateLimit.windowMs)}`
-      : null,
-  );
-  appendKv(
-    els.configList,
-    '绑定会话有效期',
-    binding.ttlMs !== undefined && binding.ttlMs !== null ? formatDuration(binding.ttlMs) : null,
-  );
-  appendKv(
-    els.configList,
-    '二维码最大刷新次数',
-    binding.maxRefreshes !== undefined && binding.maxRefreshes !== null
-      ? String(binding.maxRefreshes)
-      : null,
-  );
-  appendKv(
-    els.configList,
-    '最大并发绑定会话',
-    binding.maxActiveSessions !== undefined && binding.maxActiveSessions !== null
-      ? formatNumber(binding.maxActiveSessions)
-      : null,
-  );
-  appendKv(
-    els.configList,
-    '管理员密码为默认值',
-    data.adminPasswordIsDefault === true ? '是（请立即修改 ADMIN_PASSWORD）' : '否',
-    { tone: data.adminPasswordIsDefault === true ? 'warning' : null },
-  );
-  if (media) {
-    els.configList.append(el('h3', { class: 'config-subtitle', text: '多媒体' }));
-    appendKv(
-      els.configList,
-      '媒体上传上限',
-      Number.isFinite(Number(media.maxBytes)) ? formatFileSize(Number(media.maxBytes)) : null,
-    );
-    appendKv(
-      els.configList,
-      '入站媒体上限',
-      Number.isFinite(Number(media.inboundMaxBytes)) ? formatFileSize(Number(media.inboundMaxBytes)) : null,
-    );
-    appendKv(els.configList, '允许的图片类型', summarizeMediaTypes(media.allowedImage, 'image/*'));
-    appendKv(els.configList, '允许的视频类型', summarizeMediaTypes(media.allowedVideo, 'video/*'));
-    appendKv(els.configList, '媒体目录', media.dir);
-  } else {
-    appendKv(els.configList, '媒体上传', '未启用（后端未返回 media 配置）', { tone: 'warning' });
-  }
-  if (keepalive) {
-    els.configList.append(el('h3', { class: 'config-subtitle', text: '消息保活' }));
-    appendKv(
-      els.configList,
-      '保活全局开关',
-      keepalive.enabled === true ? '已启用' : '已禁用',
-      { tone: keepalive.enabled === true ? 'success' : 'warning' },
-    );
-    appendKv(els.configList, '保活窗口（小时）', formatHours(keepalive.windowMs));
-    appendKv(els.configList, '保活提前量（小时）', formatHours(keepalive.leadMs));
-    appendKv(
-      els.configList,
-      '扫描间隔',
-      Number.isFinite(Number(keepalive.tickMs)) ? formatDuration(Number(keepalive.tickMs)) : null,
-    );
-    appendKv(
-      els.configList,
-      '单次扫描上限',
-      Number.isFinite(Number(keepalive.maxPerTick)) ? formatNumber(Number(keepalive.maxPerTick)) : null,
-    );
-    appendKv(els.configList, '保活文本', keepalive.text);
-    els.configList.append(
-      el('p', {
-        class: 'config-note',
-        text: '消息保活仅对开启保活的用户生效；每个 24h 会话窗口最多自动发送一次，用户回复后重新计时。窗口已过期或无入站记录的用户不会发送。',
-      }),
-    );
-  } else {
-    appendKv(els.configList, '消息保活', '未启用（后端未返回 keepalive 配置）', { tone: 'warning' });
-  }
-  if (appRules) {
-    els.configList.append(el('h3', { class: 'config-subtitle', text: '接口应用' }));
-    appendKv(
-      els.configList,
-      '规则引擎',
-      appRules.enabled === true ? '已启用' : '已禁用',
-      { tone: appRules.enabled === true ? 'success' : 'warning' },
-    );
-    appendKv(
-      els.configList,
-      '单次请求超时上限',
-      Number.isFinite(Number(appRules.timeoutMs)) ? formatDuration(Number(appRules.timeoutMs)) : null,
-    );
-    appendKv(
-      els.configList,
-      '响应体大小上限',
-      Number.isFinite(Number(appRules.maxResponseBytes)) ? formatFileSize(Number(appRules.maxResponseBytes)) : null,
-    );
-    appendKv(
-      els.configList,
-      '执行并发数',
-      Number.isFinite(Number(appRules.workerConcurrency)) ? formatNumber(Number(appRules.workerConcurrency)) : null,
-    );
-    appendKv(
-      els.configList,
-      '内网主机白名单',
-      Array.isArray(appRules.allowedHosts) && appRules.allowedHosts.length > 0
-        ? `${appRules.allowedHosts.length} 个：${appRules.allowedHosts.slice(0, 3).join('、')}${appRules.allowedHosts.length > 3 ? '…' : ''}`
-        : '空（仅允许公网地址）',
-    );
-    els.configList.append(
-      el('p', {
-        class: 'config-note',
-        text: '外部接口默认拒绝访问内网/本机地址（SSRF 防护）；需要访问内网接口时把主机加入 APP_RULES_ALLOWED_HOSTS 白名单。',
-      }),
-    );
-  }
-  appendKv(els.configList, '数据目录', data.dataDir);
-}
-
-/** 毫秒 → 小时展示（保活窗口/提前量）。 */
-function formatHours(ms) {
-  const value = Number(ms);
-  if (!Number.isFinite(value) || value < 0) return '—';
-  const hours = value / 3600000;
-  const digits = hours >= 10 ? 1 : 2;
-  return `${Number(hours.toFixed(digits))} 小时`;
-}
-
-/** 媒体 MIME 白名单摘要（避免运行配置里出现超长列表）。 */
-function summarizeMediaTypes(types, fallback) {
-  if (!Array.isArray(types) || types.length === 0) return fallback || '—';
-  const head = types.slice(0, 4).join('、');
-  return types.length > 4 ? `${head} 等 ${types.length} 种` : head;
-}
-
-/* ------------------------------------------------------------------ */
-/* 渲染小工具                                                          */
-/* ------------------------------------------------------------------ */
 
 function appendKv(container, label, value, options = {}) {
   const text = value === undefined || value === null || value === '' ? '—' : String(value);

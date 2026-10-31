@@ -426,7 +426,7 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 > 媒体、绑定、iLink 地址/超时、监听代理、日志级别、会话 TTL 等均可在管理后台「运行配置」中修改，
 > 保存到数据库（优先于 `.env`，尽量即时生效）；**管理密码与 API Token 也只由 DB 管理**：
 > 首次启动自动生成随机值并写入数据卷 `/app/data/admin-password.txt` / `api-token.txt`，之后可后台修改/重置；
-> `.env` 中已不再读取 `ADMIN_PASSWORD`/`API_TOKEN`。
+> 管理密码与 API Token 只由 DB 管理（首次启动自动生成到 data/ 文件，后台可重置）。
 > `.env` 仅保留启动前必须确定的项：`APP_SECRET`、`DATA_DIR`、`MEDIA_DIR`、`PORT`、`HOST`、`NODE_ENV`
 > 以及 `docker-compose` 部署变量。详见 [`docs/SETTINGS.md`](docs/SETTINGS.md) §8。
 
@@ -526,7 +526,7 @@ Dockerfile · docker-compose*.yml · .env.example
 
 | 验证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、DB 迁移、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、移动端顶栏布局） | `npm run test:unit` | 262 项通过 |
+| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、schema 版本校验、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、移动端顶栏布局） | `npm run test:unit` | 251 项通过 |
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
 | mock 自身协议自测 | `node mock/selftest.mjs` | 25 项通过 |
 | 浏览器真实交互（Edge headless + CDP，绑定页/管理后台菜单路由与移动抽屉/文档页/媒体上传预览/分组/保活/分组保活继承/接口应用/定时通知/运行配置设置（含安全卡片）/重启容器 UI，CSP 与控制台异常检查） | 见交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项通过 |

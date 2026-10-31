@@ -418,7 +418,7 @@ export function getEffectiveConfig() {
   return result;
 }
 
-/** 机密状态（无 env 回退；来源恒为 DB，永不返回哈希/Token 明文）。 */
+/** 机密状态（来源恒为 DB，永不返回哈希/Token 明文）。 */
 export function getSecurityState() {
   return {
     adminPasswordSource: 'db',
@@ -478,7 +478,6 @@ function loadSecretOverrides(rows) {
         const token = typeof parsed === 'string' ? decryptSecretOrNull(parsed) : null;
         if (token) {
           config.secrets.apiToken = token;
-          config.secrets.apiTokenAuto = false;
           apiTokenEncPresent = true;
         } else {
           log.warn('忽略无法解密/非法的 API Token 覆盖值');
@@ -491,7 +490,7 @@ function loadSecretOverrides(rows) {
 }
 
 // ---------------------------------------------------------------------------
-// 首次启动引导（仅 DB 管理机密；无 env 回退）
+// 首次启动引导（仅 DB 管理机密）
 // ---------------------------------------------------------------------------
 const ADMIN_PASSWORD_FILE = 'admin-password.txt';
 const API_TOKEN_FILE = 'api-token.txt';
@@ -556,7 +555,6 @@ export function bootstrapSecrets() {
     upsertSetting('security.apiTokenEnc', JSON.stringify(encryptSecret(token)));
     apiTokenEncPresent = true;
     config.secrets.apiToken = token;
-    config.secrets.apiTokenAuto = false;
     upsertSetting('security.pushApiEnabled', 'true');
     config.pushApiEnabled = true;
     result.apiTokenGenerated = true;
@@ -649,7 +647,7 @@ export function rotateApiToken() {
   upsertSetting('security.apiTokenEnc', JSON.stringify(encryptSecret(token)));
   apiTokenEncPresent = true;
   config.secrets.apiToken = token;
-  config.secrets.apiTokenAuto = false;
+  
   upsertSetting('security.pushApiEnabled', 'true');
   config.pushApiEnabled = true;
   writeSecretFile(API_TOKEN_FILE, token);
@@ -672,7 +670,7 @@ export function resetApiToken() {
   upsertSetting('security.apiTokenEnc', JSON.stringify(encryptSecret(token)));
   apiTokenEncPresent = true;
   config.secrets.apiToken = token;
-  config.secrets.apiTokenAuto = false;
+  
   upsertSetting('security.pushApiEnabled', 'true');
   config.pushApiEnabled = true;
   writeSecretFile(API_TOKEN_FILE, token);

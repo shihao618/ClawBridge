@@ -17,14 +17,7 @@ import { logger } from './logger.js';
 
 const log = logger.child({ mod: 'db' });
 
-/** 当前 schema 版本（结构变化时 +1 并写迁移分支）；
- *  v2 = 多媒体 attachments/outbox 扩展；v3 = 用户分组 groups/user_groups；
- *  v4 = 24h 会话保活 users.keepalive_enabled/keepalive_last_sent_at；
- *  v5 = 接口应用 app_rules/app_rule_logs；
- *  v6 = 分组级保活开关 groups.keepalive_enabled（新成员继承）；
- *  v7 = 定时通知 scheduled_tasks/scheduled_task_logs；
- *  v8 = 运行配置 app_settings（后台可改，docs/SETTINGS.md §1）；
- *  v9 = 定时通知 interval 每日生效时间段 scheduled_tasks.window_start/window_end）。 */
+/** 当前 schema 版本；不再提供任何旧版本迁移，启动时检测到旧版本会直接失败。 */
 export const SCHEMA_VERSION = 9;
 
 const SCHEMA_SQL = `
@@ -256,80 +249,6 @@ const statementCache = new Map();
 let transactionDepth = 0;
 let savepointSeq = 0;
 
-/** 读取表当前列名（additive migration 检测用）。 */
-function tableColumns(instance, table) {
-  return new Set(instance.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name));
-}
-
-/**
- * additive migration：outbox 新增媒体列；只在列缺失时 ALTER，保留既有数据且可重复执行。
- * @returns {string[]} 本次实际执行的迁移项
- */
-function migrateOutboxMediaColumns(instance) {
-  const applied = [];
-  const columns = tableColumns(instance, 'outbox');
-  if (!columns.has('media_id')) {
-    instance.exec('ALTER TABLE outbox ADD COLUMN media_id TEXT');
-    applied.push('outbox.media_id');
-  }
-  if (!columns.has('caption_sent_at')) {
-    instance.exec('ALTER TABLE outbox ADD COLUMN caption_sent_at INTEGER NOT NULL DEFAULT 0');
-    applied.push('outbox.caption_sent_at');
-  }
-  return applied;
-}
-
-/**
- * additive migration：users 新增保活列（schema v4）；只在列缺失时 ALTER，保留既有数据且可重复执行。
- * @returns {string[]} 本次实际执行的迁移项
- */
-function migrateUserKeepaliveColumns(instance) {
-  const applied = [];
-  const columns = tableColumns(instance, 'users');
-  if (!columns.has('keepalive_enabled')) {
-    instance.exec('ALTER TABLE users ADD COLUMN keepalive_enabled INTEGER NOT NULL DEFAULT 0');
-    applied.push('users.keepalive_enabled');
-  }
-  if (!columns.has('keepalive_last_sent_at')) {
-    instance.exec('ALTER TABLE users ADD COLUMN keepalive_last_sent_at INTEGER NOT NULL DEFAULT 0');
-    applied.push('users.keepalive_last_sent_at');
-  }
-  return applied;
-}
-
-/**
- * additive migration：groups 新增分组级保活列（schema v6）；只在列缺失时 ALTER，保留既有数据且可重复执行。
- * @returns {string[]} 本次实际执行的迁移项
- */
-function migrateGroupKeepaliveColumn(instance) {
-  const applied = [];
-  const columns = tableColumns(instance, 'groups');
-  if (!columns.has('keepalive_enabled')) {
-    instance.exec('ALTER TABLE groups ADD COLUMN keepalive_enabled INTEGER NOT NULL DEFAULT 0');
-    applied.push('groups.keepalive_enabled');
-  }
-  return applied;
-}
-
-/**
- * additive migration：scheduled_tasks 新增每日生效时间段列（schema v9）；
- * 只在列缺失时 ALTER，保留既有数据且可重复执行。
- * @returns {string[]} 本次实际执行的迁移项
- */
-function migrateScheduledTaskWindowColumns(instance) {
-  const applied = [];
-  const columns = tableColumns(instance, 'scheduled_tasks');
-  if (!columns.has('window_start')) {
-    instance.exec("ALTER TABLE scheduled_tasks ADD COLUMN window_start TEXT NOT NULL DEFAULT ''");
-    applied.push('scheduled_tasks.window_start');
-  }
-  if (!columns.has('window_end')) {
-    instance.exec("ALTER TABLE scheduled_tasks ADD COLUMN window_end TEXT NOT NULL DEFAULT ''");
-    applied.push('scheduled_tasks.window_end');
-  }
-  return applied;
-}
-
 /** 读取当前 schema_version（meta 表不存在/无记录时返回 0）。 */
 function readSchemaVersion(instance) {
   try {
@@ -346,32 +265,32 @@ function readSchemaVersion(instance) {
  * @param {string} [dbPath]
  * @returns {import('node:sqlite').DatabaseSync}
  */
+/**
+ * 打开/初始化当前版本数据库。
+ * 不兼容旧版本：检测到旧 schema_version 直接抛错，绝不执行 ALTER 迁移。
+ * @param {string} [dbPath]
+ * @returns {import('node:sqlite').DatabaseSync}
+ */
 export function openDatabase(dbPath = config.dbPath) {
-  // 防御性 umask（QA minor-4）：SQLite/WAL 等新建文件默认 0600，避免同容器低权进程读取 DB。
   process.umask(0o077);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const instance = new DatabaseSync(dbPath);
   try {
-    // WAL 提升并发读性能；busy_timeout 避免偶发 SQLITE_BUSY。
     instance.exec('PRAGMA journal_mode = WAL;');
     instance.exec('PRAGMA foreign_keys = ON;');
     instance.exec('PRAGMA busy_timeout = 5000;');
-    instance.exec(SCHEMA_SQL);
     const previousVersion = readSchemaVersion(instance);
-    const migrations = [
-      ...migrateOutboxMediaColumns(instance),
-      ...migrateUserKeepaliveColumns(instance),
-      ...migrateGroupKeepaliveColumn(instance),
-      ...migrateScheduledTaskWindowColumns(instance),
-    ];
+    if (previousVersion !== 0 && previousVersion !== SCHEMA_VERSION) {
+      throw new Error('数据库 schema v' + previousVersion + ' 不再兼容（当前 v' + SCHEMA_VERSION + '）；旧版本迁移已移除，请备份后使用新版空库重建');
+    }
+    instance.exec(SCHEMA_SQL);
     instance
       .prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
       .run(String(SCHEMA_VERSION));
-    log.info('数据库已初始化', {
+    log.info('数据库已初始化（当前 schema，无旧版迁移）', {
       dbPath,
       fromSchemaVersion: previousVersion,
       schemaVersion: SCHEMA_VERSION,
-      migrations: migrations.length > 0 ? migrations : 'none',
     });
     return instance;
   } catch (err) {
@@ -383,7 +302,6 @@ export function openDatabase(dbPath = config.dbPath) {
     throw err;
   }
 }
-
 database = openDatabase();
 
 // 旧数据卷可能以 0777 创建（历史镜像/volume），启动时收口权限；

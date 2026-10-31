@@ -84,7 +84,7 @@ test('管理后台鉴权：未登录 401、错误密码 401、登录成功、CSR
   const configRes = await e2e.adminGet('/api/admin/config');
   assert.equal(configRes.status, 200);
   assert.equal(configRes.json.pushApiEnabled, true);
-  assert.equal(configRes.json.adminPasswordIsDefault, false);
+  assert.ok(!('adminPasswordIsDefault' in configRes.json), '旧版默认密码字段应已移除');
 
   // 管理写接口必须带 X-Requested-With（防 CSRF）
   const noCsrf = await e2e.adminRequest('POST', '/api/admin/broadcast', { body: { text: 'noop' } });

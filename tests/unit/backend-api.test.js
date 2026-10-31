@@ -224,7 +224,7 @@ test('管理后台：概览 / 用户 / 消息 / 配置字段符合契约且不�
   assert.equal(config.json.pushApiEnabled, true);
   assert.equal(typeof config.json.apiTokenPreview, 'string');
   assert.ok(!config.text.includes('api-test-token-123456'), 'config 响应不得包含 API Token 明文');
-  assert.equal(typeof config.json.adminPasswordIsDefault, 'boolean');
+  assert.ok(!('adminPasswordIsDefault' in config.json), '旧版默认密码字段应已移除');
   assert.equal(config.json.dataDir, dataDir);
   assert.equal(config.json.binding.maxRefreshes, 3);
 

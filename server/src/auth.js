@@ -5,7 +5,7 @@
  *   所有写接口额外校验 `X-Requested-With: ClawBridge-Admin`（防 CSRF）；
  *   登录失败按 IP 滑动窗口限流（10 次 / 15 分钟）。
  * - 对外推送 API：Authorization: Bearer 或 X-Api-Key；crypto.timingSafeEqualStr 常量时间比对；
- *   按 Key 限流（默认 60 次/分钟）；API_TOKEN=off 时接口整体禁用。
+ *   按 Key 限流（默认 60 次/分钟）；后台关闭推送 API 时接口整体禁用。
  * - 绑定页：按 IP 的创建会话限流（由 binding.js 使用 SlidingWindowLimiter）。
  */
 import { config } from './config.js';
@@ -68,7 +68,7 @@ export function readCookie(req, name = config.session.cookieName) {
 
 /**
  * 校验管理员密码：只校验 DB scrypt 哈希（无记录返回 false）。
- * env/自动生成密码不再作为回退（机密仅由 DB load/bootstrap/rotate 管理）。
+ * 管理密码仅由 DB 的 scrypt 哈希校验（bootstrap/rotate 维护）。
  */
 export function verifyAdminPassword(password) {
   if (typeof password !== 'string' || password.length === 0) return false;
@@ -171,10 +171,10 @@ export function isApiKeyValid(token) {
   return timingSafeEqualStr(token, config.secrets.apiToken);
 }
 
-/** 中间件：推送 API Key 鉴权 + 按 Key 限流。API_TOKEN=off 时视为接口不存在。 */
+/** 中间件：推送 API Key 鉴权 + 按 Key 限流。后台关闭推送 API 时视为接口不存在。 */
 export function requireApiKey(req, res, next) {
   try {
-    if (!config.pushApiEnabled) throw notFound('推送 API 已禁用（API_TOKEN=off）');
+    if (!config.pushApiEnabled) throw notFound('推送 API 已禁用');
     syncApiKeyLimiter();
     const token = extractApiKey(req);
     if (!isApiKeyValid(token)) throw unauthorized('API Key 无效；请使用 Authorization: Bearer <API_TOKEN> 或 X-Api-Key');
