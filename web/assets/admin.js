@@ -2773,20 +2773,36 @@ async function openScheduleEditor(task = null) {
     placeholder: 'https://api.example.com/weather?city=北京（支持 {now}/{date}/{time}/{taskName}）',
     value: request.url || '',
   });
-  const headerMask = headerNames.length > 0
-    ? el('p', {
-        class: 'form-hint schedule-header-mask',
-        text: `现有 Header（值已加密不回显）：${headerNames.map((name) => `${name}: ••••••`).join('；')}`,
-      })
-    : null;
+  // 与规则编辑器保持一致：已保存 Header 只显示掩码；「重设 Header」需重新输入完整 Name: Value。
+  const headerNamesText = headerNames.map((name) => `${name}: ••••••`).join('\n');
   const headersTextarea = el('textarea', {
     id: 'schedule-headers',
     class: 'textarea',
     rows: '3',
-    placeholder: '每行一个 Header，格式：Name: Value（不传则保留原 Header）',
-    value: headerNames.map((name) => `${name}: `).join('\n'),
+    placeholder: '每行一个 Header，格式：Name: Value\n例如：Authorization: Bearer xxx',
+    value: headerNamesText,
   });
   let headerModeValue = isEdit && headerNames.length > 0 ? 'keep' : 'replace';
+  const headerHintNode = el('p', { class: 'form-hint' });
+  function syncHeaderHint() {
+    let hint = '每行一个 Header，格式 Name: Value；值会加密保存，保存后不再回显。';
+    if (isEdit && headerNames.length > 0) {
+      if (headerModeValue === 'keep') {
+        hint = '已保存的 Header 值不会回显（AES 加密存储）；如需修改，请选择「重设 Header」并重新输入完整的 Name: Value。';
+      } else if (headerModeValue === 'replace') {
+        hint = '请按 Name: Value 每行一个重新输入；保存后将全量替换该任务现有 Header。';
+      } else {
+        hint = '保存后将清空该任务的所有 Header。';
+      }
+    }
+    headerHintNode.textContent = hint;
+  }
+  function syncHeaderModeUi() {
+    headersTextarea.disabled = headerModeValue !== 'replace';
+    if (headerModeValue === 'keep') headersTextarea.value = headerNamesText;
+    else headersTextarea.value = '';
+    syncHeaderHint();
+  }
   const headerModeRadios = ['keep', 'replace', 'clear'].map((mode) => {
     const label = mode === 'keep' ? '保留现有 Header' : mode === 'replace' ? '重设 Header' : '清空 Header';
     return el(
@@ -2799,12 +2815,10 @@ async function openScheduleEditor(task = null) {
   for (const label of headerModeRadios) {
     label.querySelector('input').addEventListener('change', (event) => {
       headerModeValue = event.target.value;
-      headersTextarea.disabled = headerModeValue !== 'replace';
-      if (headerModeValue === 'clear') headersTextarea.value = '';
-      if (headerModeValue === 'keep') headersTextarea.value = headerNames.map((name) => `${name}: `).join('\n');
+      syncHeaderModeUi();
     });
   }
-  headersTextarea.disabled = headerModeValue !== 'replace';
+  syncHeaderModeUi();
   const bodyTemplateInput = el('textarea', {
     id: 'schedule-body',
     class: 'textarea',
@@ -2901,9 +2915,15 @@ async function openScheduleEditor(task = null) {
         formField('请求 URL（必填，http/https）', urlInput, null, 'schedule-request-url'),
       ),
       isEdit && headerNames.length > 0
-        ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios), headerMask)
+        ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
         : null,
-      formField('Header 列表（每行 Name: Value）', headersTextarea, '编辑时：不传=保留现有；传 {} 清空；重新输入=全量替换。', 'schedule-headers'),
+      el(
+        'div',
+        { class: 'form-field' },
+        el('label', { class: 'form-label', for: 'schedule-headers', text: 'Header 列表（每行 Name: Value）' }),
+        headersTextarea,
+        headerHintNode,
+      ),
       bodyField,
     ),
     formSection(
