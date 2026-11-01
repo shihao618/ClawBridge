@@ -937,6 +937,13 @@ test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立
     assert.ok(admin.includes(token), `admin.js 应包含定时通知实现：${token}`);
   }
   assert.match(admin, /\/scheduled-tasks\/\$\{encodeURIComponent/, '定时任务接口应使用编码后的任务 ID');
+  const scheduleActionLabels = [...admin.matchAll(/scheduleActionButton\('schedule-(?:edit|duplicate|test|run|logs|delete)', task\.id, '([^']+)'/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(
+    scheduleActionLabels,
+    ['编辑', '复制', '测试', '执行', '日志', '删除'],
+    '定时通知行按钮应依次为 编辑、复制、测试、执行、日志、删除',
+  );
   const html = await readPage('admin.html');
   assert.ok(html.includes('data-rule-tab="schedule"'), '接口应用页应有「定时通知」Tab');
   assert.ok(html.includes('定时通知'), '应包含「定时通知」文案');
