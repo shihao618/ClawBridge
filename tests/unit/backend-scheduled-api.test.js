@@ -181,6 +181,41 @@ test('创建/查看：TaskView 结构、nextRunAt 计算、header 只回 names�
   assert.ok(list.json.items.some((item) => item.id === task.id));
 });
 
+test('复制定时任务：新 id、副本默认停用、复制计划/目标/加密 headers、nextRunAt 归零', async () => {
+  const user = createUser({ displayName: '复制目标用户' });
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '待复制任务',
+    targets: { type: 'users', ids: [user.id] },
+  }));
+  assert.equal(created.status, 201, created.text);
+  const source = created.json.task;
+
+  const duplicated = await adminWrite('POST', `/api/admin/scheduled-tasks/${encodeURIComponent(source.id)}/duplicate`);
+  assert.equal(duplicated.status, 201, duplicated.text);
+  const copy = duplicated.json.task;
+  assert.notEqual(copy.id, source.id);
+  assert.match(copy.id, /^task_/);
+  assert.equal(copy.name, '待复制任务（副本）');
+  assert.equal(copy.enabled, false, '副本默认停用');
+  assert.equal(copy.nextRunAt, 0, '停用副本不应有下次运行时间');
+  assert.deepEqual(copy.schedule, source.schedule);
+  assert.deepEqual(copy.targets.ids, source.targets.ids);
+  assert.deepEqual(copy.request.headerNames, source.request.headerNames);
+  assert.equal(copy.response.path, source.response.path);
+  assert.ok(!duplicated.text.includes('Bearer'), '复制响应不得包含 header 值');
+
+  const rows = getDb()
+    .prepare('SELECT id, request_headers_enc, enabled, next_run_at FROM scheduled_tasks WHERE id IN (?, ?)')
+    .all(source.id, copy.id);
+  const sourceRow = rows.find((row) => row.id === source.id);
+  const copyRow = rows.find((row) => row.id === copy.id);
+  assert.equal(sourceRow.enabled, 1);
+  assert.equal(copyRow.enabled, 0);
+  assert.equal(copyRow.next_run_at, 0);
+  assert.equal(copyRow.request_headers_enc, sourceRow.request_headers_enc, '加密 headers 应原样复制');
+  assertError(await adminWrite('POST', '/api/admin/scheduled-tasks/task_missing/duplicate'), 404, 'NOT_FOUND');
+});
+
 test('PATCH：局部更新、计划变更重算 next_run_at、headers 清空、enable/disable、校验', async () => {
   const user = createUser();
   const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({

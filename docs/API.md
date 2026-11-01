@@ -576,6 +576,7 @@ curl -X POST http://localhost:10380/api/admin/groups/grp_xxxxxxxx/keepalive \
 ```
 GET    /api/admin/app-rules?includeDisabled=1     → { items:[RuleView] }
 POST   /api/admin/app-rules                        → 201 { rule }
+POST   /api/admin/app-rules/{id}/duplicate         → 201 { rule }（副本默认停用；复制加密 Header）
 GET    /api/admin/app-rules/{id}                   → { rule }
 PATCH  /api/admin/app-rules/{id}                   → { rule }
 DELETE /api/admin/app-rules/{id}                   → 204
@@ -656,6 +657,7 @@ curl "http://localhost:10380/api/admin/app-rule-logs?limit=20" \
 ```
 GET    /api/admin/scheduled-tasks                    → { items:[TaskView] }
 POST   /api/admin/scheduled-tasks                    → 201 { task }
+POST   /api/admin/scheduled-tasks/{id}/duplicate     → 201 { task }（副本默认停用、next_run_at=0）
 GET    /api/admin/scheduled-tasks/{id}               → { task }
 PATCH  /api/admin/scheduled-tasks/{id}               → { task }
 DELETE /api/admin/scheduled-tasks/{id}               → 204

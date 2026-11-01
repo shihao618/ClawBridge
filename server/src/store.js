@@ -38,6 +38,13 @@ function newAppRuleId() {
   return `rule_${randomUuid()}`;
 }
 
+/** 复制项名称：追加「（副本）」，同时满足名称长度上限。 */
+function copyName(name, fallback) {
+  const suffix = '（副本）';
+  const base = String(name || fallback).trim() || fallback;
+  return `${base.slice(0, Math.max(1, 60 - suffix.length))}${suffix}`;
+}
+
 /** 附件默认 URL 前缀（管理端）；v1 API 视图可传 '/api/v1/media'。 */
 const DEFAULT_MEDIA_URL_PREFIX = '/api/admin/media';
 
@@ -891,6 +898,48 @@ export function createAppRule(input) {
   return getAppRule(id);
 }
 
+/** 复制规则（含加密 headers；副本默认停用，运行日志不复制）。 */
+export function duplicateAppRule(id) {
+  const row = getAppRuleRow(id);
+  if (!row) return null;
+  const now = nowMs();
+  const newId = newAppRuleId();
+  const copiedColumns = [
+    'priority',
+    'scope_type',
+    'scope_ids',
+    'match_mode',
+    'keywords',
+    'regex_pattern',
+    'extraction_mode',
+    'extraction_config',
+    'request_method',
+    'request_url',
+    'request_headers_enc',
+    'request_body_template',
+    'response_type',
+    'response_path',
+    'reply_template',
+    'fallback_text',
+    'timeout_ms',
+    'cooldown_ms',
+    'max_calls_per_hour',
+    'max_user_calls_per_hour',
+  ];
+  run(
+    `INSERT INTO app_rules
+       (id, name, enabled, ${copiedColumns.join(', ')}, created_at, updated_at)
+     SELECT ?, ?, 0, ${copiedColumns.join(', ')}, ?, ?
+     FROM app_rules WHERE id = ?`,
+    newId,
+    copyName(row.name, '未命名规则'),
+    now,
+    now,
+    String(id),
+  );
+  return getAppRule(newId);
+}
+
 /** 更新规则（部分字段；未传字段不变）。 */
 export function updateAppRule(id, patch) {
   if (!getAppRuleRow(id)) return null;
@@ -1176,6 +1225,45 @@ export function createScheduledTask(input) {
   const values = [id, ...fields.map((key) => scheduledTaskColumnValue(key, input[key])), now, now];
   run(`INSERT INTO scheduled_tasks (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`, ...values);
   return getScheduledTask(id);
+}
+
+/** 复制定时任务（含加密 headers；副本默认停用、无下次运行时间，日志不复制）。 */
+export function duplicateScheduledTask(id) {
+  const row = getScheduledTaskRow(id);
+  if (!row) return null;
+  const now = nowMs();
+  const newId = newScheduledTaskId();
+  const copiedColumns = [
+    'schedule_type',
+    'interval_ms',
+    'daily_time',
+    'window_start',
+    'window_end',
+    'target_type',
+    'target_ids',
+    'request_method',
+    'request_url',
+    'request_headers_enc',
+    'request_body_template',
+    'response_type',
+    'response_path',
+    'reply_template',
+    'fallback_text',
+    'timeout_ms',
+  ];
+  run(
+    `INSERT INTO scheduled_tasks
+       (id, name, enabled, ${copiedColumns.join(', ')},
+        last_run_at, last_status, next_run_at, created_at, updated_at)
+     SELECT ?, ?, 0, ${copiedColumns.join(', ')}, 0, '', 0, ?, ?
+     FROM scheduled_tasks WHERE id = ?`,
+    newId,
+    copyName(row.name, '未命名任务'),
+    now,
+    now,
+    String(id),
+  );
+  return getScheduledTask(newId);
 }
 
 /** 更新任务（部分字段；不存在返回 null）。 */

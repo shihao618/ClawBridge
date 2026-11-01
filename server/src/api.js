@@ -1187,6 +1187,13 @@ export function createApp() {
     res.status(201).json({ rule });
   });
 
+  app.post('/api/admin/app-rules/:id/duplicate', auth.requireAdminWrite, (req, res) => {
+    const rule = store.duplicateAppRule(req.params.id);
+    if (!rule) throw notFound('规则不存在');
+    log.info('接口应用规则已复制', { sourceRuleId: req.params.id, ruleId: rule.id, name: rule.name });
+    res.status(201).json({ rule });
+  });
+
   app.get('/api/admin/app-rules/:id', auth.requireAdmin, (req, res) => {
     const rule = store.getAppRule(req.params.id);
     if (!rule) throw notFound('规则不存在');
@@ -1257,6 +1264,13 @@ export function createApp() {
     patch.nextRunAt = scheduler.computeInitialNextRun(patch);
     const task = store.createScheduledTask(patch);
     log.info('定时任务已创建', { taskId: task.id, name: task.name, nextRunAt: task.nextRunAt });
+    res.status(201).json({ task });
+  });
+
+  app.post('/api/admin/scheduled-tasks/:id/duplicate', auth.requireAdminWrite, (req, res) => {
+    const task = store.duplicateScheduledTask(req.params.id);
+    if (!task) throw notFound('定时任务不存在');
+    log.info('定时任务已复制', { sourceTaskId: req.params.id, taskId: task.id, name: task.name });
     res.status(201).json({ task });
   });
 

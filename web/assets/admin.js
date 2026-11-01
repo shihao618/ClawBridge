@@ -1181,6 +1181,7 @@ function buildAppRuleRow(rule) {
         'div',
         { class: 'row-actions' },
         ruleActionButton('edit', rule.id, '编辑'),
+        ruleActionButton('duplicate', rule.id, '复制'),
         ruleActionButton('test', rule.id, '测试'),
         ruleActionButton('logs', rule.id, '日志'),
         ruleActionButton('delete', rule.id, '删除', 'btn-danger-ghost'),
@@ -1206,6 +1207,7 @@ function handleAppRuleTableClick(event) {
   const action = button.dataset.action;
   if (action === 'toggle-rule') toggleAppRule(rule, button);
   else if (action === 'edit') openAppRuleEditor(rule);
+  else if (action === 'duplicate') duplicateAppRule(rule, button);
   else if (action === 'test') openAppRuleTestModal(rule);
   else if (action === 'logs') openRuleLogsModal(rule);
   else if (action === 'delete') deleteAppRule(rule);
@@ -1972,6 +1974,21 @@ function openAppRuleEditor(rule = null) {
     });
 }
 
+async function duplicateAppRule(rule, button) {
+  if (button) button.disabled = true;
+  try {
+    const data = await apiFetch(`/api/admin/app-rules/${encodeURIComponent(rule.id)}/duplicate`, {
+      method: 'POST',
+    });
+    const name = data && data.rule && data.rule.name ? data.rule.name : '副本';
+    toast(`规则已复制为「${name}」，副本默认停用`, 'success');
+    await refreshAfterWrite({ appRules: true });
+  } catch (error) {
+    toastError(error, '复制规则失败');
+    if (button) button.disabled = false;
+  }
+}
+
 async function deleteAppRule(rule) {
   const confirmed = await confirmDialog({
     title: '删除接口应用规则',
@@ -2405,6 +2422,7 @@ function buildScheduledTaskRow(task) {
         'div',
         { class: 'row-actions' },
         scheduleActionButton('schedule-edit', task.id, '编辑'),
+        scheduleActionButton('schedule-duplicate', task.id, '复制'),
         scheduleActionButton('schedule-test', task.id, '测试运行'),
         scheduleActionButton('schedule-run', task.id, '立即执行'),
         scheduleActionButton('schedule-logs', task.id, '运行日志'),
@@ -2447,10 +2465,26 @@ function handleScheduleTableClick(event) {
   const action = button.dataset.action;
   if (action === 'schedule-toggle') toggleScheduledTask(task, button);
   else if (action === 'schedule-edit') openScheduleEditor(task);
+  else if (action === 'schedule-duplicate') duplicateScheduledTask(task, button);
   else if (action === 'schedule-test') openScheduleTestModal(task);
   else if (action === 'schedule-run') runScheduledTask(task);
   else if (action === 'schedule-logs') openScheduleLogsModal(task);
   else if (action === 'schedule-delete') deleteScheduledTask(task);
+}
+
+async function duplicateScheduledTask(task, button) {
+  if (button) button.disabled = true;
+  try {
+    const data = await apiFetch(`/api/admin/scheduled-tasks/${encodeURIComponent(task.id)}/duplicate`, {
+      method: 'POST',
+    });
+    const name = data && data.task && data.task.name ? data.task.name : '副本';
+    toast(`定时任务已复制为「${name}」，副本默认停用`, 'success');
+    await loadScheduledTasks();
+  } catch (error) {
+    toastError(error, '复制定时任务失败');
+    if (button) button.disabled = false;
+  }
 }
 
 async function deleteScheduledTask(task) {

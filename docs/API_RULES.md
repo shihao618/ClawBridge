@@ -238,6 +238,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 ```
 GET    /api/admin/app-rules?includeDisabled=1     → { items:[RuleView] }
 POST   /api/admin/app-rules                        → 201 { rule }
+POST   /api/admin/app-rules/{id}/duplicate         → 201 { rule }（副本默认停用；复制加密 Header）
 GET    /api/admin/app-rules/{id}                   → { rule }
 PATCH  /api/admin/app-rules/{id}                   → { rule }
 DELETE /api/admin/app-rules/{id}                   → 204

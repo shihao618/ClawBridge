@@ -152,6 +152,7 @@ TaskView（GET）不返回 Header 值：
 ```
 GET    /api/admin/scheduled-tasks                    → { items:[TaskView] }
 POST   /api/admin/scheduled-tasks                    → 201 { task }
+POST   /api/admin/scheduled-tasks/{id}/duplicate     → 201 { task }（副本默认停用、next_run_at=0）
 GET    /api/admin/scheduled-tasks/{id}               → { task }
 PATCH  /api/admin/scheduled-tasks/{id}               → { task }
 DELETE /api/admin/scheduled-tasks/{id}               → 204

@@ -179,6 +179,42 @@ test('创建/查看：RuleView 结构、headers 只回 names、DB 内为密文',
   assert.ok(all.json.items.every((item) => Array.isArray(item.request.headerNames) && !item.request.headers));
 });
 
+test('复制规则：新 id、副本默认停用、完整复制请求/响应/加密 headers、源规则不变', async () => {
+  const created = await adminWrite('POST', '/api/admin/app-rules', validRuleBody({ name: '待复制规则' }));
+  assert.equal(created.status, 201, created.text);
+  const source = created.json.rule;
+
+  const duplicated = await adminWrite('POST', `/api/admin/app-rules/${encodeURIComponent(source.id)}/duplicate`);
+  assert.equal(duplicated.status, 201, duplicated.text);
+  const copy = duplicated.json.rule;
+  assert.notEqual(copy.id, source.id);
+  assert.match(copy.id, /^rule_/);
+  assert.equal(copy.name, '待复制规则（副本）');
+  assert.equal(copy.enabled, false, '副本默认停用');
+  assert.equal(copy.priority, source.priority);
+  assert.deepEqual(copy.trigger, source.trigger);
+  assert.deepEqual(copy.scope, source.scope);
+  assert.equal(copy.request.method, source.request.method);
+  assert.equal(copy.request.url, source.request.url);
+  assert.deepEqual(copy.request.headerNames, source.request.headerNames);
+  assert.equal(copy.response.path, 'data');
+  assert.equal(copy.response.template, source.response.template);
+  assert.ok(!duplicated.text.includes('Bearer'), '复制响应不得包含 header 值');
+
+  const rows = getDb()
+    .prepare('SELECT id, request_headers_enc, enabled FROM app_rules WHERE id IN (?, ?)')
+    .all(source.id, copy.id);
+  const sourceRow = rows.find((row) => row.id === source.id);
+  const copyRow = rows.find((row) => row.id === copy.id);
+  assert.equal(sourceRow.enabled, 1);
+  assert.equal(copyRow.enabled, 0);
+  assert.equal(copyRow.request_headers_enc, sourceRow.request_headers_enc, '加密 headers 应原样复制');
+
+  const all = await adminGet('/api/admin/app-rules?includeDisabled=1');
+  assert.ok(all.json.items.some((item) => item.id === copy.id && item.enabled === false));
+  assertError(await adminWrite('POST', '/api/admin/app-rules/rule_missing/duplicate'), 404, 'NOT_FOUND');
+});
+
 test('更新/删除：PATCH 局部更新、headers 全量替换/清空、校验、DELETE', async () => {
   const created = await adminWrite('POST', '/api/admin/app-rules', validRuleBody({ name: '待更新规则' }));
   const rule = created.json.rule;

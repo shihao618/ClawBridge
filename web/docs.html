@@ -520,6 +520,12 @@ curl -X POST http://localhost:10380/api/v1/messages \
                   <td>Cookie + CSRF 头</td>
                 </tr>
                 <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/app-rules/{id}/duplicate</code></td>
+                  <td>复制规则（副本默认停用，加密 Header 原样复制）</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
                   <td><span class="method method-get">GET</span></td>
                   <td><code class="endpoint-path">/api/admin/app-rules/{id}</code></td>
                   <td>规则详情（Header 只返回名称列表）</td>
@@ -559,6 +565,12 @@ curl -X POST http://localhost:10380/api/v1/messages \
                   <td><span class="method method-post">POST</span></td>
                   <td><code class="endpoint-path">/api/admin/scheduled-tasks</code></td>
                   <td>新建定时任务</td>
+                  <td>Cookie + CSRF 头</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}/duplicate</code></td>
+                  <td>复制定时任务（副本默认停用，nextRunAt=0）</td>
                   <td>Cookie + CSRF 头</td>
                 </tr>
                 <tr>
@@ -1232,6 +1244,10 @@ done</code></pre></div>
             <code class="endpoint-path">/api/admin/app-rules</code>
           </div>
           <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/app-rules/{id}/duplicate</code>
+          </div>
+          <div class="endpoint-line">
             <span class="method method-get">GET</span>
             <code class="endpoint-path">/api/admin/app-rules/{id}</code>
           </div>
@@ -1396,6 +1412,10 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
           <div class="endpoint-line">
             <span class="method method-post">POST</span>
             <code class="endpoint-path">/api/admin/scheduled-tasks</code>
+          </div>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/admin/scheduled-tasks/{id}/duplicate</code>
           </div>
           <div class="endpoint-line">
             <span class="method method-get">GET</span>
