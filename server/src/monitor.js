@@ -19,11 +19,27 @@ import * as store from './store.js';
 
 const log = logger.child({ mod: 'monitor' });
 
+/** 收到消息后静默多久再落游标（连续聊天期间不写游标）。 */
+const MESSAGE_IDLE_FLUSH_MS = 15 * 60 * 1000;
+/** 一直无消息时，游标最多保留在内存多久后兜底落库。 */
+const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
 /**
- * 空闲时 getupdates 游标只保存在内存：不产生周期性 SQLite/WAL 写入，允许数据盘休眠。
- * 有入站消息时立即持久化游标；若进程异常重启，从上次已持久化游标回放，
- * 入站消息按 wechat message_id 去重，最多产生可去重的重复处理。
+ * 游标是否应落库：有消息时等 15 分钟静默；无消息时最多 6 小时。
+ * 纯函数便于测试（真实循环只负责调用）。
  */
+export function cursorPersistDue({
+  dirty,
+  now,
+  lastMessageAt,
+  lastPersistAt,
+  idleMs = MESSAGE_IDLE_FLUSH_MS,
+  maxAgeMs = CURSOR_MAX_AGE_MS,
+} = {}) {
+  if (!dirty) return false;
+  if (lastMessageAt > 0) return now - lastMessageAt >= idleMs;
+  return now - lastPersistAt >= maxAgeMs;
+}
 
 /** @type {Map<string, {controller: AbortController, promise: Promise<void>, startedAt: number}>} */
 const workers = new Map();
@@ -327,6 +343,42 @@ async function runLoop(row, token, controller, worker) {
   let getUpdatesBuf = row.get_updates_buf || '';
   let consecutiveFailures = 0;
   let nextTimeoutMs = config.monitor.longPollTimeoutMs;
+  let cursorDirty = false;
+  let lastMessageAt = 0;
+  let lastPersistAt = Date.now();
+
+  /** 落库当前内存游标；失败保留 dirty，下一轮重试。 */
+  const persistCursor = () => {
+    if (!cursorDirty) return false;
+    const ts = Date.now();
+    try {
+      store.updateGetUpdatesBuf(userId, getUpdatesBuf, ts);
+      cursorDirty = false;
+      lastPersistAt = ts;
+      lastMessageAt = 0;
+      return true;
+    } catch (err) {
+      log.warn('持久化 getupdates 游标失败（下一轮重试）', { userId, message: err?.message });
+      return false;
+    }
+  };
+
+  /**
+   * 两个落库窗口：
+   * 1) 收到消息后静默 15 分钟；
+   * 2) 一直无消息时最多 6 小时兜底一次（游标未变化则不写）。
+   */
+  const maybePersistCursor = () => {
+    if (!cursorDirty) return;
+    if (cursorPersistDue({
+      dirty: cursorDirty,
+      now: Date.now(),
+      lastMessageAt,
+      lastPersistAt,
+    })) {
+      persistCursor();
+    }
+  };
   // 凭据代际：worker 启动时捕获 token_enc；换绑/解绑会改写 DB，旧 worker 必须静默退出，
   // 且不得再写 get_updates_buf / 入站消息 / last_poll / paused（docs M1 修复）。
   const initialTokenEnc = row.token_enc ?? null;
@@ -350,6 +402,7 @@ async function runLoop(row, token, controller, worker) {
       log.info('监控凭据已变更或解绑，旧循环退出', { userId });
       return;
     }
+    maybePersistCursor();
     let resp;
     try {
       resp = await ilink.getUpdates({
@@ -412,7 +465,10 @@ async function runLoop(row, token, controller, worker) {
     consecutiveFailures = 0;
     const newBuf = typeof resp?.get_updates_buf === 'string' ? resp.get_updates_buf : '';
     const bufChanged = Boolean(newBuf && newBuf !== getUpdatesBuf);
-    if (bufChanged) getUpdatesBuf = newBuf;
+    if (bufChanged) {
+      getUpdatesBuf = newBuf;
+      cursorDirty = true;
+    }
     worker.pendingBuf = getUpdatesBuf;
     const serverTimeout = Number(resp?.longpolling_timeout_ms);
     if (Number.isFinite(serverTimeout) && serverTimeout > 0) {
@@ -421,10 +477,10 @@ async function runLoop(row, token, controller, worker) {
     }
     const messages = Array.isArray(resp?.msgs) ? resp.msgs : [];
     if (messages.length > 0) {
+      lastMessageAt = Date.now();
       processMessages(userId, messages);
-      // 只有真正收到消息时才落盘游标；空轮询不写 DB。
-      if (bufChanged) store.updateGetUpdatesBuf(userId, getUpdatesBuf, Date.now());
     }
+    maybePersistCursor();
     worker.lastPollAt = Date.now();
   }
 }

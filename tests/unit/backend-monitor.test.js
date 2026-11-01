@@ -98,6 +98,27 @@ const store = await import('../../server/src/store.js');
 const { getDb, closeDb } = await import('../../server/src/db.js');
 const { decryptSecret } = await import('../../server/src/crypto.js');
 
+test('游标落库时机：消息后 15 分钟静默 / 无消息 6 小时兜底', () => {
+  const now = 10_000_000;
+  const idleMs = 15 * 60 * 1000;
+  const maxAgeMs = 6 * 60 * 60 * 1000;
+  const due = (overrides = {}) =>
+    monitor.cursorPersistDue({
+      dirty: true,
+      now,
+      lastMessageAt: 0,
+      lastPersistAt: now - maxAgeMs,
+      idleMs,
+      maxAgeMs,
+      ...overrides,
+    });
+  assert.equal(due({ dirty: false }), false, '无变化不写入');
+  assert.equal(due({ lastMessageAt: now - idleMs + 1 }), false, '消息后未静默满 15 分钟不写');
+  assert.equal(due({ lastMessageAt: now - idleMs }), true, '消息后静默满 15 分钟写入');
+  assert.equal(due({ lastMessageAt: 0, lastPersistAt: now - maxAgeMs + 1 }), false, '无消息未满 6 小时不写');
+  assert.equal(due({ lastMessageAt: 0, lastPersistAt: now - maxAgeMs }), true, '无消息满 6 小时写入');
+});
+
 after(async () => {
   await monitor.stopAll({ notify: false }).catch(() => {});
   closeDb();
