@@ -1606,6 +1606,7 @@ function openAppRuleEditor(rule = null) {
   });
   // 已保存的 Header 值不回显（仅显示名称与占位符），避免敏感值出现在页面/DOM
   const headerNamesText = headerNames.map((name) => `${name}: ••••••`).join('\n');
+  const headerResetText = headerNames.map((name) => `${name}: `).join('\n');
   const headersTextarea = el('textarea', {
     id: 'rule-headers',
     class: 'textarea',
@@ -1619,9 +1620,9 @@ function openAppRuleEditor(rule = null) {
     let hint = '每行一个 Header，格式 Name: Value；值会加密保存，保存后不再回显。';
     if (isEdit && headerNames.length > 0) {
       if (headerModeValue === 'keep') {
-        hint = '已保存的 Header 值不会回显（AES 加密存储）；如需修改，请选择「重设 Header」并重新输入完整的 Name: Value。';
+        hint = '已保存的 Header 值不会回显（AES 加密存储）；如需修改，请选择「重设 Header」，保留名称并补全新值。';
       } else if (headerModeValue === 'replace') {
-        hint = '请按 Name: Value 每行一个重新输入；保存后将全量替换该规则现有 Header。';
+        hint = '已保留 Header 名称并清除原值，请补全对应的值；保存后将全量替换该规则现有 Header。';
       } else {
         hint = '保存后将清空该规则的所有 Header。';
       }
@@ -1631,6 +1632,7 @@ function openAppRuleEditor(rule = null) {
   function syncHeaderModeUi() {
     headersTextarea.disabled = headerModeValue !== 'replace';
     if (headerModeValue === 'keep') headersTextarea.value = headerNamesText;
+    else if (headerModeValue === 'replace') headersTextarea.value = headerResetText;
     else headersTextarea.value = '';
     syncHeaderHint();
   }
@@ -1912,7 +1914,14 @@ function openAppRuleEditor(rule = null) {
           } else if (headerModeValue === 'clear') {
             headersPayload = {};
           } else {
-            headersPayload = parseHeadersInput(headersTextarea.value);
+            const headers = parseHeadersInput(headersTextarea.value);
+            if (Object.keys(headers).length === 0) {
+              return showFormError('重设 Header 时请至少保留一个 Header；如需全部删除，请选择「清空 Header」');
+            }
+            if (Object.values(headers).some((value) => value === '')) {
+              return showFormError('请补全每个 Header 的值；如需全部删除，请选择「清空 Header」');
+            }
+            headersPayload = headers;
           }
           const requestBody = { method: methodSelect.value, url };
           if (headersPayload !== undefined) requestBody.headers = headersPayload;
@@ -2773,8 +2782,9 @@ async function openScheduleEditor(task = null) {
     placeholder: 'https://api.example.com/weather?city=北京（支持 {now}/{date}/{time}/{taskName}）',
     value: request.url || '',
   });
-  // 与规则编辑器保持一致：已保存 Header 只显示掩码；「重设 Header」需重新输入完整 Name: Value。
+  // 与规则编辑器保持一致：已保存 Header 只显示掩码；「重设 Header」保留名称、清除隐藏值。
   const headerNamesText = headerNames.map((name) => `${name}: ••••••`).join('\n');
+  const headerResetText = headerNames.map((name) => `${name}: `).join('\n');
   const headersTextarea = el('textarea', {
     id: 'schedule-headers',
     class: 'textarea',
@@ -2788,9 +2798,9 @@ async function openScheduleEditor(task = null) {
     let hint = '每行一个 Header，格式 Name: Value；值会加密保存，保存后不再回显。';
     if (isEdit && headerNames.length > 0) {
       if (headerModeValue === 'keep') {
-        hint = '已保存的 Header 值不会回显（AES 加密存储）；如需修改，请选择「重设 Header」并重新输入完整的 Name: Value。';
+        hint = '已保存的 Header 值不会回显（AES 加密存储）；如需修改，请选择「重设 Header」，保留名称并补全新值。';
       } else if (headerModeValue === 'replace') {
-        hint = '请按 Name: Value 每行一个重新输入；保存后将全量替换该任务现有 Header。';
+        hint = '已保留 Header 名称并清除原值，请补全对应的值；保存后将全量替换该任务现有 Header。';
       } else {
         hint = '保存后将清空该任务的所有 Header。';
       }
@@ -2800,6 +2810,7 @@ async function openScheduleEditor(task = null) {
   function syncHeaderModeUi() {
     headersTextarea.disabled = headerModeValue !== 'replace';
     if (headerModeValue === 'keep') headersTextarea.value = headerNamesText;
+    else if (headerModeValue === 'replace') headersTextarea.value = headerResetText;
     else headersTextarea.value = '';
     syncHeaderHint();
   }
@@ -2995,7 +3006,14 @@ async function openScheduleEditor(task = null) {
           } else if (headerModeValue === 'clear') {
             headersPayload = {};
           } else {
-            headersPayload = parseHeadersInput(headersTextarea.value);
+            const headers = parseHeadersInput(headersTextarea.value);
+            if (Object.keys(headers).length === 0) {
+              return showFormError('重设 Header 时请至少保留一个 Header；如需全部删除，请选择「清空 Header」');
+            }
+            if (Object.values(headers).some((value) => value === '')) {
+              return showFormError('请补全每个 Header 的值；如需全部删除，请选择「清空 Header」');
+            }
+            headersPayload = headers;
           }
           const requestBody = { method: methodSelect.value, url };
           if (headersPayload !== undefined) requestBody.headers = headersPayload;

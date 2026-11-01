@@ -949,7 +949,7 @@ test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立
   assert.ok(html.includes('定时通知'), '应包含「定时通知」文案');
 });
 
-test('接口应用与定时通知：重设 Header 的实际操作一致（掩码、禁用、清空后重输）', async () => {
+test('接口应用与定时通知：重设 Header 的实际操作一致（保留名称、清除掩码、补全新值）', async () => {
   const admin = await readAsset('admin.js');
   const count = (pattern) => (admin.match(pattern) || []).length;
   assert.equal(count(/function syncHeaderModeUi\(\)/g), 2, '规则和定时应各有一个 Header 模式同步函数');
@@ -959,14 +959,24 @@ test('接口应用与定时通知：重设 Header 的实际操作一致（掩码
     '保留模式应显示掩码 Header',
   );
   assert.equal(
-    count(/请选择「重设 Header」并重新输入完整的 Name: Value/g),
+    count(/const headerResetText = headerNames\.map\(\(name\) => `\$\{name\}: `\)/g),
     2,
-    '规则和定时的重设提示应一致',
+    '重设模式应为每个 Header 保留名称',
   );
   assert.equal(
-    count(/请按 Name: Value 每行一个重新输入/g),
+    count(/else if \(headerModeValue === 'replace'\) headersTextarea\.value = headerResetText;/g),
     2,
-    '规则和定时的重设输入提示应一致',
+    '重设模式应填入保留名称、清除隐藏值的文本',
+  );
+  assert.equal(
+    count(/请补全每个 Header 的值；如需全部删除，请选择「清空 Header」/g),
+    2,
+    '规则和定时都应校验空 Header 值',
+  );
+  assert.equal(
+    count(/请选择「重设 Header」，保留名称并补全新值/g),
+    2,
+    '规则和定时的重设提示应一致',
   );
   assert.ok(!admin.includes('schedule-header-mask'), '定时通知不应再有单独的 Header 掩码提示');
   assert.ok(!admin.includes('现有 Header（值已加密不回显）'), '旧 Header 展示不应保留');
