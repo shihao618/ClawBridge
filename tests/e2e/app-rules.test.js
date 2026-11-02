@@ -426,7 +426,7 @@ test('失败兜底：外部接口 500 时回复 fallback_text；超时无兜底�
   externalApi.setResponse({ json: { ok: true } });
 });
 
-test('冷却：同用户同规则冷却期内第二条消息不触发', async () => {
+test('旧冷却字段不再限流：同用户同规则第二条消息仍触发', async () => {
   externalApi.setResponse({ json: { data: { answer: '冷却回复' } } });
   const rule = await createRuleOrFail({
     ...RULE_BASE(),
@@ -443,34 +443,30 @@ test('冷却：同用户同规则冷却期内第二条消息不触发', async ()
 
   externalApi.reset();
   await injectInbound(userA, accountA, '冷却测试 第二次');
-  await sleep(1000);
-  assert.equal(externalApi.requests.length, 0, '冷却期内不应再次调用外部 API');
+  await e2e.waitMockSentMessageContaining('冷却回复', { toUserId: userA.wechatUserId });
+  assert.ok(externalApi.requests.length > 0, '规则不再有冷却，外部 API 应再次被调用');
 });
 
-test('规则小时上限：超过 maxUserCallsPerHour 的消息被 skipped', async () => {
-  externalApi.setResponse({ json: { data: { answer: '限额回复' } } });
+test('旧小时上限字段不再限流：超过 maxUserCallsPerHour 的消息仍执行', async () => {
+  externalApi.setResponse({ json: { data: { answer: '配额回复' } } });
   const rule = await createRuleOrFail({
     ...RULE_BASE(),
-    name: '限额测试规则',
+    name: '配额测试规则',
     scope: { type: 'users', ids: [userA.id] },
-    keywords: ['限额测试'],
+    keywords: ['配额测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/quota`, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
     cooldownMs: 0,
     maxUserCallsPerHour: 1,
     maxCallsPerHour: 100,
   });
-  await injectInbound(userA, accountA, '限额测试 第一次');
-  await e2e.waitMockSentMessageContaining('限额回复', { toUserId: userA.wechatUserId });
+  await injectInbound(userA, accountA, '配额测试 第一次');
+  await e2e.waitMockSentMessageContaining('配额回复', { toUserId: userA.wechatUserId });
 
   externalApi.reset();
-  await injectInbound(userA, accountA, '限额测试 第二次');
-  const skippedLog = await e2e.waitAppRuleLog(
-    (item) => item.ruleId === rule.id && item.userId === userA.id && item.status === 'skipped',
-    { ruleId: rule.id, label: '小时上限 skipped 日志' },
-  );
-  assert.equal(skippedLog.status, 'skipped');
-  assert.equal(externalApi.requests.length, 0, '超限后不应调用外部 API');
+  await injectInbound(userA, accountA, '配额测试 第二次');
+  await e2e.waitMockSentMessageContaining('配额回复', { toUserId: userA.wechatUserId });
+  assert.ok(externalApi.requests.length > 0, '规则不再有小时上限，外部 API 应再次被调用');
 });
 
 test('SSRF：未放行白名单的 app 实例拒绝访问 127.0.0.1（外部 API 收不到请求）', async () => {

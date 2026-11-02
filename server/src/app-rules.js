@@ -166,9 +166,6 @@ export function parseRuleRow(row) {
     },
     limits: {
       timeoutMs: Number(row.timeout_ms) || config.appRules.timeoutMs,
-      cooldownMs: Number(row.cooldown_ms) || 0,
-      maxCallsPerHour: Number(row.max_calls_per_hour) || 60,
-      maxUserCallsPerHour: Number(row.max_user_calls_per_hour) || 10,
     },
   };
 }
@@ -1235,34 +1232,8 @@ async function processInboundJob(job) {
   if (!matchedRow) return;
   const rule = parseRuleRow(matchedRow);
 
-  // 冷却（同用户同规则）
-  if (rule.limits.cooldownMs > 0) {
-    const lastMatchedAt = store.getAppRuleLastMatchedAt(rule.id, userId);
-    if (lastMatchedAt > 0 && now - lastMatchedAt < rule.limits.cooldownMs) {
-      store.insertAppRuleLog({ ruleId: rule.id, userId, inboundMessageId, status: 'skipped', error: 'cooldown', createdAt: now });
-      log.info('规则命中但处于冷却期，跳过', { ruleId: rule.id, userId });
-      return;
-    }
-  }
-  // 小时配额
-  if (rule.limits.maxCallsPerHour > 0) {
-    const ruleCalls = store.countAppRuleLogsLastHour(rule.id, now);
-    if (ruleCalls >= rule.limits.maxCallsPerHour) {
-      store.insertAppRuleLog({ ruleId: rule.id, userId, inboundMessageId, status: 'skipped', error: 'rule hourly limit', createdAt: now });
-      log.warn('规则小时调用上限已达，跳过', { ruleId: rule.id, userId, ruleCalls });
-      return;
-    }
-  }
-  if (rule.limits.maxUserCallsPerHour > 0) {
-    const userCalls = store.countAppRuleLogsLastHour(rule.id, now, { userId });
-    if (userCalls >= rule.limits.maxUserCallsPerHour) {
-      store.insertAppRuleLog({ ruleId: rule.id, userId, inboundMessageId, status: 'skipped', error: 'user hourly limit', createdAt: now });
-      log.warn('用户规则小时调用上限已达，跳过', { ruleId: rule.id, userId, userCalls });
-      return;
-    }
-  }
-
-  // 去重：同消息+规则只执行一次（唯一索引）
+  // 规则自身不再做冷却/小时配额；调用频率统一由微信账号默认发送限流控制。
+  // 同消息+规则仍通过日志唯一索引去重。
   const logRow = store.insertAppRuleLog({ ruleId: rule.id, userId, inboundMessageId, status: 'matched', createdAt: now });
   if (!logRow.inserted) {
     log.debug('重复入站消息触发同一规则，跳过', { ruleId: rule.id, inboundMessageId });

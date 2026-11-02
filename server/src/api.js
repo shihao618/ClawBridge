@@ -656,12 +656,7 @@ function buildAppRulePatch(rawBody, { requireAll = false } = {}) {
     patch.fallbackText = optionalString(response.fallbackText, 'response.fallbackText', 4000);
   }
 
-  const limitSpecs = [
-    ['timeoutMs', 1000, 30000, 8000],
-    ['cooldownMs', 0, 3600000, 10000],
-    ['maxCallsPerHour', 1, 10000, 60],
-    ['maxUserCallsPerHour', 1, 10000, 10],
-  ];
+  const limitSpecs = [['timeoutMs', 1000, 30000, 8000]];
   for (const [key, min, max, defaultValue] of limitSpecs) {
     if (!requireAll && body[key] === undefined) continue;
     const value = body[key] === undefined ? defaultValue : body[key];
@@ -670,6 +665,10 @@ function buildAppRulePatch(rawBody, { requireAll = false } = {}) {
     }
     patch[key] = value;
   }
+  // 旧版规则级冷却/小时限额已移除；频率统一由微信默认发送限流控制。
+  patch.cooldownMs = 0;
+  patch.maxCallsPerHour = 0;
+  patch.maxUserCallsPerHour = 0;
 
   return patch;
 }

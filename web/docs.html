@@ -1136,7 +1136,7 @@ done</code></pre></div>
           <h3 class="doc-subheading">1. 处理流程</h3>
           <div class="code-block"><pre><code>入站消息（仅文本）→ 规则引擎（异步队列，不阻塞 getupdates）
   → 规则启用？触发范围命中（all / users / groups）？
-  → 关键词 / 正则命中？冷却与每小时限额未超？
+  → 关键词 / 正则命中？同消息+规则未重复？
   → 按 priority（数字越小越先）+ created_at 取第一条命中规则（一消息最多执行一条）
   → 参数提取（none / multi；multi 内组合 trailing/regex/json/fulltext 提取项）
   → 渲染请求模板（URL / Headers / Body）→ 调用外部 HTTP（SSRF 防护 / 超时 / 响应大小限制）
@@ -1241,10 +1241,9 @@ done</code></pre></div>
           <h3 class="doc-subheading">6. 限流与去重</h3>
           <ul class="doc-list">
             <li>同一入站消息对同一规则最多执行一次（数据库唯一索引，getupdates 重放安全）。</li>
-            <li>同用户同规则冷却 <code class="code-inline">cooldown_ms</code>（默认 10000ms）；规则级
-              <code class="code-inline">max_calls_per_hour</code>（默认 60）与同用户级
-              <code class="code-inline">max_user_calls_per_hour</code>（默认 10）按最近 1 小时日志计数，超限跳过并写
-              <code class="code-inline">skipped</code> 日志。</li>
+            <li>规则自身不再设置冷却或每小时限额；调用频率统一由微信账号默认发送限流控制（默认
+              <code class="code-inline">7 条 / 5 分钟 / 账号</code>，由
+              <code class="code-inline">RATE_LIMIT_MAX=7</code> / <code class="code-inline">RATE_LIMIT_WINDOW_MS=300000</code> 控制）。日志仅保留同消息+规则去重。</li>
             <li>执行并发 <code class="code-inline">APP_RULES_WORKER_CONCURRENCY</code>；队列上限
               <code class="code-inline">APP_RULE_MAX_QUEUE</code>（满则丢弃并 warn 日志）。</li>
           </ul>
@@ -1299,14 +1298,14 @@ done</code></pre></div>
                "bodyTemplate": "" },
   "response": { "type": "json", "path": "data",
                 "template": "{{answer}}", "fallbackText": "暂时无法查询" },
-  "timeoutMs": 8000, "cooldownMs": 10000, "maxCallsPerHour": 60, "maxUserCallsPerHour": 10
+  "timeoutMs": 8000
 }</code></pre></div>
           <p>
             校验：<code class="code-inline">name</code> 1–60；<code class="code-inline">scope.type</code> ∈
             all/users/groups（users/groups 时 ids 非空且存在）；<code class="code-inline">matchMode</code> 合法；
             关键词 1–10 个（每个 1–50 字）或合法正则；<code class="code-inline">extraction</code> 配置合法；
             URL 为 http(s)；<code class="code-inline">timeoutMs</code> 1000–30000、
-            <code class="code-inline">cooldownMs</code> 0–3600000、每小时上限 1–10000；
+            
             <code class="code-inline">response.type</code> ∈ json/text。错误 400/404。
           </p>
 

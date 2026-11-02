@@ -391,7 +391,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
     SSRF 校验、HTTP 调用（超时/大小限制/重定向复验）、响应解析、回复模板渲染；
   - `RuleEngine`：内存队列 + 并发（`APP_RULES_WORKER_CONCURRENCY`）、`start/stop` 幂等、
     `handleInboundMessage()` 从 monitor 异步触发（仅文本）；一消息按 priority 只执行首条规则；
-    冷却/小时配额/同消息+规则去重；成功或失败（兜底文案）回复均入 outbox（`source='rule'`）并写日志；
+    同消息+规则去重；成功或失败（兜底文案）回复均入 outbox（`source='rule'`）并写日志；调用频率统一由微信默认发送限流控制；
   - `testRule()` dry-run：管理端"测试运行"使用，不发送、不写运行日志。
 - **monitor.js**：入站消息保存后 fire-and-forget 调用规则引擎（不阻塞 getupdates）。
 - **index.js**：`appRules.start()` / 优雅退出 `stop()`；`APP_RULES_ENABLED=false` 时不启动。

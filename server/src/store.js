@@ -815,9 +815,6 @@ export function mapAppRuleRow(row, { includeStats = true, now = nowMs() } = {}) 
     },
     limits: {
       timeoutMs: toNumber(row.timeout_ms),
-      cooldownMs: toNumber(row.cooldown_ms),
-      maxCallsPerHour: toNumber(row.max_calls_per_hour),
-      maxUserCallsPerHour: toNumber(row.max_user_calls_per_hour),
     },
     stats: includeStats
       ? getAppRuleStats(id, now)

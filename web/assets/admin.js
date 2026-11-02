@@ -1760,7 +1760,7 @@ function openAppRuleEditor(rule = null) {
     value: response.fallbackText || '',
   });
 
-  // 限制
+  // 请求超时（调用频率由微信默认发送限流统一控制，不再配置规则级冷却/小时上限）
   const timeoutInput = el('input', {
     id: 'rule-timeout',
     class: 'input input-narrow',
@@ -1769,33 +1769,6 @@ function openAppRuleEditor(rule = null) {
     max: '30000',
     step: '500',
     value: String(Number(limits.timeoutMs) || 8000),
-  });
-  const cooldownInput = el('input', {
-    id: 'rule-cooldown',
-    class: 'input input-narrow',
-    type: 'number',
-    min: '0',
-    max: '3600000',
-    step: '1000',
-    value: String(Number.isFinite(Number(limits.cooldownMs)) ? Number(limits.cooldownMs) : 10000),
-  });
-  const maxCallsInput = el('input', {
-    id: 'rule-max-calls',
-    class: 'input input-narrow',
-    type: 'number',
-    min: '1',
-    max: '10000',
-    step: '1',
-    value: String(Number(limits.maxCallsPerHour) || 60),
-  });
-  const maxUserCallsInput = el('input', {
-    id: 'rule-max-user-calls',
-    class: 'input input-narrow',
-    type: 'number',
-    min: '1',
-    max: '10000',
-    step: '1',
-    value: String(Number(limits.maxUserCallsPerHour) || 10),
   });
 
   const errorNode = el('p', { id: 'rule-form-error', class: 'inline-error', role: 'alert', hidden: true });
@@ -1895,15 +1868,12 @@ function openAppRuleEditor(rule = null) {
       formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback'),
     ),
     formSection(
-      '限制',
-      null,
+      '请求超时',
+      '调用频率统一由微信默认发送限流控制（默认 7 条 / 5 分钟 / 账号），规则不再单独设置冷却或每小时上限；同一条消息对同一规则仍只执行一次。',
       el(
         'div',
-        { class: 'rule-form-grid rule-form-grid-4' },
+        { class: 'rule-form-grid' },
         formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout'),
-        formField('同用户冷却（ms，0-3600000）', cooldownInput, null, 'rule-cooldown'),
-        formField('规则每小时上限（1-10000）', maxCallsInput, null, 'rule-max-calls'),
-        formField('同用户每小时上限（1-10000）', maxUserCallsInput, null, 'rule-max-user-calls'),
       ),
     ),
   ];
@@ -2017,9 +1987,6 @@ function openAppRuleEditor(rule = null) {
               fallbackText: fallbackInput.value,
             },
             timeoutMs: Number(timeoutInput.value),
-            cooldownMs: Number(cooldownInput.value),
-            maxCallsPerHour: Number(maxCallsInput.value),
-            maxUserCallsPerHour: Number(maxUserCallsInput.value),
           };
           modal.setBusy(true);
           try {

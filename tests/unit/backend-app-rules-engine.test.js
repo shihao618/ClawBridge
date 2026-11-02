@@ -162,7 +162,7 @@ test('去重：同 (消息,规则) 重复触发只执行一次', async () => {
   assert.equal(replyOutbox(user.id).length, 1);
 });
 
-test('冷却：同用户同规则冷却期内跳过并写 skipped 日志', async () => {
+test('旧冷却字段不再限流：连续两条消息都执行', async () => {
   const user = createUser();
   const rule = createRule({ name: '冷却规则', keywords: ['冷却测试'], cooldownMs: 3600_000 });
   await runMessage({ userId: user.id, text: '冷却测试 北京', inboundMessageId: 'in_engine_cd_1' });
@@ -170,21 +170,20 @@ test('冷却：同用户同规则冷却期内跳过并写 skipped 日志', async
   const logs = ruleLogs(rule.id);
   assert.equal(logs.length, 2);
   assert.equal(logs[0].status, 'success');
-  assert.equal(logs[1].status, 'skipped');
-  assert.equal(logs[1].error, 'cooldown');
-  assert.equal(replyOutbox(user.id).length, 1);
+  assert.equal(logs[1].status, 'success');
+  assert.equal(replyOutbox(user.id).length, 2);
 });
 
-test('小时配额：规则级 maxCallsPerHour=1 时后续消息 skipped', async () => {
+test('旧小时配额字段不再限流：maxCallsPerHour=1 时两条都执行', async () => {
   const user = createUser();
-  const rule = createRule({ name: '配额规则', keywords: ['配额测试'], maxCallsPerHour: 1 });
+  const rule = createRule({ name: '配额规则', keywords: ['配额测试'], maxCallsPerHour: 1, maxUserCallsPerHour: 1 });
   await runMessage({ userId: user.id, text: '配额测试 北京', inboundMessageId: 'in_engine_quota_1' });
   await runMessage({ userId: user.id, text: '配额测试 上海', inboundMessageId: 'in_engine_quota_2' });
   const logs = ruleLogs(rule.id);
   assert.equal(logs.length, 2);
   assert.equal(logs[0].status, 'success');
-  assert.equal(logs[1].status, 'skipped');
-  assert.equal(logs[1].error, 'rule hourly limit');
+  assert.equal(logs[1].status, 'success');
+  assert.equal(replyOutbox(user.id).length, 2);
 });
 
 test('范围：groups 规则只对组内用户触发；users 规则只对指定用户触发', async () => {

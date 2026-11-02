@@ -34,7 +34,7 @@
   支持 `since`/`cursor`/`wait` 长轮询、按用户/分组过滤、附件元数据与下载 URL，便于外部系统集成。
 - **接口应用（关键词触发）**：配置规则后，命中「指定用户/分组 + 关键词/正则」的微信消息会自动调用
   外部 HTTP 接口（从消息提取参数、支持 GET/POST/Header/Body 模板），解析返回并回复用户；支持优先级、
-  冷却/小时限额、去重、SSRF 防护（默认拒绝内网）、测试运行与每规则运行日志弹窗；回复模板支持
+  同消息去重、SSRF 防护（默认拒绝内网）、测试运行与每规则运行日志弹窗；调用频率统一由微信默认发送限流控制；回复模板支持
   `{{#each}}` 列表渲染（数组数据一次性拼成名单发送）。
 - **定时通知**：按计划（每 N 分钟，可选每日 HH:mm–HH:mm 生效时间段；或每天 HH:mm；默认 Asia/Shanghai 时区）自动调用外部 HTTP 接口，
   解析返回并通过微信通知指定用户/分组；支持模板（含 `{{#each}}` 列表渲染）、兜底文案、测试运行、
@@ -358,7 +358,7 @@ curl -X POST http://127.0.0.1:10380/api/admin/app-rules \
     "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
     "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}","headers":{}},
     "response":{"type":"json","path":"data","template":"{{data.answer}}","fallbackText":"暂时无法查询天气"},
-    "timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10
+    "timeoutMs":8000
   }'
 
 # 测试运行（dry-run，只展示提取/请求/响应/将回复内容，不发给用户）
@@ -371,7 +371,7 @@ curl -X POST http://127.0.0.1:10380/api/admin/app-rules/rule_xxxxxxxx/test \
   添加主机（也可用 `.env` 的 `APP_RULES_ALLOWED_HOSTS` 作为初始默认）；Header 值加密落库、读取只返回键名；
   请求/响应/日志均脱敏。
 - 机制与模板语法见 [`docs/API_RULES.md`](docs/API_RULES.md)（一消息只执行优先级最高的一条规则；
-  冷却 10s、小时限额、同消息+规则去重、失败兜底文案、运行日志/测试运行）。
+  同消息+规则去重、失败兜底文案、运行日志/测试运行；调用频率统一由微信默认发送限流控制）。
 
 发消息是**异步**的：接口立即返回 `202` 和 outbox id，后台队列在满足微信限流的前提下投递；
 用 `GET /api/v1/messages/{outboxId}` 查询最终投递状态。完整契约（参数、错误码、状态机）见

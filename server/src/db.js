@@ -161,9 +161,9 @@ CREATE TABLE IF NOT EXISTS app_rules (
   reply_template TEXT NOT NULL DEFAULT '',
   fallback_text TEXT NOT NULL DEFAULT '',
   timeout_ms INTEGER NOT NULL DEFAULT 8000,
-  cooldown_ms INTEGER NOT NULL DEFAULT 10000,
-  max_calls_per_hour INTEGER NOT NULL DEFAULT 60,
-  max_user_calls_per_hour INTEGER NOT NULL DEFAULT 10,
+  cooldown_ms INTEGER NOT NULL DEFAULT 0,           -- 遗留列：不再参与限流
+  max_calls_per_hour INTEGER NOT NULL DEFAULT 0,     -- 遗留列：不再参与限流
+  max_user_calls_per_hour INTEGER NOT NULL DEFAULT 0, -- 遗留列：不再参与限流
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

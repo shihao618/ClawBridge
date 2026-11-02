@@ -593,8 +593,7 @@ GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=&offset=
 
 RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,regexPattern}`、
 `extraction{mode,config}`、`request{method,url,headerNames,bodyTemplate}`、
-`response{type,path,template,fallbackText}`、`limits{timeoutMs,cooldownMs,maxCallsPerHour,
-maxUserCallsPerHour}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped24h}`。
+`response{type,path,template,fallbackText}`、`limits{timeoutMs}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped24h}`。
 **Header 值只写不读**（落库 AES-256-GCM 加密，读取只返回 `requestHeaderNames`）。
 
 **触发/模板语法**
@@ -608,7 +607,8 @@ maxUserCallsPerHour}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped
 - 响应：`json` 按点路径（如 `data.answer`）或 `text`；回复模板用 `{{路径}}`（如 `{{data.answer}}`），
   列表支持 `{{count data.list}}` 与 `{{#each data.list}}{{字段}}{{/each}}`（`@index`/`@number`，单层，
   可用 `where 字段=值`/`!=` 过滤）；为空时用解析结果；可配置兜底文案。
-- 限制：同用户同规则冷却（默认 10s）、规则/用户每小时上限、入站消息+规则去重、超时/响应大小限制。
+- 频率控制：规则自身不再设置冷却/每小时上限；调用频率统一由微信账号默认发送限流控制（默认 7 条 / 5 分钟 / 账号）。
+- 保留保护：入站消息+规则去重、请求超时、响应大小限制。
 - 安全：默认拒绝访问内网/本机（SSRF）；需要访问内网接口时在 `APP_RULES_ALLOWED_HOSTS` 加白名单。
 
 **配置（环境变量）**
@@ -635,7 +635,7 @@ curl -X POST http://localhost:10380/api/admin/app-rules \
     "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
     "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}","headers":{}},
     "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询天气"},
-    "timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10
+    "timeoutMs":8000
   }'
 
 # 2) 测试运行（dry-run，不发用户）

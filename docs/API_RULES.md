@@ -10,7 +10,7 @@
 monitor 收到入站消息并落库
   → app-rules 引擎（异步队列，不阻塞 getupdates）
      ├─ 规则启用？范围命中（全部/指定用户/指定分组）？
-     ├─ 关键词/正则命中？冷却/小时限额未超？
+     ├─ 关键词/正则命中？同消息+规则未重复？
      ├─ 按 priority 取第一条命中规则（一消息最多执行一条）
      ├─ 参数提取（none / multi；multi 内组合 trailing/regex/json/fulltext 提取项）
      ├─ 渲染请求模板（URL/Headers/Body）→ HTTP 调用（SSRF 防护/超时/大小限制）
@@ -45,9 +45,9 @@ CREATE TABLE IF NOT EXISTS app_rules (
   reply_template TEXT NOT NULL DEFAULT '',
   fallback_text TEXT NOT NULL DEFAULT '',
   timeout_ms INTEGER NOT NULL DEFAULT 8000,
-  cooldown_ms INTEGER NOT NULL DEFAULT 10000,       -- 同用户同规则冷却
-  max_calls_per_hour INTEGER NOT NULL DEFAULT 60,   -- 规则级小时上限
-  max_user_calls_per_hour INTEGER NOT NULL DEFAULT 10, -- 同用户同规则小时上限
+  cooldown_ms INTEGER NOT NULL DEFAULT 0,           -- 遗留列：已不再参与限流
+  max_calls_per_hour INTEGER NOT NULL DEFAULT 0,     -- 遗留列：已不再参与限流
+  max_user_calls_per_hour INTEGER NOT NULL DEFAULT 0, -- 遗留列：已不再参与限流
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -215,9 +215,8 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 ## 6. 限流与去重
 
 - 同一入站消息对同一规则最多执行一次（DB 唯一索引，插入日志冲突视为重复跳过）。
-- 同用户同规则冷却 `cooldown_ms`（默认 10s）：查询该规则+用户最近一次 `matched/success` 日志时间。
-- 规则级 `max_calls_per_hour`、用户级 `max_user_calls_per_hour`：按最近 1h 日志数（成功+失败）计算；
-  超限直接跳过（写 `skipped` 日志）。
+- 规则自身不再执行冷却或每小时配额；调用频率统一由微信账号默认发送限流控制（`RATE_LIMIT_MAX=7` / `RATE_LIMIT_WINDOW_MS=300000`，即 7 条 / 5 分钟 / 账号）。
+- `cooldown_ms` / `max_calls_per_hour` / `max_user_calls_per_hour` 为遗留列，接口不再返回，也不参与执行。
 - 队列并发 `workerConcurrency`，队列上限 `maxQueue`（满了丢弃并 warn 日志）。
 - 一消息命中多条规则：按 `priority ASC, created_at ASC` **只取第一条**。
 - 执行过程中日志先写 `status='matched'` 中间态（表示已匹配、请求进行中），完成后更新为
@@ -236,7 +235,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headerNames":["Authorization"],"bodyTemplate":""},
   "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
-  "limits":{"timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10},
+  "limits":{"timeoutMs":8000},
   "stats":{"lastRunAt":0,"lastStatus":"","success24h":0,"failed24h":0,"skipped24h":0},
   "createdAt":0,"updatedAt":0
 }
@@ -271,13 +270,13 @@ GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=50&offset=0
   "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headers":{"Authorization":"Bearer xxx"},"bodyTemplate":""},
   "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
-  "timeoutMs":8000,"cooldownMs":10000,"maxCallsPerHour":60,"maxUserCallsPerHour":10
+  "timeoutMs":8000
 }
 ```
 
 校验：name 1..60；scope.type ∈ all/users/groups（users/groups 时 ids 非空且存在）；matchMode 合法；
 contains/equals 关键词 1..10 个、每个 1..50 字；regex 合法；extraction.mode/config 合法；
-URL http(s) 合法；timeoutMs 1000..30000；cooldownMs 0..3600000；每小时上限 1..10000；
+URL http(s) 合法；timeoutMs 1000..30000；
 response.type ∈ json/text。错误 400/404/409（重名可选，本版允许重名）。
 
 ## 8. 前端（管理后台）
@@ -287,7 +286,7 @@ response.type ∈ json/text。错误 400/404/409（重名可选，本版允许�
 2. 规则表单：基本信息（名称/启用/优先级）、触发范围（全部/指定用户多选/指定分组多选）、
    匹配（包含/全等/正则 + 关键词/正则）、参数提取（4 种模式 + 配置 + 实时示例说明）、
    请求（方法/URL/Header 列表/body 模板；GET 时隐藏 Body、参数写 URL）、响应（类型/JSON 路径/回复模板/兜底文案）、
-   限制（超时/冷却/小时上限）；
+   请求超时；调用频率由微信默认发送限流控制；
 3. 「测试运行」弹窗：输入示例消息/选择用户 → 显示提取参数、实际请求 URL、HTTP 状态/耗时、
    响应预览、将回复文本（不发给用户）；
 4. 「运行日志」表格：时间/规则/用户/状态/HTTP/耗时/错误/参数与响应预览；支持状态筛选、分页；
@@ -302,7 +301,7 @@ response.type ∈ json/text。错误 400/404/409（重名可选，本版允许�
   （仅文本消息触发；异步不阻塞轮询）。
 - `index.js`：`appRules.start()`（`config.appRules.enabled=false` 时不启动）与优雅退出
   `appRules.stop()`。
-- `store.js`：规则 CRUD/日志写入/统计/冷却与配额查询/去重索引处理。
+- `store.js`：规则 CRUD/日志写入/统计/去重索引处理。
 - `db.js`：schema v5。
 - `api.js`：§7 全部管理端接口 + 校验 + Header 加解密 + 测试运行 + 日志查询。
 - `crypto.js` 复用加密；`logger` 复用脱敏。
@@ -310,7 +309,7 @@ response.type ∈ json/text。错误 400/404/409（重名可选，本版允许�
 ## 10. MVP 范围（本次实现）
 
 - 文本触发；范围 all/users/groups；match contains/equals/regex；参数提取 none/multi（组合项 trailing/regex/json/fulltext）；
-  GET/POST + URL/Header/Body 模板；响应 json/text + 路径 + 回复模板 + 兜底；冷却/小时限额/队列并发/
+  GET/POST + URL/Header/Body 模板；响应 json/text + 路径 + 回复模板 + 兜底；队列并发/
   去重；SSRF 防护与允许名单；后台规则管理 + 测试运行 + 日志；e2e（本地 mock 外部 API 全链路）；
   文档；schema v5 真实迁移验证。
 - 不包含（后续）：多步对话/有状态会话、LLM 参数抽取、媒体回复、HMAC/OAuth2、多规则级联、
