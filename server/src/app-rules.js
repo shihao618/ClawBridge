@@ -424,41 +424,162 @@ function resolveCountValue(rawSpec, contextStack, responseRoot) {
   return countValue(value);
 }
 
-/** 模板 token 化：文本 / 变量 / each 开始 / each 结束。 */
+/** 模板 token 化：文本 / 变量 / each、if、unless 块 / else if / else / 闭合。 */
 function tokenizeTemplate(template) {
   const tokens = [];
-  const pattern = /\{\{#each(?:\s+([^{}]*?))?\s*\}\}|\{\{\/each\}\}|\{\{([^{}]+?)\}\}/g;
+  const pattern =
+    /\{\{\s*#(each|if|unless)(?:\s+([^{}]*?))?\s*\}\}|\{\{\s*\/(each|if|unless)\s*\}\}|\{\{\s*else\s+if\s+([^{}]*?)\}\}|\{\{\s*else\s*\}\}|\{\{([^{}]+?)\}\}/gi;
   let lastIndex = 0;
   let match;
   while ((match = pattern.exec(template)) !== null) {
     if (match.index > lastIndex) tokens.push({ type: 'text', value: template.slice(lastIndex, match.index) });
-    if (match[0].startsWith('{{#each')) tokens.push({ type: 'each', spec: String(match[1] ?? '').trim() });
-    else if (match[0] === '{{/each}}') tokens.push({ type: 'close' });
-    else tokens.push({ type: 'var', expr: String(match[2] ?? '').trim() });
+    if (match[1]) {
+      tokens.push({ type: 'block', name: match[1].toLowerCase(), spec: String(match[2] ?? '').trim() });
+    } else if (match[3]) {
+      tokens.push({ type: 'close', name: match[3].toLowerCase() });
+    } else if (match[4] !== undefined) {
+      tokens.push({ type: 'elseif', expr: String(match[4] ?? '').trim() });
+    } else if (/^\{\{\s*else\s*\}\}$/i.test(match[0])) {
+      tokens.push({ type: 'else' });
+    } else {
+      tokens.push({ type: 'var', expr: String(match[5] ?? '').trim() });
+    }
     lastIndex = pattern.lastIndex;
   }
   if (lastIndex < template.length) tokens.push({ type: 'text', value: template.slice(lastIndex) });
   return tokens;
 }
 
-/** 查找与 start 处 each 匹配的结束 token 下标（-1=未闭合）。 */
-function findMatchingEnd(tokens, start) {
-  let depth = 0;
-  for (let index = start; index < tokens.length; index += 1) {
-    if (tokens[index].type === 'each') depth += 1;
-    else if (tokens[index].type === 'close') {
-      depth -= 1;
-      if (depth === 0) return index;
+/** 查找与 start 处 block 匹配的结束 token 下标（-1=未闭合）；each/if/unless 可互相嵌套。 */
+function findMatchingBlockEnd(tokens, start) {
+  const stack = [tokens[start].name];
+  for (let index = start + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type === 'block') {
+      stack.push(token.name);
+    } else if (token.type === 'close') {
+      if (stack[stack.length - 1] !== token.name) return -1;
+      stack.pop();
+      if (stack.length === 0) return index;
     }
   }
   return -1;
 }
 
-/** 解析单个变量表达式（字段 / @index / @number / count / response / raw / 上级字段）。 */
+/** 找出 block 体内同层的 else if / else 下标（嵌套块内部的 else 不计入）。 */
+function findBlockStops(tokens, start, end) {
+  const stops = [];
+  const stack = [tokens[start].name];
+  for (let index = start + 1; index < end; index += 1) {
+    const token = tokens[index];
+    if (token.type === 'block') {
+      stack.push(token.name);
+    } else if (token.type === 'close') {
+      if (stack[stack.length - 1] !== token.name) return stops;
+      stack.pop();
+    } else if (stack.length === 1 && (token.type === 'elseif' || token.type === 'else')) {
+      stops.push(index);
+    }
+  }
+  return stops;
+}
+
+function unquoteTemplateLiteral(raw) {
+  const text = String(raw ?? '').trim();
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  ) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+/** 模板判断的真值：空串/0/false/null/undefined/空数组/空对象为假。 */
+function isTruthyTemplateValue(value) {
+  if (value === undefined || value === null || value === false) return false;
+  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+/** default 视为空的值：undefined/null/空串/空数组；0/false 保留。 */
+function isEmptyTemplateValue(value) {
+  return (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+/** 解析判断表达式左侧：支持路径、count、数字/带引号字面量。 */
+function resolveConditionLeft(raw, contextStack, responseRoot) {
+  const text = String(raw ?? '').trim();
+  if (!text) return '';
+  if (/^count\s+/i.test(text)) return resolveCountValue(text.slice(6).trim(), contextStack, responseRoot);
+  if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) return Number(text);
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    return unquoteTemplateLiteral(text);
+  }
+  return resolveTemplatePath(text, contextStack, responseRoot);
+}
+
+/** 判断右侧按字面量处理；数字转为 number，带引号去引号，其余为字符串。 */
+function resolveConditionRight(raw) {
+  const text = String(raw ?? '').trim();
+  if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) return Number(text);
+  return unquoteTemplateLiteral(text);
+}
+
+/**
+ * 执行 if/unless 判断。
+ * 支持真值判断、= / == / != / > / >= / < / <= 比较，左侧可为 path 或 count。
+ */
+function evaluateTemplateCondition(raw, contextStack, responseRoot) {
+  const text = String(raw ?? '').trim();
+  if (!text) return false;
+  const match = text.match(/^(.+?)\s*(==|!=|>=|<=|=|>|<)\s*(.+)$/);
+  if (!match) return isTruthyTemplateValue(resolveConditionLeft(text, contextStack, responseRoot));
+
+  const left = resolveConditionLeft(match[1], contextStack, responseRoot);
+  const op = match[2];
+  const right = resolveConditionRight(match[3]);
+  if (op === '=' || op === '==') {
+    if (typeof left === 'number' && typeof right === 'number') return left === right;
+    return (left === undefined || left === null ? '' : String(left)) === String(right);
+  }
+  if (op === '!=') {
+    if (typeof left === 'number' && typeof right === 'number') return left !== right;
+    return (left === undefined || left === null ? '' : String(left)) !== String(right);
+  }
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) return false;
+  if (op === '>') return leftNumber > rightNumber;
+  if (op === '>=') return leftNumber >= rightNumber;
+  if (op === '<') return leftNumber < rightNumber;
+  return leftNumber <= rightNumber;
+}
+
+/** `{{default path "兜底文案"}}`：值空时使用兜底文案。 */
+function resolveDefaultVariable(raw, contextStack, responseRoot) {
+  const match = String(raw ?? '').trim().match(/^default\s+(\S+)(?:\s+([\s\S]+))?$/i);
+  if (!match) return '';
+  const value = resolveTemplatePath(match[1], contextStack, responseRoot);
+  if (!isEmptyTemplateValue(value)) return valueToText(value);
+  return unquoteTemplateLiteral(match[2] ?? '');
+}
+
 function resolveTemplateVariable(expr, contextStack, metaStack, options) {
   const text = String(expr ?? '').trim();
   if (text === 'response') return options.responseText ?? '';
   if (text === 'raw') return options.rawText ?? '';
+  if (/^default\s+/i.test(text)) {
+    return resolveDefaultVariable(text, contextStack, options.responseRoot);
+  }
 
   const parentIndexMatch = text.match(/^((?:\.\.\/)+)@(index|number)$/);
   if (parentIndexMatch) {
@@ -496,25 +617,51 @@ function renderTemplateTokens(tokens, contextStack, metaStack, options, depth = 
       index += 1;
       continue;
     }
-    if (token.type === 'close') {
+    if (token.type === 'close' || token.type === 'elseif' || token.type === 'else') {
       index += 1;
       continue;
     }
-    if (token.type === 'each') {
-      const endIndex = findMatchingEnd(tokens, index);
+    if (token.type === 'block') {
+      const endIndex = findMatchingBlockEnd(tokens, index);
       const bodyEnd = endIndex === -1 ? tokens.length : endIndex;
-      const body = tokens.slice(index + 1, bodyEnd);
-      const parsed = parseListSpec(token.spec);
-      const value = resolveTemplatePath(parsed.path, contextStack, options.responseRoot);
-      const list = filterList(value, parsed.filter);
-      for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
-        output += renderTemplateTokens(
-          body,
-          [...contextStack, list[itemIndex]],
-          [...metaStack, { index: itemIndex, number: itemIndex + 1 }],
-          options,
-          depth + 1,
-        );
+      if (token.name === 'each') {
+        const body = tokens.slice(index + 1, bodyEnd);
+        const parsed = parseListSpec(token.spec);
+        const value = resolveTemplatePath(parsed.path, contextStack, options.responseRoot);
+        const list = filterList(value, parsed.filter);
+        for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
+          output += renderTemplateTokens(
+            body,
+            [...contextStack, list[itemIndex]],
+            [...metaStack, { index: itemIndex, number: itemIndex + 1 }],
+            options,
+            depth + 1,
+          );
+        }
+      } else if (token.name === 'if' || token.name === 'unless') {
+        const stops = findBlockStops(tokens, index, bodyEnd);
+        const sections = [];
+        let expr = token.spec;
+        let sectionStart = index + 1;
+        for (const stopIndex of stops) {
+          sections.push({ expr, body: tokens.slice(sectionStart, stopIndex) });
+          expr = tokens[stopIndex].type === 'elseif' ? tokens[stopIndex].expr : null;
+          sectionStart = stopIndex + 1;
+        }
+        sections.push({ expr, body: tokens.slice(sectionStart, bodyEnd) });
+        for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex += 1) {
+          const section = sections[sectionIndex];
+          const matched =
+            section.expr === null
+              ? true
+              : token.name === 'unless' && sectionIndex === 0
+                ? !evaluateTemplateCondition(section.expr, contextStack, options.responseRoot)
+                : evaluateTemplateCondition(section.expr, contextStack, options.responseRoot);
+          if (matched) {
+            output += renderTemplateTokens(section.body, contextStack, metaStack, options, depth + 1);
+            break;
+          }
+        }
       }
       index = endIndex === -1 ? tokens.length : endIndex + 1;
       continue;
@@ -537,6 +684,32 @@ export function renderReplyTemplate(template, { root, responseText = '', rawText
   const tokens = tokenizeTemplate(tpl);
   const rendered = renderTemplateTokens(tokens, [root], [], { responseText, rawText, responseRoot });
   return truncate(rendered, MAX_REPLY_LENGTH());
+}
+
+/**
+ * 用示例响应离线预览模板（不访问外部接口），复用真实响应解析与模板引擎。
+ * @returns {{responseText:string, replyText:string, usedFallback:boolean}}
+ */
+export function previewReplyTemplate({
+  responseType = 'json',
+  responsePath = '',
+  template = '',
+  fallbackText = '',
+  rawText = '',
+} = {}) {
+  const parsed = parseResponse({ responseType, responsePath, rawText });
+  const rendered = renderReplyTemplate(template, {
+    root: parsed.templateRoot,
+    responseText: parsed.responseText,
+    rawText: parsed.rawText,
+    responseRoot: parsed.root,
+  });
+  const usedFallback = rendered.trim() === '';
+  return {
+    responseText: parsed.responseText,
+    replyText: usedFallback ? String(fallbackText ?? '') : rendered,
+    usedFallback,
+  };
 }
 
 // ---------------------------------------------------------------------------

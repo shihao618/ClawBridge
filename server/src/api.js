@@ -1251,6 +1251,27 @@ export function createApp() {
     );
   });
 
+  // 回复模板离线预览：用示例响应走真实解析/模板引擎，不访问外部接口。
+  app.post('/api/admin/template-preview', auth.requireAdminWrite, (req, res) => {
+    const body = requireJsonBody(req);
+    const sample = typeof body.sample === 'string' ? body.sample : '';
+    if (sample.trim() === '') throw badRequest('sample 必须是非空字符串');
+    if (Buffer.byteLength(sample, 'utf8') > config.appRules.maxResponseBytes) {
+      throw badRequest(`sample 不能超过 ${config.appRules.maxResponseBytes} 字节`);
+    }
+    const responseType = body.responseType === 'text' ? 'text' : 'json';
+    const responsePath = typeof body.responsePath === 'string' ? body.responsePath : '';
+    const template = typeof body.template === 'string' ? body.template : '';
+    const fallbackText = typeof body.fallbackText === 'string' ? body.fallbackText : '';
+    let preview;
+    try {
+      preview = appRules.previewReplyTemplate({ responseType, responsePath, template, fallbackText, rawText: sample });
+    } catch (err) {
+      throw badRequest(err?.message || '示例响应解析失败');
+    }
+    res.json(preview);
+  });
+
   // -------------------------------------------------------------------------
   // 定时通知（docs/SCHEDULED_TASKS.md §5）
   // -------------------------------------------------------------------------

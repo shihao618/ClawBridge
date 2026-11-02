@@ -258,6 +258,44 @@ test('模板渲染：请求 {var} + URL 编码；回复 {{path}}/{{response}}/{{
   );
 });
 
+test('模板条件判断（if/else if/else/unless、比较、真值）与 default 兜底', () => {
+  const root = {
+    data: {
+      total: 39,
+      status: 'returned',
+      items: [
+        { name: '张三', returned: true },
+        { name: '李四', returned: false },
+      ],
+      emptyItems: [],
+      student: { name: '', className: '智科' },
+    },
+  };
+  const render = (template) => appRules.renderReplyTemplate(template, { root });
+
+  assert.equal(render('{{#if data.status=returned}}已归寝{{else}}未归寝{{/if}}'), '已归寝');
+  assert.equal(render('{{#if data.status != returned}}未归寝{{else}}已归寝{{/if}}'), '已归寝');
+  assert.equal(render('{{#if data.status="returned"}}已归寝{{/if}}'), '已归寝');
+  assert.equal(render('{{#if data.items}}有数据{{else}}无数据{{/if}}'), '有数据');
+  assert.equal(render('{{#if data.emptyItems}}有数据{{else}}无数据{{/if}}'), '无数据');
+  assert.equal(render('{{#if count data.emptyItems>0}}有{{else}}无{{/if}}'), '无');
+  assert.equal(
+    render('{{#if data.total>100}}多{{else if data.total>=39}}正常{{else}}少{{/if}}'),
+    '正常',
+  );
+  assert.equal(render('{{#if data.total<39}}少{{else}}不少{{/if}}'), '不少');
+  assert.equal(render('{{#unless data.emptyItems}}空数组{{/unless}}'), '空数组');
+  assert.equal(
+    render('{{#each data.items}}{{#if returned=true}}{{name}}已归寝；{{else}}{{name}}未归寝；{{/if}}{{/each}}'),
+    '张三已归寝；李四未归寝；',
+  );
+  assert.equal(render('{{default data.student.name "未知姓名"}}'), '未知姓名');
+  assert.equal(render('{{default data.student.className "未知班级"}}'), '智科');
+  assert.equal(render('{{default data.total "无"}}'), '39');
+  assert.equal(render('{{default data.emptyItems "暂无"}}'), '暂无');
+  assert.equal(render('{{default data.student "缺失"}}'), '{"name":"","className":"智科"}');
+});
+
 test('parseResponse：json 路径 / 空路径 reply / 对象 stringify / text', () => {
   const pathResult = appRules.parseResponse({ responseType: 'json', responsePath: 'data.answer', rawText: '{"data":{"answer":"晴"}}' });
   assert.equal(pathResult.responseText, '晴');
@@ -272,6 +310,21 @@ test('parseResponse：json 路径 / 空路径 reply / 对象 stringify / text', 
   const textResult = appRules.parseResponse({ responseType: 'text', rawText: '  纯文本  ' });
   assert.equal(textResult.responseText, '纯文本');
   assert.throws(() => appRules.parseResponse({ responseType: 'json', rawText: 'not-json' }), /JSON/);
+
+  const preview = appRules.previewReplyTemplate({
+    responseType: 'json',
+    responsePath: 'data',
+    template: '{{#if total>0}}共 {{total}} 人{{else}}暂无数据{{/if}}',
+    fallbackText: '兜底',
+    rawText: '{"data":{"total":39}}',
+  });
+  assert.equal(preview.responseText, '{"total":39}');
+  assert.equal(preview.replyText, '共 39 人');
+  assert.equal(preview.usedFallback, false);
+  assert.equal(
+    appRules.previewReplyTemplate({ responseType: 'json', rawText: '{"data":{}}', template: '{{#if data.x}}有{{/if}}', fallbackText: '兜底' }).replyText,
+    '兜底',
+  );
 
   const arrayPath = appRules.parseResponse({ responseType: 'json', responsePath: 'data.0.answer', rawText: '{"data":[{"answer":"第一"}]}' });
   assert.equal(arrayPath.responseText, '第一');

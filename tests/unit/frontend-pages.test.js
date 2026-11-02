@@ -982,6 +982,36 @@ test('接口应用与定时通知：重设 Header 的实际操作一致（保留
   assert.ok(!admin.includes('现有 Header（值已加密不回显）'), '旧 Header 展示不应保留');
 });
 
+test('响应模板：条件判断、默认值与离线预览入口', async () => {
+  const [admin, html, css] = await Promise.all([
+    readAsset('admin.js'),
+    readPage('docs.html'),
+    readAsset('style.css'),
+  ]);
+  for (const token of [
+    'buildTemplatePreviewButton',
+    'openTemplatePreviewModal',
+    'template-preview-sample',
+    'template-preview-result',
+    '预览模板',
+  ]) {
+    assert.ok(admin.includes(token), `admin.js 应包含模板预览实现：${token}`);
+  }
+  for (const token of [
+    '/api/admin/template-preview',
+    '{{#if',
+    '{{else if',
+    '{{#unless',
+    '{{default',
+  ]) {
+    assert.ok(admin.includes(token), `admin.js 应包含模板条件/预览实现：${token}`);
+    assert.ok(html.includes(token), `docs.html 应说明模板条件/预览：${token}`);
+  }
+  for (const token of ['.template-preview-result', 'white-space: pre-wrap', 'overflow-wrap: anywhere']) {
+    assert.ok(css.includes(token), `style.css 应包含模板预览样式：${token}`);
+  }
+});
+
 test('定时通知：文档页章节与 docs/SCHEDULED_TASKS.md 一致', async () => {
   const [contract, html] = await Promise.all([
     fs.readFile(path.join(ROOT, 'docs', 'SCHEDULED_TASKS.md'), 'utf8'),
@@ -993,6 +1023,7 @@ test('定时通知：文档页章节与 docs/SCHEDULED_TASKS.md 一致', async (
     '/api/admin/scheduled-tasks/{id}',
     '/api/admin/scheduled-tasks/{id}/duplicate',
     '/api/admin/scheduled-tasks/{id}/test',
+    '/api/admin/template-preview',
     '/api/admin/scheduled-tasks/{id}/run',
     '/api/admin/scheduled-task-logs',
     'SCHEDULER_ENABLED',
@@ -1172,6 +1203,9 @@ test('文档页接口应用章节与 docs/API_RULES.md 一致', async () => {
     '/api/admin/app-rules/{id}',
     '/api/admin/app-rules/{id}/duplicate',
     '/api/admin/app-rules/{id}/test',
+    '/api/admin/template-preview',
+    '{{#if',
+    '{{default',
     '/api/admin/app-rule-logs',
     'APP_RULES_ENABLED',
     'APP_RULE_TIMEOUT_MS',

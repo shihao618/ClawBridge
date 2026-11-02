@@ -1259,6 +1259,70 @@ function parseHeadersInput(text) {
   return headers;
 }
 
+function buildTemplatePreviewButton(getValues, title = '模板预览') {
+  const button = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '预览模板' });
+  button.addEventListener('click', () => openTemplatePreviewModal({ getValues, title }));
+  return button;
+}
+
+/** 离线模板预览：用粘贴的示例响应调用后端真实模板引擎，不访问外部接口。 */
+function openTemplatePreviewModal({ getValues, title = '模板预览' }) {
+  const sampleInput = el('textarea', {
+    id: 'template-preview-sample',
+    class: 'textarea',
+    rows: '7',
+    placeholder: '粘贴接口返回的示例数据（JSON 或文本），例如：\n{"data":{"total":2,"items":[]}}',
+  });
+  const statusLine = el('p', { class: 'form-hint', text: '仅使用粘贴的示例数据渲染，不会调用外部接口。' });
+  const resultBox = el('pre', { id: 'template-preview-result', class: 'template-preview-result', hidden: true });
+  openTrackedModal({
+    title,
+    size: 'wide',
+    content: [
+      statusLine,
+      formField('示例响应', sampleInput, '支持 JSON 或文本；配置的响应路径、回复模板和兜底文案会按真实规则处理。', 'template-preview-sample'),
+      resultBox,
+    ],
+    actions: [
+      { label: '关闭', class: 'btn btn-secondary' },
+      {
+        label: '渲染预览',
+        class: 'btn btn-primary',
+        closeOnClick: false,
+        onClick: async () => {
+          const values = (typeof getValues === 'function' ? getValues() : null) || {};
+          const sample = String(sampleInput.value || '');
+          if (sample.trim() === '') {
+            resultBox.hidden = false;
+            resultBox.textContent = '请先粘贴示例响应';
+            return;
+          }
+          try {
+            const data = await apiFetch('/api/admin/template-preview', {
+              method: 'POST',
+              body: {
+                sample,
+                responseType: values.responseType === 'text' ? 'text' : 'json',
+                responsePath: values.responsePath || '',
+                template: values.template || '',
+                fallbackText: values.fallbackText || '',
+              },
+            });
+            resultBox.hidden = false;
+            resultBox.textContent = data.replyText || '（渲染结果为空）';
+            statusLine.textContent = data.usedFallback
+              ? '模板结果为空，已使用兜底文案；未访问外部接口。'
+              : `预览完成${data.responseText ? `（解析值：${String(data.responseText).slice(0, 200)}）` : ''}；未访问外部接口。`;
+          } catch (error) {
+            resultBox.hidden = false;
+            resultBox.textContent = error && error.message ? error.message : '模板预览失败';
+          }
+        },
+      },
+    ],
+  });
+}
+
 function openAppRuleEditor(rule = null) {
   const isEdit = Boolean(rule && rule.id);
   const source = isEdit ? rule : {};
@@ -1818,7 +1882,16 @@ function openAppRuleEditor(rule = null) {
         formField('响应类型', responseTypeSelect, null, 'rule-response-type'),
         formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path'),
       ),
-      formField('回复模板', replyTemplateInput, '支持 {{data.answer}}、{{reply}}、{{response}}、{{raw}}；JSON 路径选中节点即模板根（路径=data.list 时写 {{count .}}/{{#each .}}，空路径才写 {{data.list}}）。支持多层循环、{{../字段}}、{{../@index}}、{{@root.字段}}/{{@responseRoot.字段}}（@root=模板根、@responseRoot=完整响应根；@index/@number 为循环下标/序号），可用 where 字段=值 过滤；为空时直接使用解析结果。', 'rule-reply-template'),
+      formField('回复模板', replyTemplateInput, '支持 {{data.answer}}、{{reply}}、{{response}}、{{raw}}；JSON 路径选中节点即模板根（路径=data.list 时写 {{count .}}/{{#each .}}，空路径才写 {{data.list}}）。支持多层循环、{{../字段}}、{{../@index}}、{{@root.字段}}/{{@responseRoot.字段}}（@root=模板根、@responseRoot=完整响应根；@index/@number 为循环下标/序号），可用 where 字段=值 过滤；支持 {{#if 条件}}...{{else if 条件}}...{{else}}...{{/if}}、{{#unless 条件}} 与 {{default 路径 "兜底"}}；为空时直接使用解析结果。', 'rule-reply-template'),
+      el('div', { class: 'form-row-between' },
+        el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览模板，不调用外部接口。' }),
+        buildTemplatePreviewButton(() => ({
+          responseType: responseTypeSelect.value,
+          responsePath: responsePathInput.value.trim(),
+          template: replyTemplateInput.value,
+          fallbackText: fallbackInput.value,
+        }), '预览规则回复'),
+      ),
       formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback'),
     ),
     formSection(
@@ -2944,7 +3017,16 @@ async function openScheduleEditor(task = null) {
         formField('响应类型', responseTypeSelect, null, 'schedule-response-type'),
         formField('JSON 路径', responsePathInput, 'response.type=json 时按点路径取值。', 'schedule-response-path'),
       ),
-      formField('通知模板', replyTemplateInput, '支持 {{路径}}、{{response}}、{{raw}}；JSON 路径选中节点即模板根（路径=data.list 时写 {{count .}}/{{#each .}}，空路径才写 {{data.list}}）。支持多层循环、{{../字段}}、{{../@index}}、{{@root.字段}}/{{@responseRoot.字段}}（@root=模板根、@responseRoot=完整响应根；@index/@number 为循环下标/序号），可用 where 字段=值 过滤；为空时直接使用解析结果。', 'schedule-reply-template'),
+      formField('通知模板', replyTemplateInput, '支持 {{路径}}、{{response}}、{{raw}}；JSON 路径选中节点即模板根（路径=data.list 时写 {{count .}}/{{#each .}}，空路径才写 {{data.list}}）。支持多层循环、{{../字段}}、{{../@index}}、{{@root.字段}}/{{@responseRoot.字段}}（@root=模板根、@responseRoot=完整响应根；@index/@number 为循环下标/序号），可用 where 字段=值 过滤；支持 {{#if 条件}}...{{else if 条件}}...{{else}}...{{/if}}、{{#unless 条件}} 与 {{default 路径 "兜底"}}；为空时直接使用解析结果。', 'schedule-reply-template'),
+      el('div', { class: 'form-row-between' },
+        el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览模板，不调用外部接口。' }),
+        buildTemplatePreviewButton(() => ({
+          responseType: responseTypeSelect.value,
+          responsePath: responsePathInput.value.trim(),
+          template: replyTemplateInput.value,
+          fallbackText: fallbackInput.value,
+        }), '预览通知'),
+      ),
       formField('兜底文案', fallbackInput, '接口失败/解析失败时发给全部目标；为空则不发送。', 'schedule-fallback'),
       formField('超时（ms，1000-30000）', timeoutInput, null, 'schedule-timeout'),
     ),

@@ -159,6 +159,7 @@ DELETE /api/admin/scheduled-tasks/{id}               → 204
 POST   /api/admin/scheduled-tasks/{id}/test          → 200（dry-run：真实调用接口、渲染通知，不发送、不写运行日志）
 POST   /api/admin/scheduled-tasks/{id}/run           → 200（立即执行一次：真实调用并发送、写日志、更新 next_run_at）
 GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset= → { total, items:[...] }
+POST   /api/admin/template-preview                   → 200 { responseText, replyText, usedFallback }（示例响应离线预览）
 ```
 
 创建/更新请求体：

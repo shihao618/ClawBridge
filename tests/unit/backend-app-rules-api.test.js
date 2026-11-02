@@ -215,6 +215,37 @@ test('复制规则：新 id、副本默认停用、完整复制请求/响应/加
   assertError(await adminWrite('POST', '/api/admin/app-rules/rule_missing/duplicate'), 404, 'NOT_FOUND');
 });
 
+test('POST /api/admin/template-preview：离线示例渲染条件/default，非法 JSON 400', async () => {
+  const preview = await adminWrite('POST', '/api/admin/template-preview', {
+    sample: '{"data":{"total":2,"items":[{"name":"张三","returned":true},{"name":"李四","returned":false}]}}',
+    responseType: 'json',
+    responsePath: 'data',
+    template:
+      '{{#if total>0}}共 {{total}} 人\n{{#each items}}{{#if returned=true}}{{name}}已归寝{{else}}{{name}}未归寝{{/if}}\n{{/each}}{{else}}暂无数据{{/if}}{{default missing "缺省"}}',
+    fallbackText: '兜底',
+  });
+  assert.equal(preview.status, 200, preview.text);
+  assert.equal(preview.json.replyText, '共 2 人\n张三已归寝\n李四未归寝\n缺省');
+  assert.equal(preview.json.usedFallback, false);
+  assert.ok(!preview.text.includes('"sample"'), '预览响应不应回显 sample');
+
+  assertError(
+    await adminWrite('POST', '/api/admin/template-preview', {
+      sample: 'not-json',
+      responseType: 'json',
+      responsePath: 'data',
+      template: '{{x}}',
+    }),
+    400,
+    'BAD_REQUEST',
+  );
+  assertError(
+    await adminWrite('POST', '/api/admin/template-preview', { sample: '   ', responseType: 'json', template: '' }),
+    400,
+    'BAD_REQUEST',
+  );
+});
+
 test('更新/删除：PATCH 局部更新、headers 全量替换/清空、校验、DELETE', async () => {
   const created = await adminWrite('POST', '/api/admin/app-rules', validRuleBody({ name: '待更新规则' }));
   const rule = created.json.rule;

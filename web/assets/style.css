@@ -4003,3 +4003,25 @@ body.admin-authed .admin-main {
     padding: 8px 10px;
   }
 }
+/* 回复模板离线预览结果 */
+.template-preview-result {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 320px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.template-preview-result[hidden] {
+  display: none;
+}
