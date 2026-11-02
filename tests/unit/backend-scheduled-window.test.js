@@ -273,8 +273,8 @@ test('API：间隔任务窗口字段创建/更新/TaskView；nextRunAt 落在窗
     assert.match(result.json.error.message || result.text, new RegExp(snippet));
   }
 
-  // DB schema v9 + 旧数据列默认值
-  assert.equal(getDb().prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
+  // DB schema v10
+  assert.equal(getDb().prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '10');
   const columns = new Set(getDb().prepare('PRAGMA table_info(scheduled_tasks)').all().map((row) => row.name));
   assert.ok(columns.has('window_start') && columns.has('window_end'));
 });

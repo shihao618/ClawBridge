@@ -136,7 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   `crypto.decryptSecretOrNull()` 读取；任何 API/日志不得返回明文 token。
 - 时间统一为毫秒整数。
 - 开启 WAL；`db.js` 内设置 `busy_timeout`（如 5000）。单进程写，无需连接池。
-- schema：`meta` 表存 `schema_version`，当前版本 9；**不再支持旧版本迁移**。启动时若发现非当前
+- schema：`meta` 表存 `schema_version`，当前版本 10；**不再支持旧版本迁移**。启动时若发现非当前
   版本（且非全新库）直接失败，要求备份后使用新版空库；当前 schema 使用 `CREATE TABLE IF NOT EXISTS` 建表。
 
 
@@ -409,9 +409,9 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 
 - **背景**：无需用户发消息，按计划主动调用外部接口 → 解析 → 通过微信通知指定用户/分组
   （如每天 8:00 天气、每 30 分钟订单状态）。
-- **DB v7/v9（additive）**：新表 `scheduled_tasks`（任务配置，Header 加密存 `request_headers_enc`）与
-  `scheduled_task_logs`（执行日志）；v9 为 interval 增加 `window_start/window_end`（每日生效时间段）；
-  迁移保留全部数据。
+- **当前 schema v10**：表 `scheduled_tasks`（任务配置，Header 加密存 `request_headers_enc`）与
+  `scheduled_task_logs`（执行日志）；interval 支持 `window_start/window_end`（每日生效时间段）；
+  不再提供旧版本迁移。
 - **新模块 `server/src/scheduler.js`**：
   - 计划计算：`interval`（每 N 分钟，60s–30d；执行后 next=执行开始+interval；可选每日生效时间段 windowStart/windowEnd，
     窗口外 next 自动推进到窗口内）与 `daily`
@@ -427,7 +427,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   读取仅返回名称；完整校验。
 - **前端**：接口应用页新增「定时通知」Tab（任务列表/表单/测试运行/立即执行/运行日志）；文档页定时通知章节；
   接口应用的规则日志改为每行「日志」弹窗（不再单独占一个 Tab）。
-- **测试**：v6→v7 迁移、计划计算（interval/daily/时区/过期补跑）、tick 执行、目标去重上限、
+- **测试**：计划计算（interval/daily/时区/过期补跑）、tick 执行、目标去重上限、
   fallback、dry-run 不发送、run 写日志/更新 next、API 校验；e2e 用本地 mock 外部 API 覆盖执行链路与投递。
 
 ## 17. 运行配置后台可改（Runtime Settings）
@@ -437,8 +437,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 - **背景**：原 `.env` 中的运行参数改为数据库持久化、后台「运行配置」可编辑，`.env` 仅作首次默认值；
   第二批迁移后 `.env` 只保留启动前必须确定/不能入 DB 的项（`APP_SECRET`/`DATA_DIR`/`MEDIA_DIR`/`PORT`/`HOST`/`NODE_ENV`），
   管理密码与 API Token **只由 DB 管理**：首次启动自动生成随机值并写入 `data/` 文件，不再读取 `.env`（不兼容旧版 env 机密）。
-- **DB v8（additive）**：新表 `app_settings(key, value, updated_at)`，只存被覆盖的字段；该表引入于 schema v8；
-  当前 `SCHEMA_VERSION=9`（v9 仅新增定时任务的 window_start/window_end 列，不影响本表）。
+- **`app_settings` 表**：新表 `app_settings(key, value, updated_at)`，只存被覆盖的字段；
+  当前 `SCHEMA_VERSION=10`。
 - **新模块 `settings.js`**：`SETTINGS_SCHEMA`（push/keepalive/appRules/scheduler/media/binding/server/security/ilink/monitor
   字段元数据，含类型/范围/default/restartRequired）、`loadOverrides()`、`getSettings()`、`updateSettings()`、
   `resetGroup()`、机密管理（scrypt 密码哈希 / AES Token 加密 / rotate/reset / 首启 bootstrap）；
@@ -450,7 +450,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   机密管理 `POST /api/admin/security/{password,password/reset,api-token/rotate,api-token/reset}`，
   GET settings 附带 `security` 摘要（来源/preview，永不回哈希/明文）。
 - **前端**：运行配置页改为可编辑分组表单（保存/恢复默认/已修改/需重启标记），保留 env-only 脱敏只读区。
-- **测试**：v7→v8 迁移、校验边界、覆盖/恢复默认、hooks 调用、API 鉴权与事件脱敏；e2e 覆盖修改生效与 reset。
+- **测试**：校验边界、覆盖/恢复默认、hooks 调用、API 鉴权与事件脱敏；e2e 覆盖修改生效与 reset。
 
 
 

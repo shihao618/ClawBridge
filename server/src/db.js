@@ -18,7 +18,7 @@ import { logger } from './logger.js';
 const log = logger.child({ mod: 'db' });
 
 /** 当前 schema 版本；不再提供任何旧版本迁移，启动时检测到旧版本会直接失败。 */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -161,9 +161,6 @@ CREATE TABLE IF NOT EXISTS app_rules (
   reply_template TEXT NOT NULL DEFAULT '',
   fallback_text TEXT NOT NULL DEFAULT '',
   timeout_ms INTEGER NOT NULL DEFAULT 8000,
-  cooldown_ms INTEGER NOT NULL DEFAULT 0,           -- 遗留列：不再参与限流
-  max_calls_per_hour INTEGER NOT NULL DEFAULT 0,     -- 遗留列：不再参与限流
-  max_user_calls_per_hour INTEGER NOT NULL DEFAULT 0, -- 遗留列：不再参与限流
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

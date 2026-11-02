@@ -6,6 +6,8 @@
 > 微信 ClawBot 是微信官方为 OpenClaw 提供的微信通道（iLink Bot API）。ClawBridge 按官方插件
 > `@tencent-weixin/openclaw-weixin@2.4.10` 的协议实现扫码绑定、长轮询收消息、文本消息发送，
 > 不依赖任何第三方微信协议服务或个人号 Hook。
+>
+> **当前版本 2.0.0**：数据库 schema **v10**，旧版本数据库不再兼容，启动时直接拒绝；请备份后使用当前版本。
 
 ---
 

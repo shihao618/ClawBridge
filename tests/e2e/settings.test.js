@@ -57,9 +57,6 @@ function appRuleBody(ruleName, url, userId, keyword) {
     request: { method: 'GET', url, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: '', template: '{{data.answer}}', fallbackText: '' },
     timeoutMs: 3000,
-    cooldownMs: 0,
-    maxCallsPerHour: 100,
-    maxUserCallsPerHour: 100,
   };
 }
 

@@ -12,7 +12,7 @@
   `getupdates` 长轮询与 outbox 架构；Webhook 推送不在本次范围（可作为后续扩展）。
 - 分组群发复用现有 outbox：为分组内每个 active 用户各入队一条；文本/媒体限制与单发一致。
 
-## 1. 数据库 Schema v3（additive）
+## 1. 数据库 Schema（当前 v10）
 
 ```sql
 CREATE TABLE IF NOT EXISTS groups (
@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_user_groups_user ON user_groups(user_id);
 ```
 
 迁移要求：
-- `SCHEMA_VERSION = 3`；`CREATE TABLE IF NOT EXISTS` 幂等；
+- `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；
 - 从 v2 升级保留全部 users/outbox/inbound_messages/attachments/events；
 - 无法从 v1 直接跨级？仍走顺序迁移（v1→v2→v3），现有 `db.js` 迁移框架支持；
 - 测试必须覆盖：构造 v2 数据库（含用户/消息/附件）→ 迁移到 v3 数据不丢、重复打开幂等。

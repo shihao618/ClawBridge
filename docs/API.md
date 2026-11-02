@@ -132,7 +132,7 @@ GET /api/admin/overview
     "inboundLast24h": 8
   },
   "server": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "uptimeMs": 123456,
     "now": 1760000000000,
     "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
@@ -235,7 +235,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
 ```
 GET /api/admin/config
 → 200 {
-  "version": "1.0.0",
+  "version": "2.0.0",
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
@@ -445,7 +445,7 @@ GroupView：
 用户视图（admin/v1）新增 `groups:[{id,name,color}]`。分组名唯一（1–40 字符），描述 ≤200，颜色可为空或
 `#RRGGBB`。分组群发目标 = 分组内 `status=active` 且未冷却的用户，逐人入 outbox。
 
-**分组保活（schema v6）**：GroupView 的 `keepaliveEnabled` 为分组级保活开关。`POST /api/admin/groups/{id}/keepalive
+**分组保活（schema v10）**：GroupView 的 `keepaliveEnabled` 为分组级保活开关。`POST /api/admin/groups/{id}/keepalive
 {enabled}` 会持久化该标志并批量设置当前成员的 `keepaliveEnabled`；`PATCH /api/admin/groups/{id}
 {keepaliveEnabled}` 与批量开关等价（也同步当前成员）。`keepaliveEnabled=true` 的分组，
 之后通过 `PUT /api/admin/users/{id}/groups` 加入的用户会**自动开启**保活（用户视图返回

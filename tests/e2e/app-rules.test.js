@@ -75,9 +75,6 @@ const RULE_BASE = () => ({
   request: { method: 'GET', url: `${externalApi.baseUrl}/echo`, headers: {}, bodyTemplate: '' },
   response: { type: 'json', path: '', template: '', fallbackText: '' },
   timeoutMs: 3000,
-  cooldownMs: 0,
-  maxCallsPerHour: 100,
-  maxUserCallsPerHour: 100,
 });
 
 before(async () => {
@@ -435,7 +432,6 @@ test('旧冷却字段不再限流：同用户同规则第二条消息仍触发',
     keywords: ['冷却测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/cooldown`, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
-    cooldownMs: 60000,
   });
   await injectInbound(userA, accountA, '冷却测试 第一次');
   await e2e.waitMockSentMessageContaining('冷却回复', { toUserId: userA.wechatUserId });
@@ -447,7 +443,7 @@ test('旧冷却字段不再限流：同用户同规则第二条消息仍触发',
   assert.ok(externalApi.requests.length > 0, '规则不再有冷却，外部 API 应再次被调用');
 });
 
-test('旧小时上限字段不再限流：超过 maxUserCallsPerHour 的消息仍执行', async () => {
+test('规则无小时配额限制：连续消息仍执行', async () => {
   externalApi.setResponse({ json: { data: { answer: '配额回复' } } });
   const rule = await createRuleOrFail({
     ...RULE_BASE(),
@@ -456,9 +452,6 @@ test('旧小时上限字段不再限流：超过 maxUserCallsPerHour 的消息�
     keywords: ['配额测试'],
     request: { method: 'GET', url: `${externalApi.baseUrl}/quota`, headers: {}, bodyTemplate: '' },
     response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
-    cooldownMs: 0,
-    maxUserCallsPerHour: 1,
-    maxCallsPerHour: 100,
   });
   await injectInbound(userA, accountA, '配额测试 第一次');
   await e2e.waitMockSentMessageContaining('配额回复', { toUserId: userA.wechatUserId });

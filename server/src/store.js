@@ -867,16 +867,13 @@ const APP_RULE_COLUMNS = {
   replyTemplate: 'reply_template',
   fallbackText: 'fallback_text',
   timeoutMs: 'timeout_ms',
-  cooldownMs: 'cooldown_ms',
-  maxCallsPerHour: 'max_calls_per_hour',
-  maxUserCallsPerHour: 'max_user_calls_per_hour',
 };
 
 /** 字段值序列化：JSON 字段与布尔/数字列。 */
 function appRuleColumnValue(key, value) {
   if (key === 'scopeIds' || key === 'keywords' || key === 'extractionConfig') return JSON.stringify(value ?? (key === 'extractionConfig' ? {} : []));
   if (key === 'enabled') return value ? 1 : 0;
-  if (['priority', 'timeoutMs', 'cooldownMs', 'maxCallsPerHour', 'maxUserCallsPerHour'].includes(key)) return toNumber(value);
+  if (['priority', 'timeoutMs'].includes(key)) return toNumber(value);
   if (value === undefined || value === null) return '';
   return String(value);
 }
@@ -919,9 +916,6 @@ export function duplicateAppRule(id) {
     'reply_template',
     'fallback_text',
     'timeout_ms',
-    'cooldown_ms',
-    'max_calls_per_hour',
-    'max_user_calls_per_hour',
   ];
   run(
     `INSERT INTO app_rules

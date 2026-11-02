@@ -103,9 +103,6 @@ function validRuleBody(overrides = {}) {
     },
     response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '暂时无法查询' },
     timeoutMs: 3000,
-    cooldownMs: 0,
-    maxCallsPerHour: 60,
-    maxUserCallsPerHour: 10,
     ...overrides,
   };
 }
@@ -342,9 +339,6 @@ test('GET /api/admin/app-rule-logs：过滤/分页/字段/非法 status 400', as
     replyTemplate: '',
     fallbackText: '',
     timeoutMs: 1000,
-    cooldownMs: 0,
-    maxCallsPerHour: 60,
-    maxUserCallsPerHour: 10,
   });
   const user = store.upsertBoundUser({
     wechatUserId: 'wx_app_rules_log_user',

@@ -205,5 +205,5 @@ test('数据库最新 schema：users/groups 保活列存在（v9）', () => {
     Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduled_tasks'").get()),
     'scheduled_tasks 表应存在（schema v7）',
   );
-  assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '10');
 });

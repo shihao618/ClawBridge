@@ -29,7 +29,7 @@
 | `iLink-App-Id` | `bot` | 来自官方插件 `package.json` 的 `ilink_appid` |
 | `iLink-App-ClientVersion` | `132106` | 由插件版本 `2.4.10` 编码：`major<<16 | minor<<8 | patch` = `0x02040A` |
 | `channel_version` | `2.4.10` | `base_info.channel_version` |
-| `bot_agent` | `OpenClaw`（默认） | `base_info.bot_agent`，仅观测用途；建议用合法 UA token 格式，如 `ClawBridge/1.0.0` |
+| `bot_agent` | `OpenClaw`（默认） | `base_info.bot_agent`，仅观测用途；建议用合法 UA token 格式，如 `ClawBridge/2.0.0` |
 | CDN | `https://novac2c.cdn.weixin.qq.com/c2c` | 媒体上传/下载用；本程序只发文本，暂不需要 |
 
 > 所有常量均允许用环境变量覆盖（见 `docs/ARCHITECTURE.md` 的 `ILINK_*`）。

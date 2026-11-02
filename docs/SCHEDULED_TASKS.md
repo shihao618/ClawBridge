@@ -15,7 +15,7 @@
 - 单实例调度（与 keepalive 一致）；多副本部署需只让一个副本启用调度器。
 - 默认不启用（无任务），配置后不影响现有功能；任务停用后不再执行。
 
-## 1. 数据库 Schema v9（additive）
+## 1. 数据库 Schema（当前 v10）
 
 ```sql
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -62,8 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_task ON scheduled_task_logs(t
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_logs(created_at DESC);
 ```
 
-- `SCHEMA_VERSION = 7`；`CREATE TABLE IF NOT EXISTS` 幂等；v1→v7 保留全部数据。
-- 迁移测试：v6 数据库升级后数据保留、新表/索引存在、重复打开幂等。
+- `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；旧版本 schema 启动直接拒绝，不提供迁移。
 
 ## 2. 配置（config.js：`config.scheduler`）
 
@@ -214,14 +213,14 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
 - `store.js`：任务 CRUD/视图（headerNames 映射）、到期任务查询、日志、目标用户解析（复用分组/用户查询）。
 - `api.js`：§5 接口 + 校验 + Header 加解密 + 测试运行/立即执行 + 日志查询。
 - `index.js`：启动 `scheduler.start()`（`config.scheduler.enabled=false` 不启动）、优雅退出 `scheduler.stop()`。
-- `db.js`：schema v9（scheduled_tasks.window_start/window_end）。
+- `db.js`：当前 schema v10（scheduled_tasks.window_start/window_end）。
 - 复用：`app-rules.js` 的 template/response/requestExternal 纯函数；`crypto` 加解密；`logger`；
   `outbox` 发送完全复用 dispatcher。
 
 ## 8. 测试要求
 
 **单元**
-- v6→v7 / v8→v9 迁移（数据保留/新表/新列/索引/幂等/全新库 v9）；
+- 全新库 v10 建表/索引/幂等，旧 schema 拒绝启动；
 - store：任务 CRUD/视图（headerNames 不含值）、到期查询、日志、目标用户解析（users/groups、active 过滤、去重、上限）；
 - scheduler：interval/daily/每日生效时间段时间计算（窗口内/前/后、跨午夜、启动对账、时区）、tick 只执行到期任务、
   成功渲染+入队 source=schedule、失败 fallback、无 fallback 不发送、收件人去重/上限、日志写入、
@@ -244,7 +243,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
 
 ## 9. 真实环境上线
 
-- v6→v7 additive migration（保留 2 个真实用户/消息/分组/保活/接口应用数据）；
+- 当前 schema v10；旧版本库启动直接拒绝，不提供迁移；
 - 默认无任务；调度器启动日志；管理员按需创建任务（默认可先建一条 disabled 任务 + 测试运行验证，再启用）；
 - 建议先「测试运行」确认接口与文案，再启用或立即执行；注意外部接口费用与微信 7 条/5 分钟限流。
 - **访问内网接口**（如 `http://192.168.x.x:8000`）：SSRF 防护会默认拒绝私网/保留地址；

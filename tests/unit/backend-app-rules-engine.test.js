@@ -84,9 +84,6 @@ function createRule({ name, keywords = ['查天气'], url = `http://127.0.0.1:${
     replyTemplate: '{{answer}}',
     fallbackText: '暂时无法查询',
     timeoutMs: 2000,
-    cooldownMs: 0,
-    maxCallsPerHour: 60,
-    maxUserCallsPerHour: 10,
     ...overrides,
   });
 }
@@ -162,9 +159,9 @@ test('去重：同 (消息,规则) 重复触发只执行一次', async () => {
   assert.equal(replyOutbox(user.id).length, 1);
 });
 
-test('旧冷却字段不再限流：连续两条消息都执行', async () => {
+test('规则无冷却限制：连续两条消息都执行', async () => {
   const user = createUser();
-  const rule = createRule({ name: '冷却规则', keywords: ['冷却测试'], cooldownMs: 3600_000 });
+  const rule = createRule({ name: '冷却规则', keywords: ['冷却测试'] });
   await runMessage({ userId: user.id, text: '冷却测试 北京', inboundMessageId: 'in_engine_cd_1' });
   await runMessage({ userId: user.id, text: '冷却测试 上海', inboundMessageId: 'in_engine_cd_2' });
   const logs = ruleLogs(rule.id);
@@ -174,9 +171,9 @@ test('旧冷却字段不再限流：连续两条消息都执行', async () => {
   assert.equal(replyOutbox(user.id).length, 2);
 });
 
-test('旧小时配额字段不再限流：maxCallsPerHour=1 时两条都执行', async () => {
+test('规则无小时配额限制：连续两条消息都执行', async () => {
   const user = createUser();
-  const rule = createRule({ name: '配额规则', keywords: ['配额测试'], maxCallsPerHour: 1, maxUserCallsPerHour: 1 });
+  const rule = createRule({ name: '配额规则', keywords: ['配额测试'] });
   await runMessage({ userId: user.id, text: '配额测试 北京', inboundMessageId: 'in_engine_quota_1' });
   await runMessage({ userId: user.id, text: '配额测试 上海', inboundMessageId: 'in_engine_quota_2' });
   const logs = ruleLogs(rule.id);

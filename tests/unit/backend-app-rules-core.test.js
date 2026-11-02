@@ -30,7 +30,7 @@ const baseRule = (overrides = {}) => ({
   extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
   request: { method: 'GET', url: 'http://127.0.0.1:1/', headers: {}, bodyTemplate: '' },
   response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
-  limits: { timeoutMs: 2000, cooldownMs: 0, maxCallsPerHour: 60, maxUserCallsPerHour: 10 },
+  limits: { timeoutMs: 2000 },
   ...overrides,
 });
 
@@ -443,9 +443,6 @@ test('testRule dry-run：不写日志、不发消息、返回请求/响应/回�
     replyTemplate: '{{answer}}',
     fallbackText: '',
     timeoutMs: 2000,
-    cooldownMs: 0,
-    maxCallsPerHour: 60,
-    maxUserCallsPerHour: 10,
   });
   const raw = getDb().prepare('SELECT * FROM app_rules WHERE id = ?').get(ruleRow.id);
   const logsBefore = Number(getDb().prepare('SELECT COUNT(*) AS c FROM app_rule_logs').get().c);

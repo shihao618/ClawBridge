@@ -21,7 +21,7 @@ monitor 收到入站消息并落库
 
 规则**默认不启用**；全局开关 `APP_RULES_ENABLED=false` 时引擎不启动（后台仍可管理规则）。
 
-## 1. 数据库 Schema v5（additive）
+## 1. 数据库 Schema（当前 v10）
 
 ```sql
 CREATE TABLE IF NOT EXISTS app_rules (
@@ -45,9 +45,6 @@ CREATE TABLE IF NOT EXISTS app_rules (
   reply_template TEXT NOT NULL DEFAULT '',
   fallback_text TEXT NOT NULL DEFAULT '',
   timeout_ms INTEGER NOT NULL DEFAULT 8000,
-  cooldown_ms INTEGER NOT NULL DEFAULT 0,           -- 遗留列：已不再参与限流
-  max_calls_per_hour INTEGER NOT NULL DEFAULT 0,     -- 遗留列：已不再参与限流
-  max_user_calls_per_hour INTEGER NOT NULL DEFAULT 0, -- 遗留列：已不再参与限流
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -75,9 +72,9 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_rule ON app_rule_logs(rule_id, crea
 CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at DESC);
 ```
 
-- `SCHEMA_VERSION = 5`；`CREATE TABLE IF NOT EXISTS` 幂等；v4→v5 保留全部既有数据。
+- `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；旧版本 schema 启动直接拒绝，不提供迁移。
 - 去重索引保证同一条入站消息对同一规则最多执行一次（getupdates 重放安全）。
-- 迁移测试：构造 v4 库（含用户/消息/附件/分组）→ v5 数据保留、新表/索引存在、重复打开幂等。
+- 测试：全新库 v10 建表/索引/幂等；旧版本库拒绝启动。
 
 ## 2. 配置（config.js：`config.appRules`）
 
@@ -216,7 +213,6 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 
 - 同一入站消息对同一规则最多执行一次（DB 唯一索引，插入日志冲突视为重复跳过）。
 - 规则自身不再执行冷却或每小时配额；调用频率统一由微信账号默认发送限流控制（`RATE_LIMIT_MAX=7` / `RATE_LIMIT_WINDOW_MS=300000`，即 7 条 / 5 分钟 / 账号）。
-- `cooldown_ms` / `max_calls_per_hour` / `max_user_calls_per_hour` 为遗留列，接口不再返回，也不参与执行。
 - 队列并发 `workerConcurrency`，队列上限 `maxQueue`（满了丢弃并 warn 日志）。
 - 一消息命中多条规则：按 `priority ASC, created_at ASC` **只取第一条**。
 - 执行过程中日志先写 `status='matched'` 中间态（表示已匹配、请求进行中），完成后更新为
@@ -302,7 +298,7 @@ response.type ∈ json/text。错误 400/404/409（重名可选，本版允许�
 - `index.js`：`appRules.start()`（`config.appRules.enabled=false` 时不启动）与优雅退出
   `appRules.stop()`。
 - `store.js`：规则 CRUD/日志写入/统计/去重索引处理。
-- `db.js`：schema v5。
+- `db.js`：schema v10。
 - `api.js`：§7 全部管理端接口 + 校验 + Header 加解密 + 测试运行 + 日志查询。
 - `crypto.js` 复用加密；`logger` 复用脱敏。
 
@@ -311,6 +307,6 @@ response.type ∈ json/text。错误 400/404/409（重名可选，本版允许�
 - 文本触发；范围 all/users/groups；match contains/equals/regex；参数提取 none/multi（组合项 trailing/regex/json/fulltext）；
   GET/POST + URL/Header/Body 模板；响应 json/text + 路径 + 回复模板 + 兜底；队列并发/
   去重；SSRF 防护与允许名单；后台规则管理 + 测试运行 + 日志；e2e（本地 mock 外部 API 全链路）；
-  文档；schema v5 真实迁移验证。
+  文档；旧 schema 拒绝启动验证。
 - 不包含（后续）：多步对话/有状态会话、LLM 参数抽取、媒体回复、HMAC/OAuth2、多规则级联、
   对外规则管理 API。

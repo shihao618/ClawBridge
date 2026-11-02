@@ -5,7 +5,7 @@
 
 ## 0. 范围
 
-**可后台修改（DB，schema v8 `app_settings`）**：
+**可后台修改（DB，schema v10 `app_settings`）**：
 
 | 分组 | 字段 |
 | --- | --- |
@@ -20,7 +20,7 @@
 `HOST`、`NODE_ENV`。管理密码与 API Token 只存 DB（后台「安全」卡片，首启自动生成到 data/ 文件）；
 其余运行参数均可在后台「运行配置」修改。
 
-## 1. 数据库 Schema v8（additive）
+## 1. 数据库 Schema（当前 v10）
 
 ```sql
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 ```
 
-- `app_settings` 表引入于 schema v8；当前 `SCHEMA_VERSION=9`（v9 为定时任务窗口列，不影响本表）；v7→v8 保留全部数据；新表空时使用 env 默认值。
+- 当前 `SCHEMA_VERSION=10`；旧版本 schema 启动直接拒绝，不提供迁移；新表空时使用 env 默认值。
 - 只存**被修改过**的字段（新增/删除字段不影响未设置的默认值）。
 
 ## 2. 服务端 `server/src/settings.js`
@@ -78,14 +78,14 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 
 ## 5. 真实环境上线
 
-- v7→v8 additive migration；启动日志 `fromSchemaVersion:7→8`；
+- 启动日志 `fromSchemaVersion:10`；
 - 后台把 `APP_RULES_ALLOWED_HOSTS=192.168.88.10` 从 `.env` 移除，改在运行配置里设置 `接口应用 → allowedHosts`，
   重启容器验证持久化生效（用户任务 dry-run 200）；
 - 其余常用参数（限流/保活/定时通知/媒体）改为后台可调，`.env` 仅保留机密与基础设施。
 
 ## 6. 测试要求
 
-- 单测：v7→v8 迁移；settings 校验（类型/范围/时区/数组）；loadOverrides 覆盖 config；update 持久化+应用；
+- 单测：settings 校验（类型/范围/时区/数组）；loadOverrides 覆盖 config；update 持久化+应用；
   resetGroup 恢复默认；API 401/403/400/200；events 不泄漏敏感值。
 - e2e/黑盒：GET/PATCH settings（修改 keepalive.text/appRules.allowedHosts/media.maxBytes）→ 读取生效；
   invalid 400；reset 恢复默认。

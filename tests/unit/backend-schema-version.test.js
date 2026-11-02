@@ -24,7 +24,7 @@ test('旧 schema 数据库启动时直接拒绝，不做 ALTER 迁移', () => {
   const oldPath = path.join(dataDir, 'old-schema.db');
   const oldDb = new DatabaseSync(oldPath);
   oldDb.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  oldDb.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '8')").run();
+  oldDb.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '9')").run();
   oldDb.close();
   assert.throws(
     () => openDatabase(oldPath),
@@ -32,7 +32,7 @@ test('旧 schema 数据库启动时直接拒绝，不做 ALTER 迁移', () => {
     '旧 schema 必须在打开阶段失败，而不是执行迁移',
   );
   const check = new DatabaseSync(oldPath);
-  assert.equal(check.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '8');
+  assert.equal(check.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '9');
   check.close();
 });
 
@@ -43,6 +43,10 @@ test('当前 schema 与全新库均可打开且幂等写入当前版本', () => 
     first.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value,
     String(SCHEMA_VERSION),
   );
+  const columns = first.prepare('PRAGMA table_info(app_rules)').all().map((column) => column.name);
+  assert.ok(!columns.includes('cooldown_ms'), '当前 schema 不应再有冷却列');
+  assert.ok(!columns.includes('max_calls_per_hour'), '当前 schema 不应再有规则小时限额列');
+  assert.ok(!columns.includes('max_user_calls_per_hour'), '当前 schema 不应再有用户小时限额列');
   first.close();
   const second = openDatabase(freshPath);
   assert.equal(

@@ -18,7 +18,7 @@
 - 无入站记录（从未发过消息）的用户不发送（没有可刷新的窗口，冷启动推送由用户自行触发）。
 - 调度为单进程内定时扫描（默认每 5 分钟），与 getupdates/outbox 无锁冲突（扫描/入队用事务）。
 
-## 1. 数据库 Schema v4（additive）
+## 1. 数据库 Schema（当前 v10）
 
 `users` 表新增两列：
 
@@ -27,7 +27,7 @@ ALTER TABLE users ADD COLUMN keepalive_enabled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN keepalive_last_sent_at INTEGER NOT NULL DEFAULT 0;
 ```
 
-- `SCHEMA_VERSION = 4`；用 `PRAGMA table_info(users)` 检查后 `ALTER TABLE`，幂等；
+- `SCHEMA_VERSION = 10`；用 `PRAGMA table_info(users)` 检查后 `ALTER TABLE`，幂等；
 - v1→v2→v3→v4 逐级迁移，保留全部既有数据（users/outbox/inbound/attachments/events/groups）；
 - 测试要求：构造 v3 数据库（含用户/消息/分组）→ 升级到 v4 数据不丢、列默认值正确、重复打开幂等。
 
@@ -77,7 +77,7 @@ POST /api/admin/groups/{id}/keepalive         # 分组批量开关（持久化�
   Body: { "enabled": true }
   → 200 { "updated": 3, "group": GroupView }  # GroupView.keepaliveEnabled 同步更新
 
-# 分组级保活（schema v6，groups.keepalive_enabled）：
+# 分组级保活（schema v10，groups.keepalive_enabled）：
 #  - 分组开启保活后，**之后加入该分组的成员自动开启保活**（PUT /users/{id}/groups 时继承）；
 #  - 移出分组不会关闭用户保活（保留用户手动/历史设置）；
 #  - 分组关闭保活时，当前成员被关闭，之后加入的成员保持关闭；
