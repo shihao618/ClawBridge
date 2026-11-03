@@ -447,40 +447,6 @@ function tokenizeTemplate(template) {
   return tokens;
 }
 
-/** 查找与 start 处 block 匹配的结束 token 下标（-1=未闭合）；each/if/unless 可互相嵌套。 */
-function findMatchingBlockEnd(tokens, start) {
-  const stack = [tokens[start].name];
-  for (let index = start + 1; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token.type === 'block') {
-      stack.push(token.name);
-    } else if (token.type === 'close') {
-      if (stack[stack.length - 1] !== token.name) return -1;
-      stack.pop();
-      if (stack.length === 0) return index;
-    }
-  }
-  return -1;
-}
-
-/** 找出 block 体内同层的 else if / else 下标（嵌套块内部的 else 不计入）。 */
-function findBlockStops(tokens, start, end) {
-  const stops = [];
-  const stack = [tokens[start].name];
-  for (let index = start + 1; index < end; index += 1) {
-    const token = tokens[index];
-    if (token.type === 'block') {
-      stack.push(token.name);
-    } else if (token.type === 'close') {
-      if (stack[stack.length - 1] !== token.name) return stops;
-      stack.pop();
-    } else if (stack.length === 1 && (token.type === 'elseif' || token.type === 'else')) {
-      stops.push(index);
-    }
-  }
-  return stops;
-}
-
 function unquoteTemplateLiteral(raw) {
   const text = String(raw ?? '').trim();
   if (
@@ -531,13 +497,47 @@ function resolveConditionRight(raw) {
   return unquoteTemplateLiteral(text);
 }
 
+/** 在引号外按 and / or 拆分条件，支持多条件组合。 */
+function splitLogicalCondition(text, keyword) {
+  const needle = ' ' + keyword + ' ';
+  const lower = text.toLowerCase();
+  const parts = [];
+  let last = 0;
+  let quote = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote) {
+      if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (lower.startsWith(needle, index)) {
+      parts.push(text.slice(last, index).trim());
+      last = index + needle.length;
+      index += needle.length - 1;
+    }
+  }
+  if (parts.length === 0) return null;
+  parts.push(text.slice(last).trim());
+  return parts;
+}
+
 /**
  * 执行 if/unless 判断。
- * 支持真值判断、= / == / != / > / >= / < / <= 比较，左侧可为 path 或 count。
+ * 支持真值判断、not/and/or、= / == / != / > / >= / < / <= 比较，左侧可为 path 或 count。
  */
 function evaluateTemplateCondition(raw, contextStack, responseRoot) {
   const text = String(raw ?? '').trim();
   if (!text) return false;
+  const orParts = splitLogicalCondition(text, 'or');
+  if (orParts) return orParts.some((part) => evaluateTemplateCondition(part, contextStack, responseRoot));
+  const andParts = splitLogicalCondition(text, 'and');
+  if (andParts) return andParts.every((part) => evaluateTemplateCondition(part, contextStack, responseRoot));
+  if (/^not\s+/i.test(text)) return !evaluateTemplateCondition(text.slice(4).trim(), contextStack, responseRoot);
+
   const match = text.match(/^(.+?)\s*(==|!=|>=|<=|=|>|<)\s*(.+)$/);
   if (!match) return isTruthyTemplateValue(resolveConditionLeft(text, contextStack, responseRoot));
 
@@ -561,7 +561,7 @@ function evaluateTemplateCondition(raw, contextStack, responseRoot) {
   return leftNumber <= rightNumber;
 }
 
-/** `{{default path "兜底文案"}}`：值空时使用兜底文案。 */
+/** default path "兜底文案"：值空时使用兜底文案。 */
 function resolveDefaultVariable(raw, contextStack, responseRoot) {
   const match = String(raw ?? '').trim().match(/^default\s+(\S+)(?:\s+([\s\S]+))?$/i);
   if (!match) return '';
@@ -595,75 +595,141 @@ function resolveTemplateVariable(expr, contextStack, metaStack, options) {
   return valueToText(resolveTemplatePath(text, contextStack, options.responseRoot));
 }
 
-const MAX_EACH_DEPTH = 8;
+const MAX_TEMPLATE_DEPTH = 32;
+const TEMPLATE_CACHE_MAX = 200;
+const templateAstCache = new Map();
 
-/** 递归渲染 token 列表；contextStack[0] 为模板根，后续为当前/父级循环项。 */
-function renderTemplateTokens(tokens, contextStack, metaStack, options, depth = 0) {
-  if (depth > MAX_EACH_DEPTH) return '';
-  let output = '';
+/** 把 token 编译为 AST；解析失败/未闭合时保持宽容（渲染到末尾），由调用方决定展示。 */
+function compileTemplateAst(tokens) {
   let index = 0;
-  while (index < tokens.length) {
-    const token = tokens[index];
-    if (token.type === 'text') {
-      output += token.value;
-      index += 1;
-      continue;
-    }
-    if (token.type === 'var') {
-      output += resolveTemplateVariable(token.expr, contextStack, metaStack, options);
-      index += 1;
-      continue;
-    }
-    if (token.type === 'close' || token.type === 'elseif' || token.type === 'else') {
-      index += 1;
-      continue;
-    }
-    if (token.type === 'block') {
-      const endIndex = findMatchingBlockEnd(tokens, index);
-      const bodyEnd = endIndex === -1 ? tokens.length : endIndex;
-      if (token.name === 'each') {
-        const body = tokens.slice(index + 1, bodyEnd);
-        const parsed = parseListSpec(token.spec);
-        const value = resolveTemplatePath(parsed.path, contextStack, options.responseRoot);
-        const list = filterList(value, parsed.filter);
-        for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
-          output += renderTemplateTokens(
-            body,
-            [...contextStack, list[itemIndex]],
-            [...metaStack, { index: itemIndex, number: itemIndex + 1 }],
-            options,
-            depth + 1,
-          );
+  const parseNodes = (stops) => {
+    const nodes = [];
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (token.type === 'text' || token.type === 'var') {
+        nodes.push(token);
+        index += 1;
+        continue;
+      }
+      if (token.type === 'close' || token.type === 'elseif' || token.type === 'else') {
+        if (stops.has(token.type)) return { nodes, stop: token };
+        index += 1;
+        continue;
+      }
+      if (token.type === 'block') {
+        const name = token.name;
+        index += 1;
+        if (name === 'each') {
+          const first = parseNodes(new Set(['close', 'else']));
+          let elseBody = [];
+          if (first.stop?.type === 'else') {
+            index += 1;
+            const alt = parseNodes(new Set(['close']));
+            elseBody = alt.nodes;
+            if (alt.stop?.type === 'close') index += 1;
+          } else if (first.stop?.type === 'close') {
+            index += 1;
+          }
+          nodes.push({ type: 'each', spec: token.spec, body: first.nodes, elseBody });
+          continue;
         }
-      } else if (token.name === 'if' || token.name === 'unless') {
-        const stops = findBlockStops(tokens, index, bodyEnd);
-        const sections = [];
+        const branches = [];
         let expr = token.spec;
-        let sectionStart = index + 1;
-        for (const stopIndex of stops) {
-          sections.push({ expr, body: tokens.slice(sectionStart, stopIndex) });
-          expr = tokens[stopIndex].type === 'elseif' ? tokens[stopIndex].expr : null;
-          sectionStart = stopIndex + 1;
-        }
-        sections.push({ expr, body: tokens.slice(sectionStart, bodyEnd) });
-        for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex += 1) {
-          const section = sections[sectionIndex];
-          const matched =
-            section.expr === null
-              ? true
-              : token.name === 'unless' && sectionIndex === 0
-                ? !evaluateTemplateCondition(section.expr, contextStack, options.responseRoot)
-                : evaluateTemplateCondition(section.expr, contextStack, options.responseRoot);
-          if (matched) {
-            output += renderTemplateTokens(section.body, contextStack, metaStack, options, depth + 1);
+        while (true) {
+          const parsed = parseNodes(new Set(['elseif', 'else', 'close']));
+          branches.push({ expr, nodes: parsed.nodes });
+          if (!parsed.stop) break;
+          if (parsed.stop.type === 'elseif') {
+            expr = parsed.stop.expr;
+            index += 1;
+            continue;
+          }
+          if (parsed.stop.type === 'else') {
+            index += 1;
+            const alt = parseNodes(new Set(['close']));
+            branches.push({ expr: null, nodes: alt.nodes });
+            if (alt.stop?.type === 'close') index += 1;
+            break;
+          }
+          if (parsed.stop.type === 'close') {
+            index += 1;
             break;
           }
         }
+        nodes.push({ type: name, branches });
+        continue;
       }
-      index = endIndex === -1 ? tokens.length : endIndex + 1;
+      index += 1;
+    }
+    return { nodes, stop: null };
+  };
+  return parseNodes(new Set()).nodes;
+}
+
+/** 模板 AST 缓存（按模板文本 LRU），同一模板在规则/定时反复执行时不再重复编译。 */
+function getCompiledTemplate(template) {
+  const cached = templateAstCache.get(template);
+  if (cached) {
+    templateAstCache.delete(template);
+    templateAstCache.set(template, cached);
+    return cached;
+  }
+  const ast = compileTemplateAst(tokenizeTemplate(template));
+  if (templateAstCache.size >= TEMPLATE_CACHE_MAX) {
+    const oldest = templateAstCache.keys().next().value;
+    if (oldest !== undefined) templateAstCache.delete(oldest);
+  }
+  templateAstCache.set(template, ast);
+  return ast;
+}
+
+/** 递归渲染 AST；contextStack[0] 为模板根，后续为当前/父级循环项。 */
+function renderTemplateAst(nodes, contextStack, metaStack, options, depth = 0) {
+  if (depth > MAX_TEMPLATE_DEPTH) return '';
+  let output = '';
+  for (const node of nodes || []) {
+    if (node.type === 'text') {
+      output += node.value;
       continue;
     }
-    index += 1;
+    if (node.type === 'var') {
+      output += resolveTemplateVariable(node.expr, contextStack, metaStack, options);
+      continue;
+    }
+    if (node.type === 'each') {
+      const parsed = parseListSpec(node.spec);
+      const value = resolveTemplatePath(parsed.path, contextStack, options.responseRoot);
+      const list = filterList(value, parsed.filter);
+      if (list.length === 0) {
+        if (node.elseBody?.length) output += renderTemplateAst(node.elseBody, contextStack, metaStack, options, depth + 1);
+        continue;
+      }
+      for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
+        output += renderTemplateAst(
+          node.body,
+          [...contextStack, list[itemIndex]],
+          [...metaStack, { index: itemIndex, number: itemIndex + 1 }],
+          options,
+          depth + 1,
+        );
+      }
+      continue;
+    }
+    if (node.type === 'if' || node.type === 'unless') {
+      for (let branchIndex = 0; branchIndex < node.branches.length; branchIndex += 1) {
+        const branch = node.branches[branchIndex];
+        const matched =
+          branch.expr === null
+            ? true
+            : node.type === 'unless' && branchIndex === 0
+              ? !evaluateTemplateCondition(branch.expr, contextStack, options.responseRoot)
+              : evaluateTemplateCondition(branch.expr, contextStack, options.responseRoot);
+        if (matched) {
+          output += renderTemplateAst(branch.nodes, contextStack, metaStack, options, depth + 1);
+          break;
+        }
+      }
+    }
   }
   return output;
 }
@@ -678,8 +744,11 @@ function renderTemplateTokens(tokens, contextStack, metaStack, options, depth = 
 export function renderReplyTemplate(template, { root, responseText = '', rawText = '', responseRoot } = {}) {
   const tpl = String(template ?? '');
   if (tpl.trim() === '') return truncate(responseText, MAX_REPLY_LENGTH());
-  const tokens = tokenizeTemplate(tpl);
-  const rendered = renderTemplateTokens(tokens, [root], [], { responseText, rawText, responseRoot });
+  const rendered = renderTemplateAst(getCompiledTemplate(tpl), [root], [], {
+    responseText,
+    rawText,
+    responseRoot,
+  });
   return truncate(rendered, MAX_REPLY_LENGTH());
 }
 

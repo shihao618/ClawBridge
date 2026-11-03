@@ -181,14 +181,16 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 - **列表渲染**（数组数据一次性拼接）：`{{count 路径}}` 输出数组/对象长度；`{{#each 路径}}...{{/each}}`
   对内层逐项渲染，内层可用当前项字段 `{{字段}}`（当前项没有该字段时依次回退父级/根响应）、`{{@index}}`（从 0）、
   `{{@number}}`（从 1）。支持 `where 字段=值` / `where 字段!=值` 过滤（值可加引号）。
+  空列表分支：`{{#each 路径}}...{{else}}暂无数据{{/each}}`。
 - **条件判断**：`{{#if 条件}}...{{else if 条件}}...{{else}}...{{/if}}`、`{{#unless 条件}}...{{/unless}}`；
   条件支持真值判断及 `=` / `==` / `!=` / `>` / `>=` / `<` / `<=` 比较，
   左侧可为字段、`@root.字段`、`@responseRoot.字段` 或 `count 路径`，右侧可为数字、带引号字符串或普通字面量。
+  支持 `not 条件`、`条件A and 条件B`、`条件A or 条件B`（引号内的 and/or 不拆分）。
   示例：`{{#if count data.data>0}}共 {{count data.data}} 人{{else}}暂无数据{{/if}}`。
 - **默认值**：`{{default 路径 "兜底文案"}}`；路径为空/null/空串/空数组时使用兜底文案。
 - **离线预览**：`POST /api/admin/template-preview`，Body
   `{responseType,responsePath,template,fallbackText,sample}`；只解析示例响应并渲染，不访问外部接口。
-- **多层嵌套循环**：`each` 可嵌套多层（≤8 层）；内层用 `{{../字段}}` 取父级字段、
+- **多层嵌套循环**：块嵌套深度上限 32 层；内层用 `{{../字段}}` 取父级字段、
   `{{../@index}}`/`{{../@number}}` 取父循环下标/序号；`{{@root.字段}}` 取模板根（JSON 路径选中节点）；
   `{{@responseRoot.字段}}` 取完整响应根（可访问选中节点的兄弟字段，如 pageSize）。
 - **同时需要 pageSize 与 rows**：推荐把 JSON 路径选到共同父节点（如 `datas.cqztbg`），模板直接写

@@ -269,6 +269,7 @@ test('模板条件判断（if/else if/else/unless、比较、真值）与 defaul
       ],
       emptyItems: [],
       student: { name: '', className: '智科' },
+      reason: '不在范围 and 不允许打卡',
     },
   };
   const render = (template) => appRules.renderReplyTemplate(template, { root });
@@ -288,6 +289,23 @@ test('模板条件判断（if/else if/else/unless、比较、真值）与 defaul
   assert.equal(
     render('{{#each data.items}}{{#if returned=true}}{{name}}已归寝；{{else}}{{name}}未归寝；{{/if}}{{/each}}'),
     '张三已归寝；李四未归寝；',
+  );
+  assert.equal(render('{{#each data.emptyItems}}有数据{{else}}暂无数据{{/each}}'), '暂无数据');
+  assert.equal(
+    render('{{#each data.items where returned=true}}{{name}}{{else}}无匹配{{/each}}'),
+    '张三',
+  );
+  assert.equal(render('{{#if data.total>0 and data.status=returned}}正常{{else}}异常{{/if}}'), '正常');
+  assert.equal(render('{{#if data.status=absent or data.total=39}}正常{{/if}}'), '正常');
+  assert.equal(render('{{#if not data.emptyItems}}非空{{else}}空{{/if}}'), '非空');
+  assert.equal(
+    render('{{#if data.status=returned and not data.emptyItems}}组合条件成立{{/if}}'),
+    '组合条件成立',
+  );
+  assert.equal(
+    render('{{#if data.reason="不在范围 and 不允许打卡"}}原文匹配{{/if}}'),
+    '原文匹配',
+    '引号内的 and 不应被拆成逻辑条件',
   );
   assert.equal(render('{{default data.student.name "未知姓名"}}'), '未知姓名');
   assert.equal(render('{{default data.student.className "未知班级"}}'), '智科');

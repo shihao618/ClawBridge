@@ -1217,14 +1217,18 @@ done</code></pre></div>
             <li><strong>列表渲染</strong>：<code class="code-inline">{{count data.list}}</code> 输出数量；
               <code class="code-inline">{{#each data.list}}</code> … <code class="code-inline">{{/each}}</code>
               逐项渲染（内层 <code class="code-inline">{{字段}}</code>、<code class="code-inline">{{@index}}</code> 从 0、
-              <code class="code-inline">{{@number}}</code> 从 1；each 可嵌套多层，内层用 <code class="code-inline">{{../字段}}</code>、<code class="code-inline">{{../@index}}</code>、<code class="code-inline">{{@root.字段}}</code>/<code class="code-inline">{{@responseRoot.字段}}</code>（@root=模板根，@responseRoot=完整响应根，可访问 rows 的兄弟字段）。示例：</li>
+              <code class="code-inline">{{@number}}</code> 从 1；空列表分支可写
+              <code class="code-inline">{{#each 路径}}...{{else}}暂无数据{{/each}}</code>；
+              each 可嵌套多层，内层用 <code class="code-inline">{{../字段}}</code>、<code class="code-inline">{{../@index}}</code>、<code class="code-inline">{{@root.字段}}</code>/<code class="code-inline">{{@responseRoot.字段}}</code>（@root=模板根，@responseRoot=完整响应根，可访问 rows 的兄弟字段）。示例：</li>
             <li><strong>条件判断与默认值</strong>：支持
               <code class="code-inline">{{#if 条件}}...{{else if 条件}}...{{else}}...{{/if}}</code>、
               <code class="code-inline">{{#unless 条件}}...{{/unless}}</code>；
               条件支持真值判断及 <code class="code-inline">=</code> / <code class="code-inline">!=</code> /
               <code class="code-inline">&gt;</code> / <code class="code-inline">&gt;=</code> /
               <code class="code-inline">&lt;</code> / <code class="code-inline">&lt;=</code> 比较，
-              左侧可为字段或 <code class="code-inline">count 路径</code>；
+              左侧可为字段或 <code class="code-inline">count 路径</code>；支持
+              <code class="code-inline">not 条件</code>、<code class="code-inline">条件A and 条件B</code>、
+              <code class="code-inline">条件A or 条件B</code>（引号内不拆分）；
               <code class="code-inline">{{default 路径 "兜底文案"}}</code> 在值为空时输出兜底文案。
               规则/定时编辑弹窗中的「预览模板」可粘贴示例响应离线预览，不访问外部接口。</li>
           </ul>
@@ -1415,7 +1419,9 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
               条件支持真值判断及 <code class="code-inline">=</code> / <code class="code-inline">!=</code> /
               <code class="code-inline">&gt;</code> / <code class="code-inline">&gt;=</code> /
               <code class="code-inline">&lt;</code> / <code class="code-inline">&lt;=</code> 比较，
-              左侧可为字段或 <code class="code-inline">count 路径</code>；
+              左侧可为字段或 <code class="code-inline">count 路径</code>；支持
+              <code class="code-inline">not 条件</code>、<code class="code-inline">条件A and 条件B</code>、
+              <code class="code-inline">条件A or 条件B</code>（引号内不拆分）；
               <code class="code-inline">{{default 路径 "兜底文案"}}</code> 在值为空时输出兜底文案。
               规则/定时编辑弹窗中的「预览模板」可粘贴示例响应离线预览，不访问外部接口。</li>
           </ul>
