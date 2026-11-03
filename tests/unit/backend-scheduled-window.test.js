@@ -122,6 +122,18 @@ test('isInDailyWindow / nextWindowStart：普通窗口、跨午夜、端点边�
   assert.equal(iso(scheduler.nextWindowStart(at(6, 30), '22:00', '06:00')), iso(at(22, 0)), '跨午夜窗口后 → 当天 22:00');
 });
 
+test('tick：next_run_at 恰好等于窗口 end 时不执行，推进到下一个窗口', async () => {
+  const task = createTask({
+    windowStart: '09:00',
+    windowEnd: '10:30',
+    intervalMs: 1_800_000,
+    nextRunAt: at(10, 30),
+  });
+  const executed = await scheduler.tick(at(10, 30));
+  assert.equal(executed, 0, '10:30 是结束端点，不应执行');
+  assert.equal(iso(store.getScheduledTaskRow(task.id).next_run_at), iso(at(9, 0, 2)), '应推进到次日 09:00');
+});
+
 test('computeInitialNextRun：窗口内/前/后/超出 end 均落窗口（含跨午夜）', () => {
   const task = baseTask();
   // 早于窗口 → 当天窗口 start

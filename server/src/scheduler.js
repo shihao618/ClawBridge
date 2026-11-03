@@ -567,6 +567,25 @@ export async function tick(now = deps.now()) {
     for (const row of dueTasks) {
       if (isScheduledTaskInFlight(row.id)) continue;
       try {
+        const task = parseScheduledTaskRow(row);
+        const window = scheduleWindowOf(task);
+        const dueAt = Number(row.next_run_at) || Number(now);
+        // 窗口结束时间不包含：旧数据/手动执行可能留下 next_run_at=end 的任务，
+        // 到期时也不能执行，直接推进到下一个窗口开始。
+        if (
+          window &&
+          task?.schedule?.type === 'interval' &&
+          !isInDailyWindow(dueAt, window.startMinutes, window.endMinutes, config.scheduler.timezone)
+        ) {
+          const next = nextWindowStart(dueAt, window.startMinutes, window.endMinutes, config.scheduler.timezone);
+          if (next) store.updateScheduledTask(row.id, { nextRunAt: next });
+          log.info('定时任务到期时间不在生效窗口内，跳过并推进到下一次窗口', {
+            taskId: row.id,
+            dueAt,
+            nextRunAt: next,
+          });
+          continue;
+        }
         await executeScheduledTask(row, { now: deps.now(), dryRun: false });
         executed += 1;
       } catch (err) {
