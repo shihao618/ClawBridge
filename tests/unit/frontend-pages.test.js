@@ -987,12 +987,29 @@ test('响应模板：条件判断、默认值与离线预览入口', async () =>
   ]);
   for (const token of [
     'buildTemplatePreviewButton',
+    'buildTemplateSyntaxHelpButton',
     'openTemplatePreviewModal',
+    'openTemplateSyntaxHelpModal',
     'template-preview-sample',
     'template-preview-result',
     '预览模板',
+    '模板语法',
+    'template-help-section',
+    'template-help-list',
   ]) {
-    assert.ok(admin.includes(token), `admin.js 应包含模板预览实现：${token}`);
+    assert.ok(admin.includes(token), `admin.js 应包含模板预览/语法帮助实现：${token}`);
+  }
+  for (const token of [
+    '{{reply}}',
+    '{{response}}',
+    '{{raw}}',
+    '{{@root',
+    '{{@responseRoot',
+    '{{../字段}}',
+    'where 字段=值',
+    '{{default 路径 "兜底文案"}}',
+  ]) {
+    assert.ok(admin.includes(token), `admin.js 模板语法帮助应包含：${token}`);
   }
   for (const token of [
     '/api/admin/template-preview',
@@ -1004,8 +1021,8 @@ test('响应模板：条件判断、默认值与离线预览入口', async () =>
     assert.ok(admin.includes(token), `admin.js 应包含模板条件/预览实现：${token}`);
     assert.ok(html.includes(token), `docs.html 应说明模板条件/预览：${token}`);
   }
-  for (const token of ['.template-preview-result', 'white-space: pre-wrap', 'overflow-wrap: anywhere']) {
-    assert.ok(css.includes(token), `style.css 应包含模板预览样式：${token}`);
+  for (const token of ['.template-preview-result', '.template-help-section', '.template-help-code', 'white-space: pre-wrap', 'overflow-wrap: anywhere']) {
+    assert.ok(css.includes(token), `style.css 应包含模板预览/帮助样式：${token}`);
   }
 });
 
