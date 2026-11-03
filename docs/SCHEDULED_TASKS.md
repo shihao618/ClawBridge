@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
 - **interval**：首次创建（next_run_at=0）时，next = now + interval_ms；执行后 next = 本次执行开始时间 + interval_ms。
   服务重启后若 next_run_at 已过期 ≤5 分钟内则补跑一次；超过则顺延到下一个周期（避免重启后大量积压任务同时爆发）。
 - **interval + 每日生效时间段（可选）**：`windowStart`/`windowEnd`（HH:mm，成对、可空，支持跨午夜，如 22:00–06:00）。
-  任务只在每天该时间段 `[start, end)` 内执行，next_run_at 必须落在窗口内：
+  任务只在每天该时间段 `[start, end]` 内执行，next_run_at 必须落在窗口内：
   - now 在窗口内 → next = now + interval（若超过 end → 下一个窗口 start）；
   - now 早于窗口 start → next = 当天窗口 start；now 晚于窗口 end → 下一个窗口 start；
   - 执行后 candidate = 执行开始 + interval，若不在窗口内 → candidate 之后的下一个窗口 start；

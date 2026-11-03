@@ -2702,11 +2702,11 @@ async function openScheduleEditor(task = null) {
       'div',
       { class: 'rule-form-grid' },
       formField('开始时间（HH:mm）', windowStartInput, null, 'schedule-window-start'),
-      formField('结束时间（HH:mm）', windowEndInput, '结束时间不包含；如 09:00–10:30 只在 09:00 / 09:30 / 10:00 触发。支持跨午夜，如 22:00–06:00。', 'schedule-window-end'),
+      formField('结束时间（HH:mm）', windowEndInput, '结束分钟也包含；如 09:00–10:30 在 09:00 / 09:30 / 10:00 / 10:30 触发。支持跨午夜，如 22:00–06:00。', 'schedule-window-end'),
     ),
     el('p', {
       class: 'form-hint',
-      text: '留空=全天生效；两个时间需同时填写或同时留空，开始时间不能等于结束时间。结束时间当分钟不发送（区间为 [开始, 结束)）。',
+      text: '留空=全天生效；两个时间需同时填写或同时留空，开始时间不能等于结束时间。结束分钟也会发送（区间为 [开始, 结束]）。',
     }),
   );
   const timezoneHint = el('p', { class: 'form-hint', text: `当前时区：${timezone}（由服务端 SCHEDULER_TIMEZONE 决定）` });

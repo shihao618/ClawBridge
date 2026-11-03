@@ -671,7 +671,7 @@ TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEn
 `request{method,url,headerNames,bodyTemplate}`、`response{type,path,template,fallbackText}`、
 `nextRunAt/lastRunAt/lastStatus`。Header 值加密保存、读取只返回名称。
 
-**计划**：`interval`（每 N 分钟，60s–30d；可选 `windowStart`/`windowEnd` 每日生效时间段，HH:mm、成对、支持跨午夜；区间 `[start,end)`，结束时间不触发）
+**计划**：`interval`（每 N 分钟，60s–30d；可选 `windowStart`/`windowEnd` 每日生效时间段，HH:mm、成对、支持跨午夜；区间 `[start,end]`，结束分钟也触发）
 或 `daily`（每天 HH:mm，时区 `SCHEDULER_TIMEZONE`，默认 Asia/Shanghai）；
 任务执行后写 `nextRunAt`，服务重启时过期任务补跑一次（避免漏发）。
 

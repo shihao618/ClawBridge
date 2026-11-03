@@ -1372,7 +1372,7 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
           <ul class="doc-list">
             <li><strong>interval（间隔）</strong>：<code class="code-inline">interval_ms</code> 范围
               60000..2592000000（1 分钟–30 天）；可选每日生效时间段
-              <code class="code-inline">windowStart</code>/<code class="code-inline">windowEnd</code>（HH:mm，成对、支持跨午夜；区间为 [开始, 结束)，结束时间不触发，窗口外自动推进）；
+              <code class="code-inline">windowStart</code>/<code class="code-inline">windowEnd</code>（HH:mm，成对、支持跨午夜；区间为 [开始, 结束]，结束分钟也触发，窗口外自动推进）；
               首次创建时 <code class="code-inline">next_run_at = now + interval_ms</code>，
               执行后按本次执行开始时间 + 间隔计算下一次。</li>
             <li><strong>daily（每日定时）</strong>：<code class="code-inline">daily_time</code> 为 HH:mm，

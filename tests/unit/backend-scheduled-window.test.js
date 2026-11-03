@@ -96,17 +96,19 @@ const createTask = (overrides = {}) =>
   });
 
 test('isInDailyWindow / nextWindowStart：普通窗口、跨午夜、端点边界', () => {
-  // 普通窗口 [09:00, 18:00)
+  // 普通窗口 [09:00, 18:00]（结束分钟包含）
   assert.equal(scheduler.isInDailyWindow(at(9, 0), '09:00', '18:00'), true, 'start 端点在内');
   assert.equal(scheduler.isInDailyWindow(at(17, 59), '09:00', '18:00'), true);
-  assert.equal(scheduler.isInDailyWindow(at(18, 0), '09:00', '18:00'), false, 'end 端点在外');
+  assert.equal(scheduler.isInDailyWindow(at(18, 0), '09:00', '18:00'), true, 'end 端点在内');
+  assert.equal(scheduler.isInDailyWindow(at(18, 1), '09:00', '18:00'), false);
   assert.equal(scheduler.isInDailyWindow(at(8, 59), '09:00', '18:00'), false);
-  // 跨午夜 [22:00, 06:00)
+  // 跨午夜 [22:00, 06:00]（结束分钟包含）
   assert.equal(scheduler.isInDailyWindow(at(22, 0), '22:00', '06:00'), true);
   assert.equal(scheduler.isInDailyWindow(at(23, 30), '22:00', '06:00'), true);
   assert.equal(scheduler.isInDailyWindow(at(1, 0), '22:00', '06:00'), true);
   assert.equal(scheduler.isInDailyWindow(at(5, 59), '22:00', '06:00'), true);
-  assert.equal(scheduler.isInDailyWindow(at(6, 0), '22:00', '06:00'), false);
+  assert.equal(scheduler.isInDailyWindow(at(6, 0), '22:00', '06:00'), true);
+  assert.equal(scheduler.isInDailyWindow(at(6, 1), '22:00', '06:00'), false);
   assert.equal(scheduler.isInDailyWindow(at(21, 59), '22:00', '06:00'), false);
   // 非法窗口
   assert.equal(scheduler.isInDailyWindow(at(10, 0), '10:00', '10:00'), false);
@@ -122,16 +124,23 @@ test('isInDailyWindow / nextWindowStart：普通窗口、跨午夜、端点边�
   assert.equal(iso(scheduler.nextWindowStart(at(6, 30), '22:00', '06:00')), iso(at(22, 0)), '跨午夜窗口后 → 当天 22:00');
 });
 
-test('tick：next_run_at 恰好等于窗口 end 时不执行，推进到下一个窗口', async () => {
+test('tick：next_run_at 恰好等于窗口 end 时正常执行（结束分钟包含）', async () => {
   const task = createTask({
     windowStart: '09:00',
     windowEnd: '10:30',
     intervalMs: 1_800_000,
     nextRunAt: at(10, 30),
+    requestUrl: `${base}/api/health`,
   });
   const executed = await scheduler.tick(at(10, 30));
-  assert.equal(executed, 0, '10:30 是结束端点，不应执行');
-  assert.equal(iso(store.getScheduledTaskRow(task.id).next_run_at), iso(at(9, 0, 2)), '应推进到次日 09:00');
+  assert.equal(executed, 1, '10:30 是结束分钟，应执行');
+  assert.ok(Number(store.getScheduledTaskRow(task.id).last_run_at) > 0, '应写入 last_run_at');
+});
+
+test('computeNextAfterRun：09:00–10:30 每 30 分钟，10:00 后下一次为 10:30', () => {
+  const task = baseTask({ windowStart: '09:00', windowEnd: '10:30', intervalMs: 1_800_000 });
+  assert.equal(iso(scheduler.computeNextAfterRun(task, at(10, 0))), iso(at(10, 30)), '结束分钟应触发');
+  assert.equal(iso(scheduler.computeNextAfterRun(task, at(10, 30))), iso(at(9, 0, 2)), '10:30 之后到次日 09:00');
 });
 
 test('computeInitialNextRun：窗口内/前/后/超出 end 均落窗口（含跨午夜）', () => {

@@ -158,15 +158,15 @@ export function scheduleWindowOf(task) {
   return { startMinutes, endMinutes, start, end };
 }
 
-/** 时间戳是否落在每日生效时间段内（支持跨午夜；区间 [start, end)）。 */
+/** 时间戳是否落在每日生效时间段内（支持跨午夜；区间 [start, end]）。 */
 export function isInDailyWindow(ts, start, end, timeZone = config.scheduler.timezone) {
   const startMinutes = typeof start === 'number' ? start : parseClockTime(start);
   const endMinutes = typeof end === 'number' ? end : parseClockTime(end);
   if (startMinutes === null || endMinutes === null || startMinutes === endMinutes) return false;
   const minute = localMinuteOfDay(ts, timeZone);
-  if (startMinutes < endMinutes) return minute >= startMinutes && minute < endMinutes;
-  // 跨午夜：22:00–06:00
-  return minute >= startMinutes || minute < endMinutes;
+  if (startMinutes < endMinutes) return minute >= startMinutes && minute <= endMinutes;
+  // 跨午夜：22:00–06:00（含 06:00）
+  return minute >= startMinutes || minute <= endMinutes;
 }
 
 /** ts 之后（严格）的下一个窗口开始时间；无有效窗口返回 null。 */
@@ -570,8 +570,7 @@ export async function tick(now = deps.now()) {
         const task = parseScheduledTaskRow(row);
         const window = scheduleWindowOf(task);
         const dueAt = Number(row.next_run_at) || Number(now);
-        // 窗口结束时间不包含：旧数据/手动执行可能留下 next_run_at=end 的任务，
-        // 到期时也不能执行，直接推进到下一个窗口开始。
+        // 结束分钟包含；仅窗口外（如 10:31）需要跳过并推进到下一个窗口开始。
         if (
           window &&
           task?.schedule?.type === 'interval' &&
