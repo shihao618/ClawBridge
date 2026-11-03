@@ -663,7 +663,7 @@ GET    /api/admin/scheduled-tasks/{id}               → { task }
 PATCH  /api/admin/scheduled-tasks/{id}               → { task }
 DELETE /api/admin/scheduled-tasks/{id}               → 204
 POST   /api/admin/scheduled-tasks/{id}/test          → 200（dry-run：真实调用接口渲染通知，不发送不写日志）
-POST   /api/admin/scheduled-tasks/{id}/run           → 200（立即执行一次：调用+发送+写日志+更新下次时间）
+POST   /api/admin/scheduled-tasks/{id}/run           → 200（手动执行一次：调用+发送+写日志，不改变 next_run_at）
 GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset=
 ```
 

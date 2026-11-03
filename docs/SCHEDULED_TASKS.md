@@ -156,7 +156,7 @@ GET    /api/admin/scheduled-tasks/{id}               → { task }
 PATCH  /api/admin/scheduled-tasks/{id}               → { task }
 DELETE /api/admin/scheduled-tasks/{id}               → 204
 POST   /api/admin/scheduled-tasks/{id}/test          → 200（dry-run：真实调用接口、渲染通知，不发送、不写运行日志）
-POST   /api/admin/scheduled-tasks/{id}/run           → 200（立即执行一次：真实调用并发送、写日志、更新 next_run_at）
+POST   /api/admin/scheduled-tasks/{id}/run           → 200（手动执行一次：真实调用并发送、写日志，不改变 next_run_at）
 GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset= → { total, items:[...] }
 POST   /api/admin/template-preview                   → 200 { responseText, replyText, usedFallback }（示例响应离线预览）
 ```
@@ -182,7 +182,8 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
   timeoutMs 1000..30000；response.type json/text。
 - `POST /:id/test` 返回：`{matched:true, request:{method,url,headerNames,bodyPreview}, httpStatus, latencyMs,
   responsePreview, replyText, recipientsCount, error, responseHeaders}`（响应头诊断同 app-rules test）。
-- `POST /:id/run` 返回 `{status, httpStatus, latencyMs, recipientsCount, error}`，并写日志、更新 next_run_at。
+- `POST /:id/run` 返回 `{status, httpStatus, latencyMs, recipientsCount, error}`，并写日志；
+  **手动执行不更新 `next_run_at`**，不会改变后续定时计划。
 - 日志项：`{id,taskId,taskName,status,httpStatus,latencyMs,error,responsePreview,replyPreview,recipientsCount,createdAt}`。
 
 ## 6. 前端（管理后台）
@@ -201,7 +202,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
    - 表单校验与后端错误展示。
 3. 「测试运行」弹窗：真实调用接口并展示实际请求（Header 只显示名称）、HTTP/耗时、响应预览、响应头诊断、
    **将发送的通知文本**、收件人数（明确注明不会发给用户）。
-4. 「立即执行」：确认弹窗后调用 `POST /:id/run`，提示本次收件人数与发送结果。
+4. 「立即执行」：确认弹窗后调用 `POST /:id/run`，提示本次收件人数与发送结果；手动执行不改变下一次定时时间。
 5. 运行日志：任务/状态筛选、分页，字段同 API。
 6. 文档页新增「定时通知」章节（机制、计划/模板语法、SSRF/限流、API、curl 示例）。
 7. 零构建/CSP/textContent/移动端不溢出；接口应用 Tab 布局保持现有风格。
@@ -226,7 +227,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
   成功渲染+入队 source=schedule、失败 fallback、无 fallback 不发送、收件人去重/上限、日志写入、
   start/stop 幂等、单任务异常不影响其他任务；
 - API：CRUD/校验（非 boolean、非法计划/目标/URL 400）、Header 加密不泄漏、test dry-run 不发送不写日志、
-  run 真实入队并写日志/更新 next_run_at、日志过滤分页。
+  run 真实入队并写日志（不改变 next_run_at）、日志过滤分页。
 
 **e2e（本地 mock 外部 API + iLink mock）**
 - 创建间隔任务（如 interval 1 分钟，测试用可注入更小 tick？调度器外部真实等待 → 用 `SCHEDULER_TICK_MS=200` 与

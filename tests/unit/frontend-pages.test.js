@@ -1064,6 +1064,9 @@ test('定时通知：文档页章节与 docs/SCHEDULED_TASKS.md 一致', async (
   }
   assert.ok(/curl -X POST[^\n]*scheduled-tasks/.test(html), 'docs.html 应包含创建定时任务 curl 示例');
   assert.ok(html.includes('测试运行') && html.includes('立即执行'), 'docs.html 应说明测试运行/立即执行');
+  const admin = await readAsset('admin.js');
+  assert.ok(admin.includes('手动执行不会改变下一次定时时间'), '后台立即执行应提示不影响定时');
+  assert.ok(admin.includes('定时计划不变'), '后台成功提示应注明定时计划不变');
 });
 
 test('运行配置：后台可编辑设置表单（分组/保存/恢复默认/只读 env）', async () => {

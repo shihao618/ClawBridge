@@ -402,6 +402,7 @@ function createEmptyResult(task) {
 
 /**
  * 执行一次任务（dryRun=true：真实调用但不发送/不写日志/不更新 next_run_at）。
+ * manual=true：手动执行，写运行日志但保留原有 next_run_at，不影响后续定时。
  * 同一任务同一时刻只允许一个执行实例；并发调用返回 409。
  * @returns {Promise<object>}
  */
@@ -425,7 +426,7 @@ export function isScheduledTaskInFlight(taskId) {
   return inFlightTasks.has(String(taskId));
 }
 
-async function executeScheduledTaskInternal(taskRow, { dryRun = false, now = deps.now() } = {}) {
+async function executeScheduledTaskInternal(taskRow, { dryRun = false, now = deps.now(), manual = false } = {}) {
   const task = parseScheduledTaskRow(taskRow);
   if (!task) return null;
   const startedAt = Number(now);
@@ -520,7 +521,9 @@ async function executeScheduledTaskInternal(taskRow, { dryRun = false, now = dep
   }
   result.recipientsCount = queuedCount;
 
-  const nextRunAt = computeNextAfterRun(task, startedAt);
+  const nextRunAt = manual
+    ? Number(task.nextRunAt) || computeNextAfterRun(task, startedAt)
+    : computeNextAfterRun(task, startedAt);
   try {
     store.insertScheduledTaskLog({
       taskId: task.id,
@@ -639,10 +642,11 @@ export function restart() {
 /**
  * 立即执行一次任务（API test/run 复用）。
  * dryRun=true：真实调用接口并渲染，但不发送、不写日志、不更新 next_run_at。
+ * 非 dry-run 为手动执行：正常发送/写日志，但保留 next_run_at，不影响定时计划。
  * @returns {Promise<object|null>} 任务不存在返回 null
  */
 export async function runScheduledTaskNow(taskId, { dryRun = false } = {}) {
   const row = store.getScheduledTaskRow(taskId);
   if (!row) return null;
-  return executeScheduledTask(row, { dryRun, now: deps.now() });
+  return executeScheduledTask(row, { dryRun, manual: !dryRun, now: deps.now() });
 }

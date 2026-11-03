@@ -289,13 +289,14 @@ test('POST /:id/test dry-run：真实调用不发送不写日志；返回请求/
   assertError(await adminWrite('POST', '/api/admin/scheduled-tasks/task_missing/test', {}), 404, 'NOT_FOUND');
 });
 
-test('POST /:id/run：真实发送+写日志+更新 next_run_at；disabled → 400', async () => {
+test('POST /:id/run：真实发送+写日志，保留 next_run_at；disabled → 400', async () => {
   const user = createUser();
   const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
-    name: '立即执行任务',
+    name: '手动执行任务',
     targets: { type: 'users', ids: [user.id] },
   }));
   const task = created.json.task;
+  const nextBefore = task.nextRunAt;
 
   const run = await adminWrite('POST', `/api/admin/scheduled-tasks/${task.id}/run`, {});
   assert.equal(run.status, 200, run.text);
@@ -306,14 +307,14 @@ test('POST /:id/run：真实发送+写日志+更新 next_run_at；disabled → 4
 
   const outbox = getDb().prepare("SELECT * FROM outbox WHERE user_id = ? AND source = 'schedule'").all(user.id);
   assert.equal(outbox.length, 1);
-  assert.match(outbox[0].text, /answer:立即执行任务/);
+  assert.match(outbox[0].text, /answer:手动执行任务/);
   const logs = getDb().prepare('SELECT * FROM scheduled_task_logs WHERE task_id = ?').all(task.id);
   assert.equal(logs.length, 1);
   assert.equal(logs[0].status, 'success');
 
   const detail = await adminGet(`/api/admin/scheduled-tasks/${encodeURIComponent(task.id)}`);
   assert.equal(detail.json.task.lastStatus, 'success');
-  assert.ok(detail.json.task.nextRunAt > Date.now());
+  assert.equal(detail.json.task.nextRunAt, nextBefore, '手动执行不应改变 next_run_at');
 
   await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, { enabled: false });
   assertError(await adminWrite('POST', `/api/admin/scheduled-tasks/${task.id}/run`, {}), 400, 'BAD_REQUEST');

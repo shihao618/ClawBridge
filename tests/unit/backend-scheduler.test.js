@@ -97,10 +97,11 @@ const outboxFor = (userId) =>
 const logsFor = (taskId) =>
   getDb().prepare('SELECT * FROM scheduled_task_logs WHERE task_id = ? ORDER BY id ASC').all(taskId);
 
-test('立即执行成功：真实调用→解析→逐目标入队 source=schedule→写日志/更新 next_run_at', async () => {
+test('立即执行成功：真实调用→解析→逐目标入队→写日志，保留 next_run_at', async () => {
   const userA = createUser();
   const userB = createUser();
   const task = createTask({ name: '成功任务', targetIds: [userA.id, userB.id] });
+  const nextBefore = Number(store.getScheduledTaskRow(task.id).next_run_at);
 
   const result = await scheduler.runScheduledTaskNow(task.id, { dryRun: false });
   assert.equal(result.status, 'success');
@@ -126,7 +127,7 @@ test('立即执行成功：真实调用→解析→逐目标入队 source=schedu
   const row = store.getScheduledTaskRow(task.id);
   assert.equal(row.last_status, 'success');
   assert.ok(Number(row.last_run_at) > 0);
-  assert.ok(Number(row.next_run_at) > Number(row.last_run_at), 'interval 下一次 = 执行开始 + 间隔');
+  assert.equal(Number(row.next_run_at), nextBefore, '手动执行不应改变 next_run_at');
 });
 
 test('同一任务并发执行：第二个请求 409，不会重复调用外部接口/发消息', async () => {

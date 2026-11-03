@@ -3261,7 +3261,7 @@ function buildScheduleTestResultNodes(result) {
 async function runScheduledTask(task) {
   const confirmed = await confirmDialog({
     title: '立即执行定时任务',
-    message: `将立即执行任务「${task.name || task.id}」：真实调用外部接口并把通知发送给目标用户（会占用微信发送限流），确定继续？`,
+    message: `将立即执行任务「${task.name || task.id}」：真实调用外部接口并把通知发送给目标用户（会占用微信发送限流）。手动执行不会改变下一次定时时间，确定继续？`,
     confirmText: '立即执行',
     cancelText: '取消',
   });
@@ -3274,7 +3274,7 @@ async function runScheduledTask(task) {
     const recipients = Number(data && data.recipientsCount);
     const status = data && data.status;
     if (status === 'success') {
-      toast(`执行完成：已将 ${formatNumber(Number.isFinite(recipients) ? recipients : 0)} 条通知加入发送队列（微信送达受限流影响）`, 'success');
+      toast(`执行完成：已将 ${formatNumber(Number.isFinite(recipients) ? recipients : 0)} 条通知加入发送队列（微信送达受限流影响；定时计划不变）`, 'success');
     } else if (status === 'skipped') {
       toast(`已跳过执行：${data && data.error ? data.error : '无有效收件人'}`, 'info');
     } else {

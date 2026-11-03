@@ -606,7 +606,7 @@ curl -X POST http://localhost:10380/api/v1/messages \
                 <tr>
                   <td><span class="method method-post">POST</span></td>
                   <td><code class="endpoint-path">/api/admin/scheduled-tasks/{id}/run</code></td>
-                  <td>立即执行一次（真实发送、写日志、更新下次时间）</td>
+                  <td>手动执行一次（真实发送、写日志，不改变下次定时）</td>
                   <td>Cookie + CSRF 头</td>
                 </tr>
                 <tr>
@@ -1532,7 +1532,7 @@ curl -X POST http://localhost:10380/api/admin/scheduled-tasks \
 curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/test \
   -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
 
-# 立即执行一次（真实发送、写日志、更新 next_run_at）
+# 手动执行一次（真实发送、写日志，不改变 next_run_at）
 curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run \
   -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
 
