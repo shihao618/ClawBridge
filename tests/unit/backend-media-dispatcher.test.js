@@ -297,6 +297,22 @@ test('媒体发送：-2 退避后只重试媒体，caption 不重复发送', asy
   assert.equal(state.uploadRequests.length, 2, '媒体每次重试重新上传');
 });
 
+test('发送失败：ret=-2 prepare failed 不按限流重试，直接 failed 并提示 context_token', async () => {
+  state.sendRequests.length = 0;
+  state.sendFailures.length = 0;
+  const user = createUser({ contextToken: 'ctx-prepare-failed' });
+  const queued = store.enqueueMessage({ userId: user.id, text: 'context token 失效测试' });
+  state.sendFailures.push({ match: 'text', ret: -2, errmsg: 'prepare failed', remaining: 1 });
+
+  assert.equal(await dispatcher.processOne(Date.now() + 1), true);
+  const outbox = store.getOutbox(queued.id);
+  assert.equal(outbox.status, 'failed', 'prepare failed 不应进入限流重试');
+  assert.equal(outbox.attempts, 1, '只尝试一次');
+  assert.match(outbox.error, /context_token/i);
+  assert.match(outbox.error, /prepare failed/i);
+  assert.equal(state.sendRequests.length, 1);
+});
+
 test('媒体发送：caption 发送被 -2 限流时整条退避重试', async () => {
   state.sendRequests.length = 0;
   state.sendFailures.length = 0;

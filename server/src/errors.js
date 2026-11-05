@@ -39,7 +39,7 @@ export const unavailable = (message = '服务暂不可用') => new AppError(Erro
 /**
  * iLink（微信 ClawBot API）调用错误。
  *
- * - ret / errmsg：微信业务错误码（ret != 0，例如 -2 限流、-14 token 失效）
+ * - ret / errmsg：微信业务错误码（ret != 0；ret=-2 可能是限流，也可能是 prepare failed 的 context_token 失效；-14 为 token 失效）
  * - httpStatus：HTTP 层错误码
  * - timeout / aborted：客户端超时或主动中止（长轮询属正常控制流）
  */
@@ -59,9 +59,21 @@ export class ILinkError extends Error {
   }
 }
 
-/** 微信服务端限流（ret=-2）。 */
+/** 微信服务端限流（ret=-2）；`prepare failed` 是 context_token 失效，不属于限流。 */
 export function isRateLimitError(err) {
-  return err instanceof ILinkError && err.ret === -2;
+  return err instanceof ILinkError && err.ret === -2 && !isPrepareFailedError(err);
+}
+
+/**
+ * ret=-2 且 errmsg 为 `prepare failed`：iLink 实际表示 context_token 缺失/失效，
+ * 需要用户先给 bot 发消息刷新会话；重试没有意义。
+ */
+export function isPrepareFailedError(err) {
+  return (
+    err instanceof ILinkError &&
+    err.ret === -2 &&
+    /prepare\s+failed/i.test(String(err.errmsg || err.message || ''))
+  );
 }
 
 /** bot_token 失效（ret/errcode=-14），需冷却并重新扫码绑定。 */

@@ -186,7 +186,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
      text, contextToken: decrypt(context_token_enc)})`；
   5. 成功 → `sent`、`server_message_id`、`sent_at`，更新用户 `last_outbound_at`；
   6. 失败 → `attempts+1`：
-     - `-2`（限流）：按 `config.push.retryDelaysMs` 退避后重试；
+     - `-2`（限流）：按 `config.push.retryDelaysMs` 退避后重试；若 `errmsg=prepare failed`，表示
+       context_token 缺失/失效，直接 failed 并提示用户先给 bot 发消息刷新会话，不按限流重试；
      - `-14`（token 失效）：用户 `pause_until=now+1h`、`last_error`，该条与其余 queued
        标记 `failed`（错误："bot token 已失效，需要用户重新扫码绑定"），写 events；
      - 其他错误：同上退避重试，超过 `maxAttempts` → `failed`。

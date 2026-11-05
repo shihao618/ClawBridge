@@ -9,11 +9,12 @@
  *      - 媒体消息：caption（text）先发一次并记录 caption_sent_at，再上传 CDN 并发送媒体 item；
  *        caption 与媒体各消耗 1 个限流令牌；
  *      - 纯文本：一次 sendText；
- *   5. 成功 → sent + last_outbound_at；失败 -2 退避重试，-14 冷却 1h 并失败剩余，其他错误退避到上限。
+ *   5. 成功 → sent + last_outbound_at；失败 ret=-2 限流退避重试；ret=-2 prepare failed 直接失败（context_token 失效）；
+ *      -14 冷却 1h 并失败剩余；其他错误退避到上限。
  * 启动时把残留 sending 重置为 queued。
  */
 import { config } from './config.js';
-import { isRateLimitError, isStaleTokenError } from './errors.js';
+import { isPrepareFailedError, isRateLimitError, isStaleTokenError } from './errors.js';
 import * as ilink from './ilink.js';
 import { logger } from './logger.js';
 import * as media from './media.js';
@@ -336,6 +337,20 @@ function handleFailure({ candidate, user, err }) {
       outboxId: candidate.id,
       userId: user.id,
       alsoFailed: failedCount,
+    });
+    return;
+  }
+
+  // iLink 的 ret=-2 有两种语义：真正限流，以及 prepare failed（context_token 缺失/失效）。
+  // 后者重试无意义，直接失败并给出可操作提示。
+  if (isPrepareFailedError(err)) {
+    const reason =
+      '消息发送失败：context_token 缺失或已失效，需要用户先给 bot 发一条消息刷新会话（iLink prepare failed）';
+    store.markOutboxFailed(candidate.id, { error: reason, ts: now });
+    log.warn('消息投递失败：context_token 缺失/失效（prepare failed），不重试', {
+      outboxId: candidate.id,
+      userId: user.id,
+      message,
     });
     return;
   }
