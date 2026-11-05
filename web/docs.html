@@ -134,6 +134,18 @@
         <section id="push-api" class="doc-section">
           <h2 class="doc-heading">推送 API</h2>
 
+          <h3 class="doc-subheading">Webhook 兼容入口</h3>
+          <div class="endpoint-line">
+            <span class="method method-post">POST</span>
+            <code class="endpoint-path">/api/v1/webhook</code>
+          </div>
+          <div class="code-block"><pre><code>curl -X POST "http://localhost:10380/api/v1/webhook?token=$API_TOKEN&to=u_abc" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Webhook 消息"}'</code></pre></div>
+          <p>目标可用 query <code class="code-inline">?to=</code> / <code class="code-inline">?groupId=</code> / <code class="code-inline">?broadcast=1</code>，
+          也可放在 JSON body。支持 JSON、纯文本、<code class="code-inline">application/x-www-form-urlencoded</code>；
+          文本优先取 <code class="code-inline">text/content/message/msg</code>，否则回退整个 JSON。响应 202。</p>
+
           <h3 class="doc-subheading">给指定用户发消息</h3>
           <div class="endpoint-line">
             <span class="method method-post">POST</span>
@@ -674,6 +686,12 @@ curl -X POST http://localhost:10380/api/v1/messages \
                   <td><code class="endpoint-path">/api/admin/media/{attId}</code></td>
                   <td>读取/下载媒体（<code class="code-inline">?download=1</code>，支持 Range）</td>
                   <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-post">POST</span></td>
+                  <td><code class="endpoint-path">/api/v1/webhook</code></td>
+                  <td>Webhook 兼容推送（支持 ?token= 鉴权与目标）</td>
+                  <td>API Key / ?token=</td>
                 </tr>
                 <tr>
                   <td><span class="method method-post">POST</span></td>

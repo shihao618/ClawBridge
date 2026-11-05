@@ -173,11 +173,30 @@ export function isApiKeyValid(token) {
 
 /** 中间件：推送 API Key 鉴权 + 按 Key 限流。后台关闭推送 API 时视为接口不存在。 */
 export function requireApiKey(req, res, next) {
+  authenticateApiKey(req, next, { allowQuery: false });
+}
+
+/** Webhook 兼容鉴权：除标准 Header 外，允许 ?token= / ?key= / ?api_key=（便于不能自定义 Header 的服务）。 */
+export function requireWebhookApiKey(req, res, next) {
+  authenticateApiKey(req, next, { allowQuery: true });
+}
+
+function authenticateApiKey(req, next, { allowQuery = false } = {}) {
   try {
     if (!config.pushApiEnabled) throw notFound('推送 API 已禁用');
     syncApiKeyLimiter();
-    const token = extractApiKey(req);
-    if (!isApiKeyValid(token)) throw unauthorized('API Key 无效；请使用 Authorization: Bearer <API_TOKEN> 或 X-Api-Key');
+    let token = extractApiKey(req);
+    if (!token && allowQuery) {
+      const queryToken = req.query?.token ?? req.query?.key ?? req.query?.api_key;
+      token = typeof queryToken === 'string' ? queryToken.trim() : '';
+    }
+    if (!isApiKeyValid(token)) {
+      throw unauthorized(
+        allowQuery
+          ? 'API Key 无效；Webhook 请使用 Authorization: Bearer <API_TOKEN>、X-Api-Key，或 ?token=<API_TOKEN>'
+          : 'API Key 无效；请使用 Authorization: Bearer <API_TOKEN> 或 X-Api-Key',
+      );
+    }
     const keyId = hashToken(token);
     const limit = apiKeyLimiter.hit(keyId);
     if (!limit.allowed) {

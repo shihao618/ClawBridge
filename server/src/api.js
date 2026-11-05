@@ -417,7 +417,7 @@ function parseInboundQuery(query = {}) {
 }
 
 /** 分组群发公共处理（管理端/ v1 共用）：校验分组+文本/媒体，给目标 active 未冷却用户入队。 */
-function queueGroupMessage(groupId, body, urlPrefix) {
+function queueGroupMessage(groupId, body, urlPrefix, { source = 'group' } = {}) {
   const group = store.getGroup(groupId);
   if (!group) throw notFound('分组不存在');
   const text = parseOptionalText(body.text);
@@ -425,13 +425,83 @@ function queueGroupMessage(groupId, body, urlPrefix) {
   if (text === '' && !attachment) throw badRequest('text 与 mediaId 至少提供一个');
   const targets = store.getGroupMembers(group.id, { activeOnly: true });
   const queued = store.enqueueMany(
-    targets.map((user) => ({ userId: user.id, text, source: 'group', mediaId: attachment?.id ?? null })),
+    targets.map((user) => ({ userId: user.id, text, source, mediaId: attachment?.id ?? null })),
   );
-  log.info('分组消息已入队', { groupId: group.id, count: queued.length });
+  log.info('分组消息已入队', { groupId: group.id, count: queued.length, source });
   return {
     count: queued.length,
     queued: queued.map((row) => queuedItem(row, { attachment, urlPrefix })),
   };
+}
+
+/** Webhook 文本提取：常见 text/content/message/msg，支持嵌套对象；无法识别时回退 JSON 字符串。 */
+function extractWebhookText(req, body) {
+  const fromObject = (value) => {
+    if (typeof value === 'string') return value.trim() || null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    for (const key of ['text', 'content', 'message', 'msg', 'body', 'title']) {
+      const found = fromObject(value[key]);
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const value of [
+    req.query?.text,
+    req.query?.content,
+    req.query?.message,
+    req.query?.msg,
+    body.text,
+    body.content,
+    body.message,
+    body.msg,
+  ]) {
+    const found = fromObject(value);
+    if (found) return found;
+  }
+  if (typeof req.body === 'string' && req.body.trim()) return req.body.trim();
+  if (body && Object.keys(body).length > 0) return JSON.stringify(body);
+  return '';
+}
+
+/** Webhook 目标：优先级 query > body；支持用户 ID、分组 ID、广播。 */
+function extractWebhookTarget(req, body) {
+  const query = req.query || {};
+  const rawUsers =
+    query.to ??
+    query.userIds ??
+    query.user_id ??
+    query.users ??
+    body.to ??
+    body.userIds ??
+    body.user_id ??
+    body.users;
+  const rawGroup =
+    query.groupId ?? query.group_id ?? query.group ?? body.groupId ?? body.group_id ?? body.group;
+  const rawBroadcast = query.broadcast ?? body.broadcast;
+  const broadcast =
+    rawBroadcast === true || ['1', 'true', 'yes', 'on'].includes(String(rawBroadcast ?? '').toLowerCase());
+  const groupId = typeof rawGroup === 'string' && rawGroup.trim() !== '' ? rawGroup.trim() : '';
+  const userIds = [];
+  if (rawUsers !== undefined && rawUsers !== null && rawUsers !== '') {
+    const values = Array.isArray(rawUsers) ? rawUsers : [rawUsers];
+    for (const item of values) {
+      if (Array.isArray(item)) {
+        for (const nested of item) {
+          if (typeof nested === 'string' && nested.trim()) userIds.push(nested.trim());
+        }
+      } else if (typeof item === 'string') {
+        for (const part of item.split(',')) {
+          if (part.trim()) userIds.push(part.trim());
+        }
+      }
+    }
+  }
+  const modes = [userIds.length > 0, groupId !== '', broadcast].filter(Boolean).length;
+  if (modes === 0) {
+    throw badRequest('缺少收件目标：请通过 ?to=<userId>、?groupId=<groupId> 或 ?broadcast=1 指定');
+  }
+  if (modes > 1) throw badRequest('收件目标只能选择一种：用户 / 分组 / 广播');
+  return { userIds: [...new Set(userIds)], groupId, broadcast };
 }
 
 /** v1 分组列表项（docs/GROUPS_AND_INBOUND.md §4.1）。 */
@@ -1519,6 +1589,69 @@ export function createApp() {
   // -------------------------------------------------------------------------
   // 对外推送 API（API Key）
   // -------------------------------------------------------------------------
+
+  // Webhook 兼容：允许文本/表单 body；目标可放在 query（?to= / ?groupId= / ?broadcast=1）。
+  const webhookBodyParser = express.text({
+    type: ['text/*', 'application/x-www-form-urlencoded'],
+    limit: '64kb',
+  });
+  app.post('/api/v1/webhook', webhookBodyParser, auth.requireWebhookApiKey, (req, res) => {
+    const contentType = String(req.get('content-type') || '').toLowerCase();
+    const body = (() => {
+      if (typeof req.body === 'string' && contentType.includes('application/x-www-form-urlencoded')) {
+        return Object.fromEntries(new URLSearchParams(req.body));
+      }
+      return req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) ? req.body : {};
+    })();
+    const rawText = extractWebhookText(req, body);
+    if (!rawText) throw badRequest('无法从 Webhook 请求中提取消息文本（支持 text/content/message/msg 或纯文本 body）');
+    const text = parseText(rawText);
+    const target = extractWebhookTarget(req, body);
+    let payload;
+    if (target.broadcast) {
+      const rawOnlyBound = req.query?.onlyBound ?? body.onlyBound;
+      const onlyBound = !(
+        rawOnlyBound === false ||
+        ['0', 'false', 'no', 'off'].includes(String(rawOnlyBound ?? '').toLowerCase())
+      );
+      const targets = store.getBroadcastTargets({ includePaused: !onlyBound });
+      const queued = store.enqueueMany(
+        targets.map((user) => ({ userId: user.id, text, source: 'webhook' })),
+      );
+      payload = { accepted: queued.length, queued: queued.map((row) => queuedItem(row)), target: 'broadcast' };
+    } else if (target.groupId) {
+      const result = queueGroupMessage(target.groupId, { text }, MEDIA_V1_PREFIX, { source: 'webhook' });
+      payload = { accepted: result.count, queued: result.queued, target: 'group' };
+    } else {
+      if (target.userIds.length > 100) throw badRequest('to 最多包含 100 个用户 id');
+      const rows = store.getUsersByIds(target.userIds);
+      const rowMap = new Map(rows.map((row) => [row.id, row]));
+      const validUserIds = [];
+      const unknownUserIds = [];
+      for (const id of target.userIds) {
+        const row = rowMap.get(id);
+        if (!row || row.status !== 'active') unknownUserIds.push(id);
+        else validUserIds.push(id);
+      }
+      if (validUserIds.length === 0) {
+        throw new AppError(ErrorCodes.NOT_FOUND, '所有用户均不存在或未绑定', {
+          status: 404,
+          details: { unknownUserIds },
+        });
+      }
+      const queued = store.enqueueMany(
+        validUserIds.map((userId) => ({ userId, text, source: 'webhook' })),
+      );
+      payload = { accepted: queued.length, queued: queued.map((row) => queuedItem(row)), target: 'users' };
+      if (unknownUserIds.length > 0) payload.unknownUserIds = unknownUserIds;
+    }
+    log.info('Webhook 消息已入队', {
+      target: payload.target,
+      accepted: payload.accepted,
+      fromIp: req.ip,
+    });
+    res.status(202).json(payload);
+  });
 
   app.post('/api/v1/messages', auth.requireApiKey, (req, res) => {
     const body = requireJsonBody(req);

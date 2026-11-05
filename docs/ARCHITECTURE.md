@@ -250,6 +250,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 - 管理后台：HttpOnly + SameSite=Lax Cookie；写接口要求 `X-Requested-With: ClawBridge-Admin`；
   登录失败按 IP 限流（如 10 次/15 分钟）。
 - 推送 API：`Authorization: Bearer <API_TOKEN>` 或 `X-Api-Key`；按 token 限流 60 次/分钟。
+  Webhook 兼容入口额外允许 `?token=`（便于不能自定义 Header 的服务；URL 可能进入代理日志，优先 Header）。
 - 绑定页：公开；按 IP 限制创建会话频率；会话 secret 只返回一次，服务端只存哈希。
 - 不返回任何 token 明文；日志经 `logger` 自动脱敏。
 - 安全响应头：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、

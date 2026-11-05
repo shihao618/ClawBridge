@@ -303,6 +303,46 @@ test('推送 API：API Key 鉴权与契约字段', async () => {
   assertErrorShape(await request('GET', '/api/v1/messages/ob_missing', { headers: keyHeaders }), 404, 'NOT_FOUND');
 });
 
+test('Webhook API：query token、目标在 URL、JSON/纯文本/form body 均可投递', async () => {
+  const token = 'api-test-token-123456';
+  const user = store.upsertBoundUser({
+    wechatUserId: 'wx_webhook_api_user',
+    displayName: 'Webhook 用户',
+    ilinkBotId: 'bot_webhook_api@im.bot',
+    botToken: 'webhook-api-bot-token',
+    baseUrl: 'https://ilink.example.test',
+  }).user;
+
+  // query token + query to + JSON body text
+  const jsonHook = await request('POST', `/api/v1/webhook?token=${encodeURIComponent(token)}&to=${encodeURIComponent(user.id)}`, {
+    body: { text: 'Webhook JSON 消息' },
+  });
+  assert.equal(jsonHook.status, 202, jsonHook.text);
+  assert.equal(jsonHook.json.accepted, 1);
+  assert.equal(jsonHook.json.target, 'users');
+  assert.equal(jsonHook.json.queued[0].userId, user.id);
+
+  // 纯文本 body + token query
+  const textHook = await request('POST', `/api/v1/webhook?token=${encodeURIComponent(token)}&to=${encodeURIComponent(user.id)}`, {
+    rawBody: 'Webhook 纯文本消息',
+    headers: { 'content-type': 'text/plain' },
+  });
+  assert.equal(textHook.status, 202, textHook.text);
+  assert.equal(textHook.json.accepted, 1);
+
+  // form body：目标和 text 都在表单里
+  const formHook = await request('POST', `/api/v1/webhook?token=${encodeURIComponent(token)}`, {
+    rawBody: `to=${encodeURIComponent(user.id)}&text=${encodeURIComponent('Webhook 表单消息')}`,
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  });
+  assert.equal(formHook.status, 202, formHook.text);
+  assert.equal(formHook.json.accepted, 1);
+
+  // 缺目标 / 错误 token
+  assertErrorShape(await request('POST', `/api/v1/webhook?token=${encodeURIComponent(token)}`, { body: { text: 'x' } }), 400, 'BAD_REQUEST');
+  assertErrorShape(await request('POST', `/api/v1/webhook?token=wrong&to=${encodeURIComponent(user.id)}`, { body: { text: 'x' } }), 401, 'UNAUTHORIZED');
+});
+
 test('请求体校验：非法 JSON / 超过 64KB', async () => {
   const badJson = await request('POST', '/api/admin/login', {
     rawBody: '{bad json',

@@ -482,6 +482,8 @@ test('文档页内容与 docs/API.md 一致（关键端点与错误码）', asyn
   for (const token of [
     '/api/v1/messages',
     '/api/v1/broadcast',
+    '/api/v1/webhook',
+    '?token=',
     '/api/v1/users',
     '/api/admin/login',
     '/api/bind/sessions',

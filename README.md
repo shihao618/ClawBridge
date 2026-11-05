@@ -22,6 +22,9 @@
   API Key 鉴权、异步 outbox 队列、按账号限流（默认 7 条 / 5 分钟，微信服务端限制）、
   `-2` 限流退避重试、`-14` token 失效自动冷却并提示重新绑定；`-2 prepare failed` 会明确提示
   context_token 失效（需要用户先给 bot 发消息），不会误判为限流反复重试。
+- **Webhook 兼容**：`POST /api/v1/webhook` 支持 `?token=` 鉴权，目标可放 query
+  （`?to=` / `?groupId=` / `?broadcast=1`）或 JSON body；接受 JSON、纯文本、表单 body，
+  兼容常见 `text/content/message/msg` 字段，入队来源标记为 `source=webhook`。
 - **双向消息**：每个绑定账号独立 `getupdates` 长轮询，接收用户回复、缓存 `context_token`
   以便主动推送更可靠；入站/出站消息统一记录、去重、message_id 无损（uint64 字符串）。
 - **多媒体消息**：支持向绑定用户发送**图片、视频、文件**（可选文字 caption，自动按 MIME 路由、
@@ -529,7 +532,7 @@ Dockerfile · docker-compose*.yml · .env.example
 
 | 验证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、schema 版本校验、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、移动端顶栏布局） | `npm run test:unit` | 262 项通过 |
+| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、schema 版本校验、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、移动端顶栏布局） | `npm run test:unit` | 263 项通过 |
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
 | mock 自身协议自测 | `node mock/selftest.mjs` | 25 项通过 |
 | 浏览器真实交互（Edge headless + CDP，绑定页/管理后台菜单路由与移动抽屉/文档页/媒体上传预览/分组/保活/分组保活继承/接口应用/定时通知/运行配置设置（含安全卡片）/重启容器 UI，CSP 与控制台异常检查） | 见交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项通过 |

@@ -250,6 +250,24 @@ GET /api/admin/config
 所有响应 401 时 `code=UNAUTHORIZED`。文本默认上限 4000 字符。接口按 API Key 限流
 （默认 60 次/分钟）。
 
+### 3.0 Webhook 兼容入口
+
+```
+POST /api/v1/webhook
+Auth: Authorization: Bearer <API_TOKEN> / X-Api-Key / ?token=<API_TOKEN>
+Query 目标（三选一）:
+  ?to=u_abc,u_def      # 用户 id，逗号分隔
+  ?groupId=grp_xxx     # 分组 id
+  ?broadcast=1         # 广播；可选 onlyBound=false
+Body: JSON 或纯文本/表单；文本依次取 text/content/message/msg，否则回退整个 JSON
+Resp 202: { "accepted": 1, "queued": [...], "target": "users|group|broadcast" }
+```
+
+- 目标也可放在 JSON body 的 `to` / `userIds` / `groupId` / `broadcast`；
+- 支持 `application/json`、`text/plain`、`application/x-www-form-urlencoded`；
+- 用于不能自定义请求头的 Webhook 服务时，可用 query `?token=`；注意 URL 可能被日志/代理记录，优先使用 Header；
+- 入队来源标记为 `source=webhook`，同样受每账号微信发送限流。
+
 ### 3.1 给指定用户发消息
 
 ```

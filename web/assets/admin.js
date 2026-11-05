@@ -59,6 +59,7 @@ const MESSAGE_SOURCE_META = {
   group: { label: '分组', className: 'badge-group' },
   admin: { label: '管理', className: 'badge-muted' },
   api: { label: 'API', className: 'badge-muted' },
+  webhook: { label: 'Webhook', className: 'badge-info' },
   system: { label: '系统', className: 'badge-muted' },
 };
 
