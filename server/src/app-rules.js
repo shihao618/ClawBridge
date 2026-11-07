@@ -153,6 +153,7 @@ export function parseRuleRow(row) {
       config: json(row.extraction_config, {}) ?? {},
     },
     request: {
+      mode: row.request_url ? 'http' : 'none',
       method: (row.request_method ?? 'GET').toUpperCase(),
       url: row.request_url ?? '',
       headers,
@@ -1097,9 +1098,8 @@ export async function requestExternal({
  *   params:object, parsed:object|null}>}
  */
 export async function executeRuleHttp(rule, { text = '', userId = '', displayName = '', now = deps.now() } = {}) {
-  const extraction = extractParams(rule, { text, userId, displayName, now });
   const result = {
-    params: extraction.params,
+    params: {},
     httpStatus: null,
     latencyMs: 0,
     responsePreview: '',
@@ -1110,8 +1110,25 @@ export async function executeRuleHttp(rule, { text = '', userId = '', displayNam
     headerNames: Object.keys(rule.request?.headers ?? {}),
     bodyPreview: '',
     parsed: null,
-    missing: extraction.missing,
+    missing: false,
   };
+
+  // 不请求模式：关键词命中后直接回复配置的默认文本，不提取参数、不访问外部接口。
+  if (!String(rule.request?.url ?? '').trim()) {
+    const rendered = renderReplyTemplate(rule.response?.template ?? '', {
+      root: {},
+      responseRoot: {},
+      responseText: '',
+      rawText: '',
+    });
+    result.replyText = rendered.trim() === '' ? (rule.response?.fallbackText ?? '') : rendered;
+    if (result.replyText.trim() === '') result.error = 'empty reply';
+    return result;
+  }
+
+  const extraction = extractParams(rule, { text, userId, displayName, now });
+  result.params = extraction.params;
+  result.missing = extraction.missing;
   if (extraction.missing) {
     result.error = 'missing params';
     result.replyText = rule.response?.fallbackText ?? '';
@@ -1182,7 +1199,13 @@ export async function testRule({ ruleRow, message = '', userId = '' } = {}) {
       matched: false,
       ruleId: rule.id,
       params: {},
-      request: { method: rule.request.method, url: '', headerNames: Object.keys(rule.request.headers ?? {}), bodyPreview: '' },
+      request: {
+        mode: rule.request.mode,
+        method: rule.request.method,
+        url: '',
+        headerNames: Object.keys(rule.request.headers ?? {}),
+        bodyPreview: '',
+      },
       httpStatus: null,
       latencyMs: 0,
       responsePreview: '',
@@ -1201,6 +1224,7 @@ export async function testRule({ ruleRow, message = '', userId = '' } = {}) {
     ruleId: rule.id,
     params: result.params,
     request: {
+      mode: rule.request.mode,
       method: rule.request.method,
       url: result.requestUrl,
       headerNames: result.headerNames,
@@ -1260,7 +1284,9 @@ function makePreviews({ params, requestUrl, method, responsePreview }) {
   }
   return {
     paramsPreview,
-    requestPreview: truncate(`${method} ${redactUrlForLog(requestUrl)}`, 500),
+    requestPreview: requestUrl
+      ? truncate(`${method} ${redactUrlForLog(requestUrl)}`, 500)
+      : '不请求外部接口（直接回复默认文本）',
     responsePreview: truncate(responsePreview ?? '', 1000),
   };
 }

@@ -1145,10 +1145,11 @@ done</code></pre></div>
 
         <!-- 接口应用 -->
         <section id="app-rules" class="doc-section">
-          <h2 class="doc-heading">规则列表（关键词触发 → 外部 HTTP 接口 → 解析回复）</h2>
+          <h2 class="doc-heading">规则列表（关键词触发 → 外部 HTTP 接口 / 默认文本回复）</h2>
           <p>
             当<strong>指定范围</strong>的微信用户发来<strong>包含关键词</strong>的消息时，ClawBridge 可调用配置的
-            外部 HTTP 接口，把消息中的参数传给接口，解析接口返回并<strong>自动回复</strong>给该用户。
+            外部 HTTP 接口，把消息中的参数传给接口，解析接口返回并<strong>自动回复</strong>给该用户；
+            也可以选择<strong>不请求外部接口</strong>，直接回复一段默认文本。
             规则默认不启用，由管理员在后台按需创建与开启。
           </p>
 
@@ -1157,8 +1158,8 @@ done</code></pre></div>
   → 规则启用？触发范围命中（all / users / groups）？
   → 关键词 / 正则命中？同消息+规则未重复？
   → 按 priority（数字越小越先）+ created_at 取第一条命中规则（一消息最多执行一条）
-  → 参数提取（none / multi；multi 内组合 trailing/regex/json/fulltext 提取项）
-  → 渲染请求模板（URL / Headers / Body）→ 调用外部 HTTP（SSRF 防护 / 超时 / 响应大小限制）
+  → request.mode=none？→ 直接使用默认回复文本
+  → 否则：参数提取 → 渲染请求模板 → 调用外部 HTTP（SSRF 防护 / 超时 / 响应大小限制）
   → 解析响应（JSON 点路径或纯文本）→ 渲染回复模板（或兜底文案）
   → 写 app_rule_logs（脱敏预览）
   → 入队 outbox（source='rule'）→ 微信回复用户（复用限流 / -2 / -14 / context_token）</code></pre></div>
@@ -1202,6 +1203,17 @@ done</code></pre></div>
             必需参数为空时不调用外部接口，直接回复 <code class="code-inline">fallback_text</code>（若配置），
             日志记为 <code class="code-inline">failed</code>（<code class="code-inline">error=missing params</code>）。
           </p>
+
+          <h3 class="doc-subheading">3.1 不请求模式（关键词直接回复默认文本）</h3>
+          <ul class="doc-list">
+            <li>规则请求体使用 <code class="code-inline">"request":{"mode":"none"}</code>；此时
+              <code class="code-inline">request.url</code> 为空，不提取参数、不访问外部接口。</li>
+            <li>命中关键词/正则后，直接使用 <code class="code-inline">response.template</code> 作为回复文本；
+              模板为空时使用 <code class="code-inline">response.fallbackText</code>；两者都为空会返回 400。</li>
+            <li>运行日志仍记录 <code class="code-inline">source='rule'</code> 回复入队，<code class="code-inline">httpStatus=null</code>。</li>
+            <li>示例：<code class="code-inline">"request":{"mode":"none"}</code> +
+              <code class="code-inline">"response":{"type":"text","template":"收到，我们会尽快处理。"}</code></li>
+          </ul>
 
           <h3 class="doc-subheading">4. 请求模板与安全（SSRF）</h3>
           <ul class="doc-list">

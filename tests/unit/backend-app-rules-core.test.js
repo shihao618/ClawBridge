@@ -438,6 +438,23 @@ test('executeRuleHttp：成功渲染回复；失败 fallback；缺参 fallback�
   assert.equal(missing.replyText, '兜底');
 });
 
+test('executeRuleHttp：不请求模式直接渲染默认文本，不发 HTTP', async () => {
+  const requestsBefore = requests.length;
+  const rule = baseRule({
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
+    request: { mode: 'none', method: 'GET', url: '', headers: {}, bodyTemplate: '' },
+    response: { type: 'text', path: '', template: '收到，我们会尽快处理。', fallbackText: '兜底' },
+  });
+  const result = await appRules.executeRuleHttp(rule, { text: '关键词 内容', userId: 'u1', displayName: '张三' });
+  assert.equal(result.error, '');
+  assert.equal(result.httpStatus, null);
+  assert.equal(result.latencyMs, 0);
+  assert.equal(result.requestUrl, '');
+  assert.equal(result.replyText, '收到，我们会尽快处理。');
+  assert.deepEqual(result.params, {});
+  assert.equal(requests.length, requestsBefore, '不请求规则不应访问外部接口');
+});
+
 test('testRule dry-run：不写日志、不发消息、返回请求/响应/回复信息', async () => {
   const { getDb } = await import('../../server/src/db.js');
   const { createAppRule, insertAppRuleLog } = await import('../../server/src/store.js');

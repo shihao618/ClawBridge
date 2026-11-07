@@ -582,10 +582,11 @@ curl -X POST http://localhost:10380/api/admin/groups/grp_xxxxxxxx/keepalive \
   -H "Content-Type: application/json" -d '{"enabled":true}'
 ```
 
-## 9. 接口应用（关键词触发 → 外部 HTTP 接口 → 解析回复；含定时通知）
+## 9. 接口应用（关键词触发 → 外部 HTTP 接口 / 默认文本回复；含定时通知）
 
 完整契约见 [`docs/API_RULES.md`](API_RULES.md)。后台配置规则：命中「指定用户/分组 + 关键词/正则」的
-入站文本消息 → 提取参数 → 调用外部 HTTP 接口 → 解析响应并回复该用户。
+入站文本消息后，可以选择调用外部 HTTP 接口并解析回复，也可以直接回复一段默认文本。
+不请求模式：`request.mode="none"`（此时 `request.url=""`，不提取参数、不访问外部接口）。
 
 接口应用包含两种触发方式：**关键词触发**（本章正文）与 **定时通知**（§9.1，按时间计划主动调用）。
 两者共用请求/响应/SSRF/模板能力，后台都位于「接口应用」区块。
@@ -611,8 +612,9 @@ GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=&offset=
 ```
 
 RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,regexPattern}`、
-`extraction{mode,config}`、`request{method,url,headerNames,bodyTemplate}`、
+`extraction{mode,config}`、`request{mode,method,url,headerNames,bodyTemplate}`、
 `response{type,path,template,fallbackText}`、`limits{timeoutMs}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped24h}`。
+`request.mode`：`http`（默认，调用外部接口）/ `none`（不请求，直接回复默认文本；此时 `url` 为空）。
 **Header 值只写不读**（落库 AES-256-GCM 加密，读取只返回 `requestHeaderNames`）。
 
 **触发/模板语法**
@@ -623,6 +625,8 @@ RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,re
   JSON 对象时取顶层字段）、`fulltext`（整句）、`multi`（多参数组合：`extractors` 多项合并 + `required` 必填）；
   内置变量 `{text}`/`{userId}`/`{name}`/`{now}`（完整配置见 [`docs/API_RULES.md`](API_RULES.md) §3）。
 - 请求：URL/Header/Body 模板用 `{变量}`；GET 参数自动 URL 编码；POST 发 body。
+- **不请求模式**：`request.mode="none"`，关键词命中后直接使用 `response.template`（为空时用
+  `response.fallbackText`）回复；忽略参数提取与请求配置，不访问外部接口，运行日志 `httpStatus=null`。
 - 响应：`json` 按点路径（如 `data.answer`）或 `text`；回复模板用 `{{路径}}`（如 `{{data.answer}}`），
   列表支持 `{{count data.list}}` 与 `{{#each data.list}}{{字段}}{{/each}}`（`@index`/`@number`，单层，
   可用 `where 字段=值`/`!=` 过滤）；为空时用解析结果；可配置兜底文案。
@@ -665,6 +669,17 @@ curl -X POST http://localhost:10380/api/admin/app-rules/rule_xxxxxxxx/test \
 # 3) 查看运行日志
 curl "http://localhost:10380/api/admin/app-rule-logs?limit=20" \
   -H "Cookie: cb_session=$ADMIN_COOKIE"
+
+# 4) 不请求模式：关键词命中后直接回复默认文本
+curl -X POST http://localhost:10380/api/admin/app-rules \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{
+    "name":"关键词默认回复","enabled":true,
+    "scope":{"type":"all"},
+    "matchMode":"contains","keywords":["帮助"],
+    "request":{"mode":"none"},
+    "response":{"type":"text","path":"","template":"收到，我们会尽快处理。","fallbackText":""}
+  }'
 ```
 
 ### 9.1 定时通知（Scheduled Notifications，接口应用的时间计划模式）

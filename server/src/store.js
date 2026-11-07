@@ -809,6 +809,7 @@ export function mapAppRuleRow(row, { includeStats = true, now = nowMs() } = {}) 
       config: extractionConfig,
     },
     request: {
+      mode: row.request_url ? 'http' : 'none',
       method: row.request_method ?? 'GET',
       url: row.request_url ?? '',
       headerNames: headers && typeof headers === 'object' ? Object.keys(headers) : [],

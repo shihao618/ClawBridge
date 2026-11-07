@@ -129,6 +129,14 @@ test('鉴权 + 创建校验：401/400（name/keywords/regex/scope/url/timeout）
       'extraction-multi-bad-regex',
     ],
     [validRuleBody({ response: { type: 'binary' } }), 'response'],
+    [validRuleBody({ request: { mode: 'bad' } }), 'request.mode'],
+    [
+      validRuleBody({
+        request: { mode: 'none' },
+        response: { type: 'text', path: '', template: '', fallbackText: '' },
+      }),
+      '不请求模式必须填写回复模板或兜底文案',
+    ],
   ];
   for (const [body, label] of invalidBodies) {
     const result = await adminWrite('POST', '/api/admin/app-rules', body);
@@ -174,6 +182,47 @@ test('创建/查看：RuleView 结构、headers 只回 names、DB 内为密文',
   const all = await adminGet('/api/admin/app-rules?includeDisabled=1');
   assert.ok(all.json.items.some((item) => item.name === '停用规则'));
   assert.ok(all.json.items.every((item) => Array.isArray(item.request.headerNames) && !item.request.headers));
+});
+
+test('不请求规则：关键词命中直接回复默认文本，不调用外部接口', async () => {
+  const created = await adminWrite(
+    'POST',
+    '/api/admin/app-rules',
+    validRuleBody({
+      name: '关键词默认回复',
+      extraction: { mode: 'none', config: {} },
+      request: { mode: 'none' },
+      response: { type: 'text', path: '', template: '收到，我们会尽快处理。', fallbackText: '' },
+    }),
+  );
+  assert.equal(created.status, 201, created.text);
+  const rule = created.json.rule;
+  assert.equal(rule.request.mode, 'none');
+  assert.equal(rule.request.url, '');
+  assert.deepEqual(rule.request.headerNames, []);
+  assert.equal(rule.response.template, '收到，我们会尽快处理。');
+
+  const tested = await adminWrite('POST', `/api/admin/app-rules/${encodeURIComponent(rule.id)}/test`, {
+    message: '查天气',
+  });
+  assert.equal(tested.status, 200, tested.text);
+  assert.equal(tested.json.matched, true);
+  assert.equal(tested.json.httpStatus, null);
+  assert.equal(tested.json.replyText, '收到，我们会尽快处理。');
+  assert.equal(tested.json.request.url, '');
+
+  // 切回请求模式必须提供 URL；不请求规则复制后仍保持 mode=none
+  assertError(
+    await adminWrite('PATCH', `/api/admin/app-rules/${encodeURIComponent(rule.id)}`, {
+      request: { mode: 'http', url: 'not-a-url' },
+    }),
+    400,
+    'BAD_REQUEST',
+  );
+  const duplicated = await adminWrite('POST', `/api/admin/app-rules/${encodeURIComponent(rule.id)}/duplicate`);
+  assert.equal(duplicated.status, 201, duplicated.text);
+  assert.equal(duplicated.json.rule.request.mode, 'none');
+  assert.equal(duplicated.json.rule.request.url, '');
 });
 
 test('复制规则：新 id、副本默认停用、完整复制请求/响应/加密 headers、源规则不变', async () => {

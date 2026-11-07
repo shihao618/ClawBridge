@@ -1,7 +1,7 @@
-# 接口应用（关键词触发 → 调外部接口 → 解析回微信）设计契约
+# 接口应用（关键词触发 → 外部接口或默认文本回复）设计契约
 
-> 需求：当收到**特定用户/分组**的微信消息且**包含关键词**时，调用配置的外部 HTTP 接口，
-> 从消息中提取参数传给接口，解析接口返回并**回复给该微信用户**。
+> 需求：当收到**特定用户/分组**的微信消息且**包含关键词**时，可以选择调用配置的外部 HTTP 接口，
+> 从消息中提取参数传给接口并解析回复；也可以**不请求外部接口，直接回复一段默认文本**。
 > 本契约按 MVP 范围（见 §10）执行；规则默认关闭，后台管理员按需配置。
 
 ## 0. 总体流程
@@ -12,8 +12,8 @@ monitor 收到入站消息并落库
      ├─ 规则启用？范围命中（全部/指定用户/指定分组）？
      ├─ 关键词/正则命中？同消息+规则未重复？
      ├─ 按 priority 取第一条命中规则（一消息最多执行一条）
-     ├─ 参数提取（none / multi；multi 内组合 trailing/regex/json/fulltext 提取项）
-     ├─ 渲染请求模板（URL/Headers/Body）→ HTTP 调用（SSRF 防护/超时/大小限制）
+     ├─ request.mode=none → 直接渲染默认回复文本（跳过提取/请求/解析）
+     ├─ 否则：参数提取（none / multi）→ 渲染请求模板 → HTTP 调用（SSRF/超时/大小限制）
      ├─ 解析响应（JSON 路径或纯文本）→ 渲染回复模板（或兜底文案）
      ├─ 写 app_rule_logs（状态/耗时/HTTP 码/错误/预览，脱敏）
      └─ 入队 outbox（source='rule'）→ 微信回复用户（复用限流/-2/-14/context_token）
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS app_rules (
   extraction_mode TEXT NOT NULL DEFAULT 'multi',   -- none | multi
   extraction_config TEXT NOT NULL DEFAULT '{}',     -- JSON，见 §3
   request_method TEXT NOT NULL DEFAULT 'GET',       -- GET | POST
-  request_url TEXT NOT NULL,
+  request_url TEXT NOT NULL,                       -- 空字符串=不请求（直接回复默认文本）
   request_headers_enc TEXT,                  -- AES-256-GCM 加密后的 JSON object（密钥不落明文）
   request_body_template TEXT NOT NULL DEFAULT '',
   response_type TEXT NOT NULL DEFAULT 'json',       -- json | text
@@ -137,6 +137,15 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 **缺参处理**：提取后必需参数为空 → 不调用外部接口，回复 `fallback_text`（若配置），
 日志 `status='failed'`、`error='missing params'`。
 
+### 3.1 不请求模式
+
+- 创建/更新时传 `request.mode="none"`：`request_url` 落库为空字符串，Header/Body 清空；
+- 关键词/正则命中后**不提取参数、不访问外部接口**，直接取 `response.template` 作为回复文本；
+  `response.template` 为空时使用 `response.fallback_text`；两者都为空则创建/更新返回 400；
+- 运行日志 `httpStatus=null`、`requestPreview='不请求外部接口（直接回复默认文本）'`，
+  回复仍走 outbox（`source='rule'`）和微信发送限流；
+- 读取 RuleView 时 `request.mode` 由 `request_url` 是否为空推导：`http` / `none`。
+
 ## 4. 请求模板与安全
 
 - 请求方法 `GET` / `POST`；URL、Header 值、Body 支持 `{变量}` 占位（变量值会做 URL 编码用于 URL
@@ -231,7 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   "scope":{"type":"groups","ids":["grp_…"],"names":["VIP客户"]},
   "trigger":{"matchMode":"contains","keywords":["查天气"],"regexPattern":""},
   "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
-  "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
+  "request":{"mode":"http","method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headerNames":["Authorization"],"bodyTemplate":""},
   "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
   "limits":{"timeoutMs":8000},
@@ -266,17 +275,28 @@ GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=50&offset=0
   "scope":{"type":"groups","ids":["grp_xxx"]},
   "matchMode":"contains","keywords":["查天气"],"regexPattern":"",
   "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
-  "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}",
+  "request":{"mode":"http","method":"GET","url":"https://api.example.com/weather?city={arg}",
              "headers":{"Authorization":"Bearer xxx"},"bodyTemplate":""},
   "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询"},
   "timeoutMs":8000
 }
 ```
 
+不请求规则：
+
+```json
+{
+  "name":"关键词默认回复","enabled":true,"scope":{"type":"all"},
+  "matchMode":"contains","keywords":["帮助"],
+  "request":{"mode":"none"},
+  "response":{"type":"text","path":"","template":"收到，我们会尽快处理。","fallbackText":""}
+}
+```
+
 校验：name 1..60；scope.type ∈ all/users/groups（users/groups 时 ids 非空且存在）；matchMode 合法；
 contains/equals 关键词 1..10 个、每个 1..50 字；regex 合法；extraction.mode/config 合法；
-URL http(s) 合法；timeoutMs 1000..30000；
-response.type ∈ json/text。错误 400/404/409（重名可选，本版允许重名）。
+`request.mode ∈ http/none`；http 模式 URL 必须合法；none 模式回复模板/兜底至少一个非空；
+timeoutMs 1000..30000；response.type ∈ json/text。错误 400/404/409（重名可选，本版允许重名）。
 
 ## 8. 前端（管理后台）
 

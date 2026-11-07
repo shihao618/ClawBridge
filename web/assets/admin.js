@@ -1167,8 +1167,15 @@ function buildAppRuleRow(rule) {
     el(
       'td',
       { class: 'cell-rule-request' },
-      el('span', { class: `badge badge-soft ${rule.request?.method === 'POST' ? 'badge-group' : 'badge-info'}`, text: rule.request?.method || 'GET' }),
-      el('div', { class: 'cell-muted rule-url', title: rule.request?.url || '', text: rule.request?.url || '—' }),
+      ...(rule.request?.mode === 'none' || !rule.request?.url
+        ? [
+            el('span', { class: 'badge badge-soft badge-info', text: '不请求' }),
+            el('div', { class: 'cell-muted rule-url', text: '直接回复默认文本' }),
+          ]
+        : [
+            el('span', { class: `badge badge-soft ${rule.request?.method === 'POST' ? 'badge-group' : 'badge-info'}`, text: rule.request?.method || 'GET' }),
+            el('div', { class: 'cell-muted rule-url', title: rule.request?.url || '', text: rule.request?.url || '—' }),
+          ]),
     ),
     lastRunCell,
     el('td', {
@@ -1722,6 +1729,12 @@ function openAppRuleEditor(rule = null) {
 
 
   // 请求
+  const requestModeSelect = el(
+    'select',
+    { id: 'rule-request-mode', class: 'select' },
+    el('option', { value: 'http', text: '请求外部接口', selected: (request.mode ?? 'http') !== 'none' }),
+    el('option', { value: 'none', text: '不请求（直接回复默认文本）', selected: (request.mode ?? 'http') === 'none' }),
+  );
   const methodSelect = el('select', { id: 'rule-request-method', class: 'select' }, ...['GET', 'POST'].map((method) =>
     el('option', { value: method, text: method, selected: (request.method || 'GET') === method }),
   ));
@@ -1835,6 +1848,76 @@ function openAppRuleEditor(rule = null) {
     value: String(Number(limits.timeoutMs) || 8000),
   });
 
+  const extractionSection = formSection(
+    '参数提取',
+    '从消息中提取变量，供请求 URL / Header / Body 模板使用；缺参时不调用接口。',
+    el(
+      'div',
+      { class: 'rule-form-grid' },
+      formField('提取模式', extractionModeSelect, null, 'rule-extraction-mode'),
+      extractionConfigBox,
+    ),
+  );
+  const headerModeField = isEdit && headerNames.length > 0
+    ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
+    : null;
+  const requestDetailsBox = el(
+    'div',
+    {},
+    el(
+      'div',
+      { class: 'rule-form-grid' },
+      formField('请求方法', methodSelect, null, 'rule-request-method'),
+      formField('请求 URL（http/https）', urlInput, '不请求模式无需填写。', 'rule-request-url'),
+    ),
+    headerModeField,
+    el(
+      'div',
+      { class: 'form-field' },
+      el('label', { class: 'form-label', for: 'rule-headers', text: 'Header 列表（每行 Name: Value）' }),
+      headersTextarea,
+      headerHintNode,
+    ),
+    bodyField,
+  );
+  const requestModeField = formField(
+    '请求模式',
+    requestModeSelect,
+    '不请求：关键词命中后直接回复下方「回复模板」中的默认文本，不访问外部接口。',
+    'rule-request-mode',
+  );
+  const responseGrid = el(
+    'div',
+    { class: 'rule-form-grid' },
+    formField('响应类型', responseTypeSelect, null, 'rule-response-type'),
+    formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path'),
+  );
+  const fallbackField = formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback');
+  const timeoutSection = formSection(
+    '请求超时',
+    '调用频率统一由微信默认发送限流控制（默认 7 条 / 5 分钟 / 账号），规则不再单独设置冷却或每小时上限；同一条消息对同一规则仍只执行一次。',
+    el(
+      'div',
+      { class: 'rule-form-grid' },
+      formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout'),
+    ),
+  );
+  function syncRuleRequestMode() {
+    const noRequest = requestModeSelect.value === 'none';
+    setHidden(extractionSection, noRequest);
+    setHidden(requestDetailsBox, noRequest);
+    setHidden(responseGrid, noRequest);
+    setHidden(fallbackField, noRequest);
+    setHidden(timeoutSection, noRequest);
+    if (noRequest) {
+      replyTemplateInput.placeholder = '默认回复文本，例如：收到，我们会尽快处理。';
+    } else {
+      replyTemplateInput.placeholder = '例如：天气：{{data.answer}}（支持 {{路径}}、{{response}}、{{raw}}）';
+    }
+  }
+  requestModeSelect.addEventListener('change', syncRuleRequestMode);
+  syncRuleRequestMode();
+
   const errorNode = el('p', { id: 'rule-form-error', class: 'inline-error', role: 'alert', hidden: true });
   function showFormError(message) {
     errorNode.textContent = message;
@@ -1879,47 +1962,18 @@ function openAppRuleEditor(rule = null) {
       matchKeywordField,
       matchRegexField,
     ),
-    formSection(
-      '参数提取',
-      '从消息中提取变量，供请求 URL / Header / Body 模板使用；缺参时不调用接口。',
-      el(
-        'div',
-        { class: 'rule-form-grid' },
-        formField('提取模式', extractionModeSelect, null, 'rule-extraction-mode'),
-        extractionConfigBox,
-      ),
-    ),
+    extractionSection,
     formSection(
       '请求',
-      'URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。GET 参数写在 URL 查询串，POST 可用 URL 查询参数 + Body（Body 可留空）。默认拒绝访问内网/本机（SSRF 防护）。',
-      el(
-        'div',
-        { class: 'rule-form-grid' },
-        formField('请求方法', methodSelect, null, 'rule-request-method'),
-        formField('请求 URL（必填，http/https）', urlInput, null, 'rule-request-url'),
-      ),
-      isEdit && headerNames.length > 0
-        ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
-        : null,
-      el(
-        'div',
-        { class: 'form-field' },
-        el('label', { class: 'form-label', for: 'rule-headers', text: 'Header 列表（每行 Name: Value）' }),
-        headersTextarea,
-        headerHintNode,
-      ),
-      bodyField,
+      '不请求模式：关键词命中后直接回复默认文本，不访问外部接口。请求模式：URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
+      requestModeField,
+      requestDetailsBox,
     ),
     formSection(
       '响应解析与回复',
-      null,
-      el(
-        'div',
-        { class: 'rule-form-grid' },
-        formField('响应类型', responseTypeSelect, null, 'rule-response-type'),
-        formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path'),
-      ),
-      formField('回复模板', replyTemplateInput, '模板为空时直接使用解析结果；支持变量、循环、条件判断与 default。', 'rule-reply-template'),
+      '请求模式：按响应类型/路径解析后渲染回复模板。不请求模式：直接使用「回复模板」作为默认文本。',
+      responseGrid,
+      formField('回复模板 / 不请求时默认文本', replyTemplateInput, '请求模式：模板为空时直接使用解析结果；支持变量、循环、条件判断与 default。不请求模式：填写一段默认回复文本（必填）。', 'rule-reply-template'),
       el('div', { class: 'form-row-between' },
         el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看完整规则。' }),
         el('div', { class: 'template-tools' },
@@ -1932,17 +1986,9 @@ function openAppRuleEditor(rule = null) {
           }), '预览规则回复'),
         ),
       ),
-      formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback'),
+      fallbackField,
     ),
-    formSection(
-      '请求超时',
-      '调用频率统一由微信默认发送限流控制（默认 7 条 / 5 分钟 / 账号），规则不再单独设置冷却或每小时上限；同一条消息对同一规则仍只执行一次。',
-      el(
-        'div',
-        { class: 'rule-form-grid' },
-        formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout'),
-      ),
-    ),
+    timeoutSection,
   ];
 
   openTrackedModal({
@@ -1977,65 +2023,74 @@ function openAppRuleEditor(rule = null) {
           } else if (!regexInput.value.trim()) {
             return showFormError('请输入正则表达式');
           }
-          const extractionMode = extractionModeSelect.value;
-          const extractionCfg = {};
-          if (extractionMode === 'multi') {
-            if (multiExtractors.length === 0) return showFormError('多参数模式至少需要 1 个提取项');
-            const extractors = [];
-            const requiredNames = [];
-            for (const row of multiExtractors) {
-              const type = row.type;
-              const param = String(row.param || '').trim();
-              if (type !== 'regex' && !param) return showFormError('多参数模式：每个提取项都需要填写参数名');
-              if (param && !/^[A-Za-z0-9_]{1,30}$/.test(param)) {
-                return showFormError(`参数名不合法：${param}（只能包含字母/数字/下划线，1-30 字符）`);
+          const noRequest = requestModeSelect.value === 'none';
+          let extractionMode = 'none';
+          let extractionCfg = {};
+          if (!noRequest) {
+            extractionMode = extractionModeSelect.value;
+            if (extractionMode === 'multi') {
+              if (multiExtractors.length === 0) return showFormError('多参数模式至少需要 1 个提取项');
+              const extractors = [];
+              const requiredNames = [];
+              for (const row of multiExtractors) {
+                const type = row.type;
+                const param = String(row.param || '').trim();
+                if (type !== 'regex' && !param) return showFormError('多参数模式：每个提取项都需要填写参数名');
+                if (param && !/^[A-Za-z0-9_]{1,30}$/.test(param)) {
+                  return showFormError(`参数名不合法：${param}（只能包含字母/数字/下划线，1-30 字符）`);
+                }
+                const item = { type };
+                if (type === 'trailing') {
+                  item.param = param || 'arg';
+                  const keyword = String(row.keyword || '').trim();
+                  if (keyword) item.keyword = keyword;
+                } else if (type === 'regex') {
+                  const regex = String(row.regex || '').trim();
+                  if (!regex) return showFormError('多参数模式：正则提取项需要填写正则表达式');
+                  item.regex = regex;
+                  if (param) item.param = param;
+                } else if (type === 'json') {
+                  if (param) item.param = param;
+                  const path = String(row.path || '').trim();
+                  if (path) item.path = path;
+                } else {
+                  item.param = param || 'text';
+                }
+                extractors.push(item);
+                if (row.required && param) requiredNames.push(param);
               }
-              const item = { type };
-              if (type === 'trailing') {
-                item.param = param || 'arg';
-                const keyword = String(row.keyword || '').trim();
-                if (keyword) item.keyword = keyword;
-              } else if (type === 'regex') {
-                const regex = String(row.regex || '').trim();
-                if (!regex) return showFormError('多参数模式：正则提取项需要填写正则表达式');
-                item.regex = regex;
-                if (param) item.param = param;
-              } else if (type === 'json') {
-                if (param) item.param = param;
-                const path = String(row.path || '').trim();
-                if (path) item.path = path;
-              } else {
-                item.param = param || 'text';
-              }
-              extractors.push(item);
-              if (row.required && param) requiredNames.push(param);
+              extractionCfg.extractors = extractors;
+              if (requiredNames.length > 0) extractionCfg.required = requiredNames;
             }
-            extractionCfg.extractors = extractors;
-            if (requiredNames.length > 0) extractionCfg.required = requiredNames;
           }
-          const url = urlInput.value.trim();
-          if (!/^https?:\/\//i.test(url)) return showFormError('请求 URL 必须是 http(s) 地址');
+          let url = '';
           let headersPayload;
-          if (!isEdit || headerNames.length === 0) {
-            const headers = parseHeadersInput(headersTextarea.value);
-            headersPayload = Object.keys(headers).length > 0 ? headers : undefined;
-          } else if (headerModeValue === 'keep') {
-            headersPayload = undefined;
-          } else if (headerModeValue === 'clear') {
-            headersPayload = {};
-          } else {
-            const headers = parseHeadersInput(headersTextarea.value);
-            if (Object.keys(headers).length === 0) {
-              return showFormError('重设 Header 时请至少保留一个 Header；如需全部删除，请选择「清空 Header」');
+          if (!noRequest) {
+            url = urlInput.value.trim();
+            if (!/^https?:\/\//i.test(url)) return showFormError('请求 URL 必须是 http(s) 地址');
+            if (!isEdit || headerNames.length === 0) {
+              const headers = parseHeadersInput(headersTextarea.value);
+              headersPayload = Object.keys(headers).length > 0 ? headers : undefined;
+            } else if (headerModeValue === 'keep') {
+              headersPayload = undefined;
+            } else if (headerModeValue === 'clear') {
+              headersPayload = {};
+            } else {
+              const headers = parseHeadersInput(headersTextarea.value);
+              if (Object.keys(headers).length === 0) {
+                return showFormError('重设 Header 时请至少保留一个 Header；如需全部删除，请选择「清空 Header」');
+              }
+              if (Object.values(headers).some((value) => value === '')) {
+                return showFormError('请补全每个 Header 的值；如需全部删除，请选择「清空 Header」');
+              }
+              headersPayload = headers;
             }
-            if (Object.values(headers).some((value) => value === '')) {
-              return showFormError('请补全每个 Header 的值；如需全部删除，请选择「清空 Header」');
-            }
-            headersPayload = headers;
+          } else if (!replyTemplateInput.value.trim() && !fallbackInput.value.trim()) {
+            return showFormError('不请求模式：请填写「回复模板 / 默认文本」');
           }
-          const requestBody = { method: methodSelect.value, url };
+          const requestBody = noRequest ? { mode: 'none' } : { mode: 'http', method: methodSelect.value, url };
           if (headersPayload !== undefined) requestBody.headers = headersPayload;
-          if (methodSelect.value === 'POST') requestBody.bodyTemplate = bodyTemplateInput.value;
+          if (!noRequest && methodSelect.value === 'POST') requestBody.bodyTemplate = bodyTemplateInput.value;
 
           const payload = {
             name,
@@ -2145,7 +2200,7 @@ async function openAppRuleTestModal(rule) {
     title: `测试运行：${rule.name || rule.id}`,
     size: 'wide',
     content: [
-      el('p', { class: 'form-hint', text: '测试运行仅模拟一次触发并调用外部接口，不会向微信用户发送消息、不写运行日志。' }),
+      el('p', { class: 'form-hint', text: '测试运行仅模拟一次触发，不会向微信用户发送消息、不写运行日志。请求模式会真实调用外部接口；不请求模式直接渲染默认文本。' }),
       formField('示例消息（必填）', messageInput, null, 'rule-test-message'),
       formField('模拟用户（可选，用于范围匹配）', userSelect, null, 'rule-test-user'),
       resultBox,
@@ -2230,7 +2285,7 @@ function buildRuleTestResultNodes(result) {
   nodes.push(
     el('div', { class: 'rule-test-item' },
       el('span', { class: 'kv-label', text: '实际请求' }),
-      el('div', { class: 'rule-test-request', text: `${request.method || 'GET'} ${request.url || ''}` }),
+      el('div', { class: 'rule-test-request', text: request.url ? `${request.method || 'GET'} ${request.url}` : '不请求（直接回复默认文本）' }),
       el('div', {
         class: 'cell-muted',
         text: testHeaderNames.length > 0

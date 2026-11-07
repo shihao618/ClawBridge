@@ -693,26 +693,36 @@ function buildAppRulePatch(rawBody, { requireAll = false } = {}) {
 
   if (requireAll || body.request !== undefined) {
     const request = assertPlainObject(body.request ?? {}, 'request');
-    const method = String(request.method ?? 'GET').toUpperCase();
-    if (method !== 'GET' && method !== 'POST') throw badRequest('request.method 只能是 GET | POST');
-    patch.requestMethod = method;
-    patch.requestUrl = validateHttpUrl(request.url);
-    patch.requestBodyTemplate = optionalString(request.bodyTemplate, 'request.bodyTemplate', 10000);
-    if (request.headers !== undefined) {
-      const headers = assertPlainObject(request.headers, 'request.headers');
-      const normalized = {};
-      for (const [key, value] of Object.entries(headers)) {
-        if (typeof key !== 'string' || key.trim().length < 1 || key.trim().length > 100) {
-          throw badRequest('request.headers 的 header 名长度必须是 1..100');
-        }
-        if (typeof value !== 'string' || value.length > 2000) {
-          throw badRequest(`request.headers[${key}] 的值必须是 ≤2000 的字符串`);
-        }
-        normalized[key.trim()] = value;
-      }
-      patch.requestHeadersEnc = encryptSecret(JSON.stringify(normalized));
-    } else if (requireAll) {
+    const mode = request.mode ?? 'http';
+    if (mode !== 'http' && mode !== 'none') throw badRequest('request.mode 只能是 http | none');
+    if (mode === 'none') {
+      // 不请求：URL/Header/Body 全部清空，关键词命中后直接使用回复模板/兜底文案。
+      patch.requestMethod = 'GET';
+      patch.requestUrl = '';
+      patch.requestBodyTemplate = '';
       patch.requestHeadersEnc = null;
+    } else {
+      const method = String(request.method ?? 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'POST') throw badRequest('request.method 只能是 GET | POST');
+      patch.requestMethod = method;
+      patch.requestUrl = validateHttpUrl(request.url);
+      patch.requestBodyTemplate = optionalString(request.bodyTemplate, 'request.bodyTemplate', 10000);
+      if (request.headers !== undefined) {
+        const headers = assertPlainObject(request.headers, 'request.headers');
+        const normalized = {};
+        for (const [key, value] of Object.entries(headers)) {
+          if (typeof key !== 'string' || key.trim().length < 1 || key.trim().length > 100) {
+            throw badRequest('request.headers 的 header 名长度必须是 1..100');
+          }
+          if (typeof value !== 'string' || value.length > 2000) {
+            throw badRequest(`request.headers[${key}] 的值必须是 ≤2000 的字符串`);
+          }
+          normalized[key.trim()] = value;
+        }
+        patch.requestHeadersEnc = encryptSecret(JSON.stringify(normalized));
+      } else if (requireAll) {
+        patch.requestHeadersEnc = null;
+      }
     }
   }
 
@@ -724,6 +734,11 @@ function buildAppRulePatch(rawBody, { requireAll = false } = {}) {
     patch.responsePath = optionalString(response.path, 'response.path', 200);
     patch.replyTemplate = optionalString(response.template, 'response.template', 4000);
     patch.fallbackText = optionalString(response.fallbackText, 'response.fallbackText', 4000);
+    if (patch.requestUrl === '') {
+      if ((patch.replyTemplate ?? '').trim() === '' && (patch.fallbackText ?? '').trim() === '') {
+        throw badRequest('不请求模式必须填写回复模板或兜底文案');
+      }
+    }
   }
 
   const limitSpecs = [['timeoutMs', 1000, 30000, 8000]];

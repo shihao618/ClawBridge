@@ -125,6 +125,32 @@ test('引擎成功链路：匹配→提取→HTTP→解析→回复入队 outbox
   assert.match(logs[0].response_preview, /weather:北京/);
 });
 
+test('引擎不请求链路：关键词命中→直接回复默认文本→success 日志，不访问外部接口', async () => {
+  const user = createUser('默认回复用户');
+  const rule = createRule({
+    name: '不请求默认回复',
+    keywords: ['默认帮助'],
+    url: '',
+    extractionMode: 'none',
+    extractionConfig: {},
+    responseType: 'text',
+    responsePath: '',
+    replyTemplate: '这是默认回复',
+    fallbackText: '',
+  });
+  const queued = await runMessage({ userId: user.id, text: '默认帮助', inboundMessageId: 'in_engine_no_request' });
+  assert.equal(queued, true);
+
+  const outbox = replyOutbox(user.id);
+  assert.equal(outbox.length, 1);
+  assert.equal(outbox[0].text, '这是默认回复');
+  const logs = ruleLogs(rule.id);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].status, 'success');
+  assert.equal(Number(logs[0].http_status), 0, '不请求时无 HTTP 状态');
+  assert.match(logs[0].request_preview, /不请求外部接口/);
+});
+
 test('引擎失败链路：非 2xx → failed 日志 + fallback 回复', async () => {
   const user = createUser();
   const rule = createRule({ name: '失败规则', keywords: ['查失败'], url: `http://127.0.0.1:${port}/fail` });
