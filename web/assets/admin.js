@@ -1799,6 +1799,12 @@ function openAppRuleEditor(rule = null) {
     value: String(Number(limits.timeoutMs) || 8000),
   });
 
+  const extractionConfigField = el(
+    'div',
+    { class: 'form-field' },
+    el('span', { class: 'form-label', text: '提取配置' }),
+    extractionConfigBox,
+  );
   const extractionSection = formSection(
     '参数提取',
     '从消息中提取变量，供请求 URL / Header / Body 模板使用；缺参时不调用接口。',
@@ -1806,7 +1812,7 @@ function openAppRuleEditor(rule = null) {
       'div',
       { class: 'rule-form-grid' },
       formField('提取模式', extractionModeSelect, null, 'rule-extraction-mode'),
-      extractionConfigBox,
+      extractionConfigField,
     ),
   );
   const headerModeField = isEdit && headerNames.length > 0
@@ -1834,8 +1840,13 @@ function openAppRuleEditor(rule = null) {
   const requestModeField = formField(
     '请求模式',
     requestModeGroup,
-    '不请求：关键词命中后直接回复下方「回复模板」中的默认文本，不访问外部接口。',
+    '不请求：关键词命中后直接回复默认文本，不访问外部接口。',
     'rule-request-mode',
+  );
+  const requestSection = formSection(
+    '请求',
+    'URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
+    requestDetailsBox,
   );
   const responseGrid = el(
     'div',
@@ -1856,6 +1867,7 @@ function openAppRuleEditor(rule = null) {
   function syncRuleRequestMode() {
     const noRequest = getRequestMode() === 'none';
     setHidden(extractionSection, noRequest);
+    setHidden(requestSection, noRequest);
     setHidden(requestDetailsBox, noRequest);
     setHidden(responseGrid, noRequest);
     setHidden(fallbackField, noRequest);
@@ -1899,7 +1911,6 @@ function openAppRuleEditor(rule = null) {
         ),
         formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input'),
       ),
-      requestModeField,
       errorNode,
     ),
     formSection(
@@ -1915,16 +1926,13 @@ function openAppRuleEditor(rule = null) {
       el('div', { class: 'rule-form-grid' }, formField('匹配方式', matchModeSelect, null, 'rule-match-mode')),
       matchKeywordField,
       matchRegexField,
+      requestModeField,
     ),
     extractionSection,
-    formSection(
-      '请求',
-      '不请求模式：关键词命中后直接回复默认文本，不访问外部接口。请求模式：URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
-      requestDetailsBox,
-    ),
+    requestSection,
     formSection(
       '响应解析与回复',
-      '请求模式：按响应类型/路径解析后渲染回复模板。不请求模式：直接使用「回复模板」作为默认文本。',
+      '请求模式按响应类型/路径解析后渲染回复模板；不请求模式直接使用「回复模板 / 默认文本」。',
       responseGrid,
       formField('回复模板 / 不请求时默认文本', replyTemplateInput, '请求模式：模板为空时直接使用解析结果；支持变量、循环、条件判断与 default。不请求模式：填写一段默认回复文本（必填）。', 'rule-reply-template'),
       el('div', { class: 'form-row-between' },

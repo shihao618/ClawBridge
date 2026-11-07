@@ -1376,6 +1376,7 @@ main {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px 14px;
+  align-items: start;
 }
 
 /* 表单行内的窄输入框跟随列宽，2 个字段等宽占满、3 个字段也等宽均分 */
@@ -1477,6 +1478,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .rule-test-result {
@@ -3282,6 +3284,11 @@ body.admin-authed .admin-main {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.multi-extractor-row > .input,
+.multi-extractor-row > .select {
+  min-height: 44px;
 }
 
 .multi-extractor-row .select {
