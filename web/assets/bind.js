@@ -88,6 +88,8 @@ function init() {
     overlayId: 'home-nav-overlay',
     closeId: 'home-nav-close',
     navId: 'home-nav',
+    openLabel: '打开导航',
+    closeLabel: '关闭导航',
   });
   if (!els.form) return; // 非绑定页（防御）
   els.form.addEventListener('submit', (event) => {

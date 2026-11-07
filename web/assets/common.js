@@ -869,8 +869,8 @@ export function debounce(fn, wait = 250) {
 }
 
 /**
- * 移动端侧边抽屉：后台/文档/首页共用。
- * 需存在 toggle、sidebar、overlay、close、nav 元素；<900px 时抽屉滑出。
+ * 响应式侧边导航：后台/文档/首页共用一套 DOM 与交互。
+ * 桌面端由 CSS 常驻展示，窄屏由 CSS 变成 off-canvas；JS 不判断屏幕宽度。
  */
 
 /**
@@ -967,34 +967,57 @@ export function initSidebarDrawer({
   toggleId,
   sidebarSelector,
   overlayId,
-  closeId,
-  navId,
-  breakpoint = '(max-width: 899px)',
+  closeId = '',
+  navId = '',
+  bodyClass = 'docs-nav-open',
+  openLabel = '',
+  closeLabel = '',
 } = {}) {
   const toggle = toggleId ? $('#' + toggleId) : null;
   const sidebar = sidebarSelector ? $(sidebarSelector) : null;
   const overlay = overlayId ? $('#' + overlayId) : null;
   const closeButton = closeId ? $('#' + closeId) : null;
   const nav = navId ? $('#' + navId) : null;
-  if (!toggle || !sidebar || !overlay || !closeButton || !nav) return;
-  const media = window.matchMedia(breakpoint);
-  const isOpen = () => document.body.classList.contains('docs-nav-open');
-  const setOpen = (open) => {
-    const active = Boolean(open && media.matches);
-    document.body.classList.toggle('docs-nav-open', active);
+  if (!toggle || !sidebar || !overlay) return null;
+  const initialOpenLabel = openLabel || toggle.getAttribute('aria-label') || '打开菜单';
+  const initialCloseLabel = closeLabel || '关闭菜单';
+  let open = false;
+
+  const firstFocusable = () => closeButton || sidebar.querySelector('a[href], button:not([disabled])');
+  const setOpen = (next) => {
+    const active = Boolean(next);
+    if (active === open) return;
+    const wasOpen = open;
+    open = active;
+    document.body.classList.toggle(bodyClass, active);
     toggle.setAttribute('aria-expanded', active ? 'true' : 'false');
+    toggle.setAttribute('aria-label', active ? initialCloseLabel : initialOpenLabel);
     overlay.hidden = !active;
-    if (active) closeButton.focus({ preventScroll: true });
+    if (active) {
+      const target = firstFocusable();
+      if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    } else if (wasOpen && typeof toggle.focus === 'function') {
+      toggle.focus({ preventScroll: true });
+    }
   };
-  toggle.addEventListener('click', () => setOpen(!isOpen()));
+  toggle.addEventListener('click', () => setOpen(!open));
   overlay.addEventListener('click', () => setOpen(false));
-  closeButton.addEventListener('click', () => setOpen(false));
-  nav.addEventListener('click', (event) => {
-    if (event.target.closest('a') && media.matches) setOpen(false);
-  });
+  if (closeButton) closeButton.addEventListener('click', () => setOpen(false));
+  if (nav) {
+    nav.addEventListener('click', (event) => {
+      if (event.target.closest('a')) setOpen(false);
+    });
+  }
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && isOpen()) setOpen(false);
+    if (event.key === 'Escape' && open) setOpen(false);
   });
-  media.addEventListener('change', () => setOpen(false));
   setOpen(false);
+
+  return {
+    open: () => setOpen(true),
+    close: () => setOpen(false),
+    toggle: () => setOpen(!open),
+    isOpen: () => open,
+  };
+
 }

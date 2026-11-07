@@ -181,5 +181,7 @@ function initTocDrawer() {
     overlayId: 'docs-nav-overlay',
     closeId: 'docs-nav-close',
     navId: 'docs-nav',
+    openLabel: '打开文档目录',
+    closeLabel: '关闭文档目录',
   });
 }

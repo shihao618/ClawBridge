@@ -263,6 +263,9 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 ## 9. 前端约定（web/）
 
 - 零构建、零外部 CDN：原生 ES Module + 手写 CSS；所有资源由本服务 `/assets/*` 提供。
+- **全站响应式（单套 DOM/CSS）**：后台、文档页、首页使用同一套侧栏/顶栏壳与共享
+  `initSidebarDrawer`；JS 不判断屏幕宽度。桌面端侧栏常驻、窄屏 off-canvas 完全由 CSS 媒体查询切换，
+  不存在独立的 PC/移动端页面或两套导航 DOM。
 - 三个页面：
   - `/`：首页（公开绑定页）。品牌介绍 + 昵称输入 + "生成绑定二维码" 按钮；`/bind` 302 跳转到 `/`，不再重复提供页面；
     弹层/卡片展示二维码 SVG、状态文案（等待扫码/已扫码/请输入配对数字/刷新中/绑定成功）、

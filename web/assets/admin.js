@@ -27,6 +27,7 @@ import {
   formatFileSize,
   uploadWithProgress,
   initFocusHints,
+  initSidebarDrawer,
 } from './common.js';
 
 const POLL_INTERVAL_MS = 5000;
@@ -321,30 +322,15 @@ function init() {
   els.broadcastForm.addEventListener('submit', handleBroadcast);
   els.broadcastText.addEventListener('input', updateBroadcastCount);
 
-  // 侧栏菜单 / hash 路由 / 移动端抽屉
-  for (const link of $$('#admin-menu .menu-item')) {
-    link.addEventListener('click', () => closeDrawer());
-  }
-  els.sidebarToggle.addEventListener('click', toggleDrawer);
-  els.sidebarOverlay.addEventListener('click', () => closeDrawer());
-  if (typeof window.matchMedia === 'function') {
-    const desktopMedia = window.matchMedia('(min-width: 1024px)');
-    if (typeof desktopMedia.addEventListener === 'function') {
-      desktopMedia.addEventListener('change', () => {
-        if (desktopMedia.matches) {
-          drawerOpen = false;
-          if (els.sidebar) els.sidebar.classList.remove('is-open');
-          if (els.sidebarOverlay) els.sidebarOverlay.hidden = true;
-          if (els.sidebarToggle) els.sidebarToggle.setAttribute('aria-expanded', 'false');
-          document.body.classList.remove('sidebar-open');
-        }
-        syncSidebarA11y();
-      });
-    }
-  }
-  syncSidebarA11y();
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && isDrawerOpen()) closeDrawer();
+  // 响应式侧栏：后台/文档/首页共用同一套 DOM 与抽屉交互，由 CSS 决定桌面常驻或窄屏 off-canvas。
+  sidebarDrawer = initSidebarDrawer({
+    toggleId: 'btn-sidebar-toggle',
+    sidebarSelector: '#admin-sidebar',
+    overlayId: 'sidebar-overlay',
+    navId: 'admin-menu',
+    bodyClass: 'sidebar-open',
+    openLabel: '打开菜单',
+    closeLabel: '关闭菜单',
   });
   window.addEventListener('hashchange', () => {
     handleRoute().catch(loadErrorHandler('切换视图失败'));
@@ -517,7 +503,6 @@ function showDashboard() {
   setHidden(els.dashboard, false);
   if (els.sidebar) setHidden(els.sidebar, false);
   if (els.topbarBar) setHidden(els.topbarBar, false);
-  syncSidebarA11y();
   clearInlineError(els.loginError);
   void loadSidebarVersion();
 }
@@ -651,67 +636,19 @@ async function loadSidebarVersion() {
   }
 }
 
-/** 移动端侧栏抽屉。 */
-let drawerOpen = false;
-
-/** 桌面端侧栏常驻；移动端关闭抽屉时用 inert/aria-hidden 把 off-canvas 菜单移出焦点与可达性树。 */
-function isDesktopLayout() {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1024px)').matches;
-}
-
-function syncSidebarA11y() {
-  if (!els.sidebar) return;
-  if (isDesktopLayout() || drawerOpen) {
-    els.sidebar.removeAttribute('inert');
-    els.sidebar.removeAttribute('aria-hidden');
-  } else {
-    els.sidebar.setAttribute('inert', '');
-    els.sidebar.setAttribute('aria-hidden', 'true');
-  }
-}
-
-function focusFirstMenuItem() {
-  const first = document.querySelector('#admin-menu .menu-item');
-  if (first && typeof first.focus === 'function') first.focus();
-}
-
-function isDrawerOpen() {
-  return drawerOpen;
-}
+/** 响应式侧栏抽屉（实际交互由 common.js 的共享实现处理）。 */
+let sidebarDrawer = null;
 
 function openDrawer() {
-  drawerOpen = true;
-  if (els.sidebar) els.sidebar.classList.add('is-open');
-  if (els.sidebarOverlay) els.sidebarOverlay.hidden = false;
-  if (els.sidebarToggle) {
-    els.sidebarToggle.setAttribute('aria-expanded', 'true');
-    els.sidebarToggle.setAttribute('aria-label', '关闭菜单');
-  }
-  document.body.classList.add('sidebar-open');
-  syncSidebarA11y();
-  if (!isDesktopLayout()) focusFirstMenuItem();
+  sidebarDrawer?.open();
 }
 
 function closeDrawer() {
-  const wasOpen = drawerOpen;
-  drawerOpen = false;
-  if (els.sidebar) els.sidebar.classList.remove('is-open');
-  if (els.sidebarOverlay) els.sidebarOverlay.hidden = true;
-  if (els.sidebarToggle) {
-    els.sidebarToggle.setAttribute('aria-expanded', 'false');
-    els.sidebarToggle.setAttribute('aria-label', '打开菜单');
-  }
-  document.body.classList.remove('sidebar-open');
-  syncSidebarA11y();
-  if (wasOpen && !isDesktopLayout() && document.body.classList.contains('admin-authed')
-    && els.sidebarToggle && typeof els.sidebarToggle.focus === 'function') {
-    els.sidebarToggle.focus();
-  }
+  sidebarDrawer?.close();
 }
 
 function toggleDrawer() {
-  if (drawerOpen) closeDrawer();
-  else openDrawer();
+  sidebarDrawer?.toggle();
 }
 
 /* ------------------------------------------------------------------ */

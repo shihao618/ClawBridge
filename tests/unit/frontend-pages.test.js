@@ -1423,6 +1423,33 @@ test('首页：使用与后台一致的侧边栏/顶栏导航', async () => {
   assert.ok(!html.includes('docs-topbar-actions'), '首页右上角不再放导航按钮');
   assert.ok(html.includes('id="bind-form"'), '首页仍应包含扫码绑定表单');
 });
+test('全站响应式：页面/导航只有一套 DOM 与交互，无 JS 设备判断或独立 PC/移动端分支', async () => {
+  const [adminHtml, docsHtml, indexHtml, admin, common, docs, bind, css] = await Promise.all([
+    readPage('admin.html'),
+    readPage('docs.html'),
+    readPage('index.html'),
+    readAsset('admin.js'),
+    readAsset('common.js'),
+    readAsset('docs.js'),
+    readAsset('bind.js'),
+    readAsset('style.css'),
+  ]);
+  for (const [name, html] of [['admin.html', adminHtml], ['docs.html', docsHtml], ['index.html', indexHtml]]) {
+    assert.match(html, /name="viewport"/, `${name} 必须有 viewport meta`);
+    assert.ok(!html.includes('br-mobile'), `${name} 不应包含单独的移动端换行标记`);
+    assert.ok(!html.includes('mobile-nav') && !html.includes('desktop-nav'), `${name} 不应维护 PC/移动两套导航 DOM`);
+  }
+  for (const [name, source] of [['admin.js', admin], ['common.js', common], ['docs.js', docs], ['bind.js', bind]]) {
+    assert.doesNotMatch(source, /matchMedia|innerWidth|screen\.width|isMobile\b|isDesktop\b/, `${name} 不应在 JS 中判断设备/屏幕宽度`);
+  }
+  for (const [name, source] of [['admin.js', admin], ['common.js', common], ['docs.js', docs], ['bind.js', bind]]) {
+    assert.ok(source.includes('initSidebarDrawer'), `${name} 应复用共享响应式导航`);
+  }
+  assert.match(css, /@media \(max-width: 1023px\)/, '响应式断点应由 CSS 统一处理');
+  assert.match(css, /@media \(max-width: 899px\)/, '文档/首页断点应由 CSS 统一处理');
+  assert.match(css, /@media \(min-width: 1024px\)/, '大屏规则应由同一套 CSS 处理');
+});
+
 test('后台弹窗：分组加载失败禁止保存，会话过期清理弹窗', async () => {
   const admin = await readAsset('admin.js');
   assert.match(admin, /if \(!groupsLoaded\)/, '分组弹窗保存前必须检查分组是否加载成功');
