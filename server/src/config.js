@@ -170,11 +170,13 @@ export function loadConfig(env = process.env) {
   };
 
   // 24h 会话保活（docs/KEEPALIVE.md）：对开启 keepalive 的用户，在最后一条入站消息
-  // 即将满窗口（默认 24h）前自动发一条保活消息，提示用户回复以刷新会话窗口。
+  // 即将满窗口（默认 24h）前自动发保活消息，提示用户回复以刷新会话窗口。
+  // 默认提前 12h 首次提醒，之后每 6h 重复提醒，直到用户回复或窗口过期。
   const keepalive = {
     enabled: envBool(env, 'KEEPALIVE_ENABLED', true),
     windowMs: Math.max(1000, envInt(env, 'KEEPALIVE_WINDOW_MS', 24 * 60 * 60 * 1000)),
-    leadMs: Math.max(0, envInt(env, 'KEEPALIVE_LEAD_MS', 60 * 60 * 1000)),
+    leadMs: Math.max(0, envInt(env, 'KEEPALIVE_LEAD_MS', 12 * 60 * 60 * 1000)),
+    repeatMs: Math.max(1000, envInt(env, 'KEEPALIVE_REPEAT_MS', 6 * 60 * 60 * 1000)),
     tickMs: Math.max(100, envInt(env, 'KEEPALIVE_TICK_MS', 5 * 60 * 1000)),
     text: envStr(env, 'KEEPALIVE_TEXT', '【消息通道保活】回复任意内容即可继续接收通知。'),
     maxPerTick: Math.max(1, envInt(env, 'KEEPALIVE_MAX_PER_TICK', 100)),

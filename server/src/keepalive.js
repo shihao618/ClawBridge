@@ -7,8 +7,8 @@
  *
  * 规则：
  *  - 按用户 opt-in（默认关闭）；全局 config.keepalive.enabled=false 时完全不扫描；
- *  - 只在窗口仍有效时发送（提前 leadMs 触发，窗口过期不发送）；
- *  - 每个会话窗口最多发送一次（keepalive_last_sent_at < last_inbound_at 才可再次触发）；
+ *  - 在窗口仍有效时提前 leadMs 首次提醒；用户未回复则每 repeatMs 重复提醒，直到窗口过期；
+ *  - 每个窗口首次提醒由 keepalive_last_sent_at < last_inbound_at 判定；
  *  - 走现有 outbox 队列（限流/-2/-14 复用），不新增发送通道。
  */
 import { config } from './config.js';
@@ -31,7 +31,7 @@ export function renderKeepaliveText(template, { displayName = '' } = {}) {
 /**
  * 执行一次扫描（可注入 now / 依赖，便于单测假时钟）。
  * @param {number} [now] 假时钟毫秒时间戳
- * @param {{windowMs?:number, leadMs?:number, limit?:number, text?:string,
+ * @param {{windowMs?:number, leadMs?:number, repeatMs?:number, limit?:number, text?:string,
  *          enqueueMessage?:Function, enabled?:boolean}} [options]
  * @returns {Promise<number>} 本次成功入队的保活消息数
  */
@@ -40,25 +40,31 @@ export async function scan(now = Date.now(), options = {}) {
   if (!enabled) return 0;
   const windowMs = options.windowMs ?? config.keepalive.windowMs;
   const leadMs = options.leadMs ?? config.keepalive.leadMs;
+  const repeatMs = options.repeatMs ?? config.keepalive.repeatMs;
   const limit = options.limit ?? config.keepalive.maxPerTick;
   const template = options.text ?? config.keepalive.text;
   const enqueueMessage = options.enqueueMessage ?? store.enqueueMessage;
 
-  const candidates = store.getKeepaliveCandidates(now, { windowMs, leadMs, limit });
+  const candidates = store.getKeepaliveCandidates(now, { windowMs, leadMs, repeatMs, limit });
   let sent = 0;
   for (const user of candidates) {
     try {
       const remainingMs = Math.max(0, windowMs - (Number(now) - Number(user.last_inbound_at ?? 0)));
+      const repeat = Number(user.keepalive_last_sent_at) >= Number(user.last_inbound_at);
       // 渲染模板并限制在单条文本上限内（超长模板/昵称时避免被微信侧拒绝）
       const text = renderKeepaliveText(template, { displayName: user.display_name }).slice(0, config.push.maxTextLength);
-      // 事务：入队 + 记录 last_sent + 事件，保证"同窗口只发一次"原子性
+      // 事务：入队 + 记录 last_sent + 事件，保证重试/重复提醒不会重复入队
       transaction(() => {
         enqueueMessage({ userId: user.id, text, source: 'keepalive' });
         store.setKeepaliveLastSentAt(user.id, now);
-        store.addEvent({ type: 'keepalive', userId: user.id, detail: `remainingMs=${remainingMs}` });
+        store.addEvent({
+          type: 'keepalive',
+          userId: user.id,
+          detail: `remainingMs=${remainingMs} repeat=${repeat ? 1 : 0}`,
+        });
       });
       sent += 1;
-      log.info('保活消息已入队', { userId: user.id, remainingMs });
+      log.info('保活消息已入队', { userId: user.id, remainingMs, repeat });
     } catch (err) {
       // 单用户失败不影响其他用户；last_sent 未写入 → 下个 tick 自动重试
       log.warn('保活消息入队失败（下个 tick 重试）', { userId: user.id, message: err?.message });
@@ -99,6 +105,7 @@ export function start() {
     tickMs: config.keepalive.tickMs,
     windowMs: config.keepalive.windowMs,
     leadMs: config.keepalive.leadMs,
+    repeatMs: config.keepalive.repeatMs,
     maxPerTick: config.keepalive.maxPerTick,
   });
   return true;

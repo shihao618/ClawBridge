@@ -2,16 +2,17 @@
 
 > 背景：微信 ClawBot 存在"会话窗口"限制——用户最近一次主动给 bot 发消息后的约 24 小时内，
 > bot 才能可靠地主动下发消息；超过 24 小时会话失效（见 README FAQ / 社区反馈）。
-> 本功能：**对开启了保活的用户**，当其"最后一条入站消息"即将满 24 小时时，自动发送一条
-> 保活消息，提示用户回复以刷新会话窗口（用户回复后窗口重新计时）。
+> 本功能：**对开启了保活的用户**，当其"最后一条入站消息"接近 24 小时窗口时，自动发送保活消息，
+> 提示用户回复以刷新会话窗口（用户回复后窗口重新计时）；默认提前 12h 首次提醒，之后每 6h 重复提醒，
+> 直到用户回复或窗口过期。
 > 相关文档：`docs/API.md`、`docs/ARCHITECTURE.md`、`docs/GROUPS_AND_INBOUND.md`。
 
 ## 0. 范围与原则
 
 - **按用户 opt-in**：默认关闭；管理员可对单个用户或整个分组批量开启/关闭（"对于有需求的用户"）。
-- 只在**窗口仍然有效**时发送（剩余时间 >0，默认提前 1 小时触发）；窗口已过期不发送（发了也没用）。
-- **每个会话窗口最多自动发送一次**：发送后记录 `keepalive_last_sent_at`；用户之后再发消息
-  （`last_inbound_at` 更新）才进入下一个窗口、可再次触发。
+- 只在**窗口仍然有效**时发送（默认提前 12h 首次触发，之后每 6h 重复提醒）；窗口已过期不发送（发了也没用）。
+- **用户未回复时重复提醒**：首次提醒后记录 `keepalive_last_sent_at`；距上次提醒满 `repeatMs`
+  （默认 6h）且窗口未过期时再次提醒，直到用户回复（`last_inbound_at` 更新）或窗口过期。
 - 保活消息走现有 outbox 队列（source=`keepalive`），受每账号限流、`-2/-14` 处理、媒体等完全复用。
 - 内容默认："【消息通道保活】回复任意内容即可继续接收通知。"，支持 `{name}` 占位（用户昵称）；
   可通过环境变量覆盖。
@@ -37,12 +38,13 @@ ALTER TABLE users ADD COLUMN keepalive_last_sent_at INTEGER NOT NULL DEFAULT 0;
 | --- | --- | --- |
 | `KEEPALIVE_ENABLED` | `true` | 全局调度开关（false=完全不扫描，便于运维临时关闭） |
 | `KEEPALIVE_WINDOW_MS` | `86400000`（24h） | 会话窗口长度（e2e 可调小） |
-| `KEEPALIVE_LEAD_MS` | `3600000`（1h） | 提前量：`now - lastInboundAt >= window - lead` 时触发 |
+| `KEEPALIVE_LEAD_MS` | `43200000`（12h） | 首次提前量：`now - lastInboundAt >= window - lead` 时触发 |
+| `KEEPALIVE_REPEAT_MS` | `21600000`（6h） | 未回复时重复提醒间隔 |
 | `KEEPALIVE_TICK_MS` | `300000`（5min） | 扫描间隔 |
 | `KEEPALIVE_TEXT` | `【消息通道保活】回复任意内容即可继续接收通知。` | 保活文本模板，支持 `{name}` |
 | `KEEPALIVE_MAX_PER_TICK` | `100` | 单次扫描最多处理用户数（防御） |
 
-`config.keepalive = { enabled, windowMs, leadMs, tickMs, text, maxPerTick }`。
+`config.keepalive = { enabled, windowMs, leadMs, repeatMs, tickMs, text, maxPerTick }`。
 
 ## 3. 触发条件（SQL 语义）
 
@@ -52,8 +54,8 @@ ALTER TABLE users ADD COLUMN keepalive_last_sent_at INTEGER NOT NULL DEFAULT 0;
 2. `keepalive_enabled=1`；
 3. `last_inbound_at > 0`；
 4. `pause_until <= now`（未冷却）；
-5. `keepalive_last_sent_at < last_inbound_at`（本窗口还没发过保活）；
-6. `now - last_inbound_at >= windowMs - effectiveLeadMs`（默认 23h）；
+5. 本窗口未发过（`keepalive_last_sent_at < last_inbound_at`），或距上次提醒已满 `repeatMs`；
+6. `now - last_inbound_at >= windowMs - effectiveLeadMs`（默认 12h）；
 7. `now - last_inbound_at < windowMs`（窗口未过期；已过期不发送）；
 8. 满足 1-7 的用户按 `last_inbound_at ASC` 排序，单次最多 `maxPerTick` 个。
 
@@ -90,7 +92,7 @@ GET /api/admin/users?...                      # UserView 增加：
   "keepaliveEnabled": false,
   "keepaliveLastSentAt": 0
 GET /api/admin/config                         # 增加：
-  "keepalive": { "enabled":true, "windowMs":86400000, "leadMs":3600000,
+  "keepalive": { "enabled":true, "windowMs":86400000, "leadMs":43200000, "repeatMs":21600000,
                  "tickMs":300000, "maxPerTick":100, "text":"…" }
 GET /api/admin/overview                       # stats 增加：
   "keepaliveEnabledUsers": 2, "keepaliveSent24h": 1
@@ -112,9 +114,9 @@ GET /api/admin/overview                       # stats 增加：
 2. 分组列表每行增加「保活」**行内开关**（无需弹窗）：点击调用
    `POST /api/admin/groups/{id}/keepalive`，同步当前成员并持久化分组默认，之后加入该分组的成员自动开启；
    分组新建/编辑表单**不再包含**该开关（新建分组默认关闭，创建后在列表行内开启即可）。
-3. 运行配置区块展示保活参数（窗口/提前量/扫描间隔/文本/全局开关）。
+3. 运行配置区块展示保活参数（窗口/首次提前量/重复间隔/扫描间隔/文本/全局开关）。
 4. 消息记录：来源为 `keepalive` 的消息显示"保活"小标签。
-5. API 文档页新增「消息保活」章节：机制说明（24h 窗口/每窗口一次/opt-in）、两个管理端接口、
+5. API 文档页新增「消息保活」章节：机制说明（24h 窗口/12h 首次提醒/6h 重复提醒/opt-in）、两个管理端接口、
    配置项、curl 示例。
 6. 保持零构建/CSP/textContent/移动端不溢出。
 
@@ -123,8 +125,8 @@ GET /api/admin/overview                       # stats 增加：
 **单元（backend-dev）**
 - db v3→v4 迁移（数据保留/列默认值/幂等/全新库 v4）；
 - store：`setKeepaliveEnabled`（用户/分组批量）、`setKeepaliveLastSentAt`、
-  `getKeepaliveCandidates(now, {windowMs, leadMs, limit})`（8 条 SQL 条件、按时间排序、limit）；
-- scheduler（`keepalive.js`）：fake clock 直接调用 `scan(now)`——触发一次、同窗口不重复、
+  `getKeepaliveCandidates(now, {windowMs, leadMs, repeatMs, limit})`（触发/重复/排序/limit 条件）；
+- scheduler（`keepalive.js`）：fake clock 直接调用 `scan(now)`——首次触发、未回复按 repeatMs 重复、
   用户回复后新窗口可再触发、disabled/paused/unbound/lastInbound=0/已过期 均不触发、
   模板 `{name}` 渲染、maxPerTick、enqueue 失败不崩；
 - API：PATCH 单用户/分组批量（404/400/updated 计数）、UserView/config/overview 字段、source 字段。
@@ -159,5 +161,5 @@ GET /api/admin/overview                       # stats 增加：
   不改变用户状态；实际是否会发送仍由候选条件决定）。
 - **文本长度**：保活文本渲染后会按 `MAX_TEXT_LENGTH`（默认 4000）截断，避免超长模板被微信侧拒绝。
 - **统计口径**：`keepaliveSent24h` 为 24h 内入队数（见 §4），前端展示为"24h 保活入队"。
-- 保活只保证"尝试刷新会话窗口"，若用户始终不回复，24h 窗口仍会过期；过期后不会继续发送。
+- 保活只保证"尝试提醒用户刷新会话窗口"；若用户始终不回复，24h 窗口仍会过期，过期后不会继续发送。
 - 建议上线后先对 1-2 个用户开启，观察一轮真实 24h 窗口行为后再扩大范围。

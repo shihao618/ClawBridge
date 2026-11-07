@@ -71,6 +71,26 @@ test('scan：窗口临近时触发一次，同窗口不重复', async () => {
   assert.equal(keepaliveOutboxCount(user.id), 1);
 });
 
+test('scan：用户未回复时按 repeatMs 重复提醒，窗口过期停止', async () => {
+  const user = createCandidate({ lastInbound: 1000 });
+  const repeatOpts = { windowMs: 4000, leadMs: 1000, repeatMs: 500, limit: 100 };
+  await keepalive.scan(4000, repeatOpts);
+  assert.equal(keepaliveOutboxCount(user.id), 1, '窗口剩余 1000ms 首次触发');
+  await keepalive.scan(4300, repeatOpts);
+  assert.equal(keepaliveOutboxCount(user.id), 1, '未到重复间隔');
+  await keepalive.scan(4500, repeatOpts);
+  assert.equal(keepaliveOutboxCount(user.id), 2, '距上次提醒满 repeatMs，再次提醒');
+  await keepalive.scan(4900, repeatOpts);
+  assert.equal(keepaliveOutboxCount(user.id), 2, '重复间隔未到');
+  await keepalive.scan(5000, repeatOpts);
+  assert.equal(keepaliveOutboxCount(user.id), 2, '窗口过期后停止');
+
+  // 用户回复后进入新窗口，首次提醒重新计时
+  store.touchInbound(user.id, 5000);
+  await keepalive.scan(8000, repeatOpts);
+  assert.equal(keepaliveOutboxCount(user.id), 3, '新窗口可再次触发');
+});
+
 test('scan：用户回复后进入新窗口可再次触发；窗口过期不触发', async () => {
   const user = createCandidate({ lastInbound: 1000 });
   assert.equal(await keepalive.scan(2800, OPTS), 1);

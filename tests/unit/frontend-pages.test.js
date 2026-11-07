@@ -723,6 +723,7 @@ test('文档页消息保活章节与 docs/KEEPALIVE.md 一致', async () => {
     'KEEPALIVE_ENABLED',
     'KEEPALIVE_WINDOW_MS',
     'KEEPALIVE_LEAD_MS',
+    'KEEPALIVE_REPEAT_MS',
     'KEEPALIVE_TICK_MS',
     'KEEPALIVE_TEXT',
     'KEEPALIVE_MAX_PER_TICK',
@@ -734,7 +735,8 @@ test('文档页消息保活章节与 docs/KEEPALIVE.md 一致', async () => {
     assert.ok(contract.includes(token), `docs/KEEPALIVE.md 应描述：${token}`);
     if (!token.startsWith('KEEPALIVE_')) assert.ok(html.includes(token), `docs.html 保活章节缺少：${token}`);
   }
-  assert.ok(/每.*窗口最多.*一次|最多发送一次/.test(html), 'docs.html 应说明每个窗口最多发送一次');
+  assert.ok(/未回复.*重复提醒|重复提醒/.test(html), 'docs.html 应说明未回复时重复提醒');
+  assert.ok(html.includes('repeatMs'), 'docs.html 应说明重复提醒间隔 repeatMs');
   assert.ok(/curl -X PATCH/.test(html) && /curl -X POST/.test(html), 'docs.html 应包含保活 curl 示例');
 });
 

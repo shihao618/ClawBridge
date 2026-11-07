@@ -1477,6 +1477,7 @@ export function createApp() {
         enabled: config.keepalive.enabled,
         windowMs: config.keepalive.windowMs,
         leadMs: config.keepalive.leadMs,
+        repeatMs: config.keepalive.repeatMs,
         tickMs: config.keepalive.tickMs,
         maxPerTick: config.keepalive.maxPerTick,
         text: config.keepalive.text,

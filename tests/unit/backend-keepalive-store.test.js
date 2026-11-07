@@ -124,10 +124,20 @@ test('getKeepaliveCandidates：8 条触发条件与边界', () => {
   store.setKeepaliveEnabled(neverInbound.id, true);
   assert.ok(!candidateIds(5000).includes(neverInbound.id));
 
-  // 本窗口已发过（last_sent >= last_inbound）不触发
+  // 本窗口已发过（last_sent >= last_inbound）不触发（repeatMs 未到）
   const already = createCandidate({ lastInbound: 1004 });
   store.setKeepaliveLastSentAt(already.id, 1004);
   assert.ok(!candidateIds(1000 + TRIGGER + 4).includes(already.id));
+
+  // repeatMs 到期后，同一窗口允许重复提醒
+  assert.ok(
+    candidateIds(1000 + WINDOW, { repeatMs: 500 }).includes(already.id),
+    'last_sent 后满 repeatMs 且窗口未过期应再次候选',
+  );
+  assert.ok(
+    !candidateIds(1000 + WINDOW, { repeatMs: 10 * WINDOW }).includes(already.id),
+    'repeatMs 未到不重复',
+  );
 
   // 用户回复后（lastInbound > last_sent）进入新窗口可再次触发
   store.touchInbound(already.id, 3000);

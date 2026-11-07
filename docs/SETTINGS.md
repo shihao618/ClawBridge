@@ -10,7 +10,7 @@
 | 分组 | 字段 |
 | --- | --- |
 | push | `rateLimitMax`、`rateLimitWindowMs`、`maxAttempts`、`retryDelaysMs`(逗号分隔)、`apiRateLimitPerMinute`、`maxTextLength` |
-| keepalive | `enabled`、`windowMs`、`leadMs`、`tickMs`、`text`、`maxPerTick` |
+| keepalive | `enabled`、`windowMs`、`leadMs`、`repeatMs`、`tickMs`、`text`、`maxPerTick` |
 | appRules | `enabled`、`timeoutMs`、`maxResponseBytes`、`workerConcurrency`、`allowedHosts`(数组/逗号分隔)、`maxQueue` |
 | scheduler | `enabled`、`tickMs`、`timezone`(IANA)、`maxRecipients`、`timeoutMs` |
 | media | `maxBytes`、`inboundMaxBytes` |

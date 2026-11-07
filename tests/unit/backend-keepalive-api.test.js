@@ -159,6 +159,7 @@ test('config/overview/v1 users/messages.source 字段', async () => {
   assert.equal(typeof config.json.keepalive.enabled, 'boolean');
   assert.equal(typeof config.json.keepalive.windowMs, 'number');
   assert.equal(typeof config.json.keepalive.leadMs, 'number');
+  assert.equal(typeof config.json.keepalive.repeatMs, 'number');
   assert.equal(typeof config.json.keepalive.tickMs, 'number');
   assert.equal(typeof config.json.keepalive.maxPerTick, 'number');
   assert.equal(typeof config.json.keepalive.text, 'string');

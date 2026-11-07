@@ -528,9 +528,9 @@ curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50&cursor=$NEXT&wa
 ## 8. 24h 会话保活（Keep-Alive）
 
 完整设计见 [`docs/KEEPALIVE.md`](KEEPALIVE.md)。微信 ClawBot 的主动下发依赖"用户最近一次主动消息"
-（约 24 小时会话窗口）。对**开启保活**的用户，ClawBridge 会在其最后一条入站消息即将满 24 小时时
-（默认提前 1 小时）自动入队一条保活消息，提示用户回复以刷新窗口；**每个会话窗口最多发送一次**，
-用户回复后重新计时。默认关闭（opt-in），可对单个用户或整个分组批量开启。
+（约 24 小时会话窗口）。对**开启保活**的用户，ClawBridge 会在其最后一条入站消息满 12 小时时
+首次提醒，之后每 6 小时重复提醒，直到用户回复刷新窗口或窗口过期；默认关闭（opt-in），
+可对单个用户或整个分组批量开启。
 
 **管理端接口（Cookie + CSRF）**
 
@@ -544,7 +544,7 @@ POST /api/admin/groups/{id}/keepalive
   → 200 { "updated": 3, "group": GroupView }
 
 GET /api/admin/users?...              # UserView 新增 keepaliveEnabled / keepaliveLastSentAt
-GET /api/admin/config                 # 新增 keepalive 配置（enabled/windowMs/leadMs/tickMs/text/…）
+GET /api/admin/config                 # 新增 keepalive 配置（enabled/windowMs/leadMs/repeatMs/tickMs/text/…）
 GET /api/admin/overview               # stats 新增 keepaliveEnabledUsers / keepaliveSent24h
                                       # （keepaliveSent24h = 最近 24h 内**入队**的保活消息数，含 queued/sent）
 GET /api/admin/messages               # 消息项新增 source（admin/api/broadcast/group/keepalive/system）
@@ -558,13 +558,14 @@ GET /api/admin/messages               # 消息项新增 source（admin/api/broad
 | --- | --- | --- |
 | `KEEPALIVE_ENABLED` | `true` | 全局调度开关 |
 | `KEEPALIVE_WINDOW_MS` | `86400000`（24h） | 会话窗口长度 |
-| `KEEPALIVE_LEAD_MS` | `3600000`（1h） | 提前触发量（最后入站满 window-lead 时触发） |
+| `KEEPALIVE_LEAD_MS` | `43200000`（12h） | 首次提前触发量（最后入站满 window-lead 时触发） |
+| `KEEPALIVE_REPEAT_MS` | `21600000`（6h） | 用户未回复时重复提醒间隔，直到窗口过期 |
 | `KEEPALIVE_TICK_MS` | `300000`（5min） | 扫描间隔 |
 | `KEEPALIVE_TEXT` | `【消息通道保活】回复任意内容即可继续接收通知。` | 保活文本模板，支持 `{name}` |
 | `KEEPALIVE_MAX_PER_TICK` | `100` | 单次扫描最多处理用户数 |
 
 **触发条件**：用户 active、已开启保活、`last_inbound_at>0`、未冷却、
-`keepalive_last_sent_at < last_inbound_at`、`now-last_inbound_at ∈ [window-lead, window)`。
+`now-last_inbound_at ∈ [window-lead, window)`，且（本窗口未发过或距上次提醒 ≥ `repeatMs`）。
 不满足（含窗口已过期）不会发送。发送走 outbox（source=`keepalive`），受每账号限流。
 
 **curl 示例**

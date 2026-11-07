@@ -378,7 +378,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   （单用户 / 分组批量 opt-in），UserView/config/overview 增加保活字段，消息视图增加 `source`。
 - **前端**：用户行保活开关、分组行内保活开关（同步当前成员+持久化分组默认）、运行配置保活参数、
   消息来源「保活」标签、文档页保活章节。
-- **测试**：v3→v4 迁移、候选条件边界、调度假时钟（每窗口一次/回复后新窗口/disabled/失败不崩）、
+- **测试**：v3→v4 迁移、候选条件边界、调度假时钟（首次提醒/未回复重复/回复后新窗口/disabled/失败不崩）、
   API 校验；e2e 用压缩时间参数（window=8s、lead=3s、tick=300ms）验证真实触发与不重复。
 
 ## 15. 接口应用（关键词触发 → 外部 HTTP 接口 → 解析回复）

@@ -41,7 +41,8 @@ const GROUPS = [
     fields: [
       { key: 'enabled', label: '全局开关', type: 'boolean', description: '关闭后不再自动发送保活消息' },
       { key: 'windowMs', label: '会话窗口（毫秒）', type: 'number', min: 60000, max: 604800000, description: '微信会话有效窗口，默认 24h' },
-      { key: 'leadMs', label: '提前量（毫秒）', type: 'number', min: 0, max: 604800000, description: '窗口剩余该时长时触发保活' },
+      { key: 'leadMs', label: '首次提前量（毫秒）', type: 'number', min: 0, max: 604800000, description: '窗口剩余该时长时首次触发保活' },
+      { key: 'repeatMs', label: '重复提醒间隔（毫秒）', type: 'number', min: 1000, max: 604800000, description: '用户未回复时，每隔该时长重复提醒直到窗口过期' },
       { key: 'tickMs', label: '扫描间隔（毫秒）', type: 'number', min: 1000, max: 3600000, description: '保活调度扫描间隔' },
       { key: 'text', label: '保活文案', type: 'string', min: 1, max: 500, description: '支持 {name} 占位' },
       { key: 'maxPerTick', label: '单次最多处理用户数', type: 'number', min: 1, max: 1000, description: '防御性上限' },

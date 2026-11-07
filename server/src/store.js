@@ -683,29 +683,36 @@ export function setKeepaliveLastSentAt(userId, ts = nowMs()) {
 }
 
 /**
- * 保活候选用户（docs/KEEPALIVE.md §3 的 8 个条件）：
+ * 保活候选用户（docs/KEEPALIVE.md §3）：
  *  1 status='active'；2 keepalive_enabled=1；3 last_inbound_at>0；
- *  4 pause_until<=now；5 keepalive_last_sent_at < last_inbound_at（本窗口未发过）；
+ *  4 pause_until<=now；
+ *  5 本窗口未发过（keepalive_last_sent_at < last_inbound_at），或距上次提醒 >= repeatMs；
  *  6 now-last_inbound_at >= windowMs-effectiveLeadMs；7 now-last_inbound_at < windowMs；
  *  8 按 last_inbound_at ASC 排序，最多 limit 个。
  * @returns {object[]} 用户原始行
  */
-export function getKeepaliveCandidates(now = nowMs(), { windowMs, leadMs, limit } = {}) {
+export function getKeepaliveCandidates(now = nowMs(), { windowMs, leadMs, repeatMs, limit } = {}) {
   const window = toNumber(windowMs);
   const effectiveLead = Math.min(Math.max(0, toNumber(leadMs)), window);
   const triggerAt = window - effectiveLead;
+  const repeat = Math.max(1, toNumber(repeatMs) || Number.MAX_SAFE_INTEGER);
   return all(
     `SELECT * FROM users
      WHERE status = 'active'
        AND keepalive_enabled = 1
        AND last_inbound_at > 0
        AND pause_until <= ?
-       AND keepalive_last_sent_at < last_inbound_at
+       AND (
+         keepalive_last_sent_at < last_inbound_at
+         OR (? - keepalive_last_sent_at) >= ?
+       )
        AND (? - last_inbound_at) >= ?
        AND (? - last_inbound_at) < ?
      ORDER BY last_inbound_at ASC, id ASC
      LIMIT ?`,
     toNumber(now),
+    toNumber(now),
+    repeat,
     toNumber(now),
     triggerAt,
     toNumber(now),

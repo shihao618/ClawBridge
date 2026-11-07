@@ -1079,19 +1079,20 @@ done</code></pre></div>
           <h2 class="doc-heading">消息保活（24h 会话保活）</h2>
           <p>
             微信 ClawBot 的主动下发依赖「用户最近一次主动消息」形成的约 <strong>24 小时会话窗口</strong>。
-            对<strong>开启保活</strong>的用户，ClawBridge 会在其最后一条入站消息即将满 24 小时时
-            （默认提前 1 小时）自动入队一条保活消息，提示用户回复以刷新会话窗口。
+            对<strong>开启保活</strong>的用户，ClawBridge 会在其最后一条入站消息满 12 小时后
+            首次提醒，之后每 6 小时重复提醒，直到用户回复刷新会话窗口或窗口过期。
           </p>
           <ul class="doc-list">
             <li><strong>opt-in</strong>：默认关闭；管理员可对单个用户或整个分组批量开启/关闭。</li>
-            <li><strong>每个会话窗口最多自动发送一次</strong>：发送后记录
-              <code class="code-inline">keepaliveLastSentAt</code>；用户回复消息后窗口重新计时，可再次触发。</li>
+            <li><strong>未回复时重复提醒</strong>：首次提醒后记录
+              <code class="code-inline">keepaliveLastSentAt</code>；距上次提醒满 <code class="code-inline">repeatMs</code>
+              （默认 6h）且窗口未过期时再次提醒；用户回复消息后窗口重新计时。</li>
             <li>仅在窗口仍然有效时发送（剩余时间 &gt; 0）；窗口已过期或从未有过入站消息的用户<strong>不会</strong>发送。</li>
             <li>保活消息走现有 outbox 队列（<code class="code-inline">source=keepalive</code>），受每账号发送限流、
               <code class="code-inline">-2</code>/<code class="code-inline">-14</code> 处理等与普通消息完全一致。</li>
             <li>触发条件：用户 active、已开启保活、<code class="code-inline">lastInboundAt &gt; 0</code>、未冷却、
-              <code class="code-inline">keepaliveLastSentAt &lt; lastInboundAt</code>、
-              <code class="code-inline">now - lastInboundAt ∈ [window - lead, window)</code>。</li>
+              <code class="code-inline">now - lastInboundAt ∈ [window - lead, window)</code>，
+              且本窗口未发过或距上次提醒满 <code class="code-inline">repeatMs</code>。</li>
           </ul>
 
           <h3 class="doc-subheading">1. 单用户开关（管理后台）</h3>
