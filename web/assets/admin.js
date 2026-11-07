@@ -1729,12 +1729,26 @@ function openAppRuleEditor(rule = null) {
 
 
   // 请求
-  const requestModeSelect = el(
-    'select',
-    { id: 'rule-request-mode', class: 'select' },
-    el('option', { value: 'http', text: '请求外部接口', selected: (request.mode ?? 'http') !== 'none' }),
-    el('option', { value: 'none', text: '不请求（直接回复默认文本）', selected: (request.mode ?? 'http') === 'none' }),
+  const initialRequestMode = request.mode === 'none' ? 'none' : 'http';
+  const requestModeGroup = el(
+    'div',
+    { class: 'radio-list rule-radio-row', id: 'rule-request-mode', role: 'radiogroup', 'aria-label': '请求模式' },
+    el(
+      'label',
+      { class: 'radio-inline' },
+      el('input', { type: 'radio', name: 'rule-request-mode', value: 'http', checked: initialRequestMode === 'http' }),
+      el('span', { text: '请求外部接口' }),
+    ),
+    el(
+      'label',
+      { class: 'radio-inline' },
+      el('input', { type: 'radio', name: 'rule-request-mode', value: 'none', checked: initialRequestMode === 'none' }),
+      el('span', { text: '不请求（直接回复默认文本）' }),
+    ),
   );
+  function getRequestMode() {
+    return requestModeGroup.querySelector('input[name="rule-request-mode"]:checked')?.value === 'none' ? 'none' : 'http';
+  }
   const methodSelect = el('select', { id: 'rule-request-method', class: 'select' }, ...['GET', 'POST'].map((method) =>
     el('option', { value: method, text: method, selected: (request.method || 'GET') === method }),
   ));
@@ -1882,7 +1896,7 @@ function openAppRuleEditor(rule = null) {
   );
   const requestModeField = formField(
     '请求模式',
-    requestModeSelect,
+    requestModeGroup,
     '不请求：关键词命中后直接回复下方「回复模板」中的默认文本，不访问外部接口。',
     'rule-request-mode',
   );
@@ -1903,7 +1917,7 @@ function openAppRuleEditor(rule = null) {
     ),
   );
   function syncRuleRequestMode() {
-    const noRequest = requestModeSelect.value === 'none';
+    const noRequest = getRequestMode() === 'none';
     setHidden(extractionSection, noRequest);
     setHidden(requestDetailsBox, noRequest);
     setHidden(responseGrid, noRequest);
@@ -1915,7 +1929,9 @@ function openAppRuleEditor(rule = null) {
       replyTemplateInput.placeholder = '例如：天气：{{data.answer}}（支持 {{路径}}、{{response}}、{{raw}}）';
     }
   }
-  requestModeSelect.addEventListener('change', syncRuleRequestMode);
+  for (const radio of requestModeGroup.querySelectorAll('input[name="rule-request-mode"]')) {
+    radio.addEventListener('change', syncRuleRequestMode);
+  }
   syncRuleRequestMode();
 
   const errorNode = el('p', { id: 'rule-form-error', class: 'inline-error', role: 'alert', hidden: true });
@@ -1946,6 +1962,7 @@ function openAppRuleEditor(rule = null) {
         ),
         formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input'),
       ),
+      requestModeField,
       errorNode,
     ),
     formSection(
@@ -1966,7 +1983,6 @@ function openAppRuleEditor(rule = null) {
     formSection(
       '请求',
       '不请求模式：关键词命中后直接回复默认文本，不访问外部接口。请求模式：URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
-      requestModeField,
       requestDetailsBox,
     ),
     formSection(
@@ -2023,7 +2039,7 @@ function openAppRuleEditor(rule = null) {
           } else if (!regexInput.value.trim()) {
             return showFormError('请输入正则表达式');
           }
-          const noRequest = requestModeSelect.value === 'none';
+          const noRequest = getRequestMode() === 'none';
           let extractionMode = 'none';
           let extractionCfg = {};
           if (!noRequest) {
