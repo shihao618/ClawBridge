@@ -1,0 +1,517 @@
+/**
+ * 单元测试：定时通知管理端 API（docs/SCHEDULED_TASKS.md §5）。
+ * 进程内 Express + 临时 DATA_DIR + 本地假 HTTP server。
+ */
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import http from 'node:http';
+import test, { after, before } from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
+
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-scheduled-api-',
+  env: {
+    APP_SECRET: 'scheduled-api-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'scheduled-api-admin-password',
+    API_TOKEN: 'scheduled-api-token-123456',
+    ILINK_LOGIN_BASE_URL: 'http://127.0.0.1:9',
+    ILINK_BASE_URL: 'http://127.0.0.1:9',
+    LOG_LEVEL: 'silent',
+    APP_RULES_ALLOWED_HOSTS: '127.0.0.1',
+  },
+});
+
+const { createApp } = await import('../../server/src/api.js');
+const store = await import('../../server/src/store.js');
+const { getDb } = await import('../../server/src/db.js');
+
+let apiServer;
+let apiPort = 0;
+let server;
+let base = '';
+let cookie = '';
+const CSRF = { 'x-requested-with': 'ClawBridge-Admin' };
+
+before(async () => {
+  const { seedTestAdminSecrets } = await import('../helpers/backend-test-secrets.js');
+  seedTestAdminSecrets();
+  apiServer = http.createServer((req, res) => {
+    const url = new URL(req.url, `http://127.0.0.1:${apiPort}`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: { answer: `answer:${url.searchParams.get('city') ?? 'x'}` } }));
+  });
+  await new Promise((resolve) => apiServer.listen(0, '127.0.0.1', resolve));
+  apiPort = apiServer.address().port;
+
+  server = createApp().listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  base = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${base}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'scheduled-api-admin-password' }),
+  });
+  assert.equal(login.status, 200);
+  cookie = /cb_session=[^;]+/.exec(login.headers.get('set-cookie') || '')[0];
+});
+
+after(async () => {
+  if (server) await new Promise((resolve) => server.close(resolve));
+  if (apiServer) await new Promise((resolve) => apiServer.close(resolve));
+  await cleanupUnitEnv(unitEnv);
+});
+
+async function request(method, pathName, { body, headers = {} } = {}) {
+  const response = await fetch(base + pathName, {
+    method,
+    headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  return { status: response.status, text, json };
+}
+
+const adminGet = (pathName) => request('GET', pathName, { headers: { cookie } });
+const adminWrite = (method, pathName, body) => request(method, pathName, { body, headers: { cookie, ...CSRF } });
+
+function assertError(result, status, code) {
+  assert.equal(result.status, status, result.text);
+  assert.equal(result.json?.error?.code, code, result.text);
+}
+
+let seq = 0;
+function createUser({ active = true, displayName } = {}) {
+  seq += 1;
+  const user = store.upsertBoundUser({
+    wechatUserId: `wx_sched_api_${seq}`,
+    displayName: displayName ?? `API定时用户${seq}`,
+    ilinkBotId: `bot_sched_api_${seq}@im.bot`,
+    botToken: `sched-api-token-${seq}`,
+    baseUrl: 'https://ilink.example.test',
+  }).user;
+  if (!active) store.unbindUser(user.id);
+  return user;
+}
+
+function validTaskBody(overrides = {}) {
+  return {
+    name: 'API定时任务',
+    enabled: true,
+    schedule: { type: 'interval', intervalMs: 120000 },
+    targets: { type: 'users', ids: [] },
+    request: {
+      method: 'GET',
+      url: `http://127.0.0.1:${apiPort}/ok?city={taskName}`,
+      headers: { Authorization: 'Bearer top-secret-schedule' },
+      bodyTemplate: '',
+    },
+    response: { type: 'json', path: 'data', template: '通知：{{answer}}', fallbackText: '兜底' },
+    timeoutMs: 3000,
+    ...overrides,
+  };
+}
+
+test('鉴权 + 创建校验：401/400（name/schedule/targets/url/userinfo/timeout/response）', async () => {
+  assertError(await request('GET', '/api/admin/scheduled-tasks'), 401, 'UNAUTHORIZED');
+  assertError(await request('POST', '/api/admin/scheduled-tasks', { body: validTaskBody() }), 401, 'UNAUTHORIZED');
+
+  const user = createUser();
+  const invalidBodies = [
+    [validTaskBody({ name: '' }), 'name'],
+    [validTaskBody({ schedule: { type: 'bad' } }), 'schedule.type'],
+    [validTaskBody({ schedule: { type: 'interval', intervalMs: 1000 } }), 'interval'],
+    [validTaskBody({ schedule: { type: 'daily', dailyTime: '25:00' } }), 'dailyTime'],
+    [validTaskBody({ targets: { type: 'users', ids: [] } }), 'targets.ids'],
+    [validTaskBody({ targets: { type: 'users', ids: ['u_missing'] } }), 'targets.ids'],
+    [validTaskBody({ request: { method: 'GET', url: 'ftp://example.com/x' } }), 'url'],
+    [validTaskBody({ request: { method: 'GET', url: 'http://user:pass@example.com/x' } }), 'userinfo'],
+    [validTaskBody({ timeoutMs: 500 }), 'timeoutMs'],
+    [validTaskBody({ response: { type: 'binary' } }), 'response.type'],
+  ];
+  for (const [body, label] of invalidBodies) {
+    const result = await adminWrite('POST', '/api/admin/scheduled-tasks', body);
+    assert.equal(result.status, 400, `${label} 应 400：${result.text}`);
+    assert.equal(result.json.error.code, 'BAD_REQUEST');
+  }
+  assert.ok(user.id);
+});
+
+test('创建/查看：TaskView 结构、nextRunAt 计算、header 只回 names、DB 密文', async () => {
+  const user = createUser({ displayName: '目标用户' });
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '天气推送',
+    targets: { type: 'users', ids: [user.id] },
+  }));
+  assert.equal(created.status, 201, created.text);
+  const task = created.json.task;
+  assert.match(task.id, /^task_/);
+  assert.equal(task.name, '天气推送');
+  assert.equal(task.enabled, true);
+  assert.deepEqual(task.schedule, {
+    type: 'interval',
+    intervalMs: 120000,
+    dailyTime: '08:00',
+    windowStart: '',
+    windowEnd: '',
+    timezone: 'Asia/Shanghai',
+  });
+  assert.equal(task.targets.type, 'users');
+  assert.deepEqual(task.targets.ids, [user.id]);
+  assert.deepEqual(task.targets.names, ['目标用户']);
+  assert.deepEqual(task.request.headerNames, ['Authorization']);
+  assert.ok(!created.text.includes('Bearer'), '响应不得包含 header 值');
+  assert.equal(task.limits.timeoutMs, 3000);
+  assert.ok(task.nextRunAt > Date.now(), '创建后应计算 next_run_at');
+
+  const row = getDb().prepare('SELECT request_headers_enc FROM scheduled_tasks WHERE id = ?').get(task.id);
+  assert.ok(!row.request_headers_enc.includes('Bearer'), 'DB header 必须加密');
+
+  const detail = await adminGet(`/api/admin/scheduled-tasks/${encodeURIComponent(task.id)}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.json.task.id, task.id);
+  assertError(await adminGet('/api/admin/scheduled-tasks/task_missing'), 404, 'NOT_FOUND');
+
+  const list = await adminGet('/api/admin/scheduled-tasks');
+  assert.ok(list.json.items.some((item) => item.id === task.id));
+});
+
+test('创建不传 enabled：默认停用；PATCH 不传 enabled 保持原值', async () => {
+  const user = createUser({ displayName: '默认停用目标用户' });
+  const body = validTaskBody({ name: '默认停用任务', targets: { type: 'users', ids: [user.id] } });
+  delete body.enabled;
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', body);
+  assert.equal(created.status, 201, created.text);
+  const task = created.json.task;
+  assert.equal(task.enabled, false, '创建未传 enabled 应默认 false');
+  assert.equal(
+    getDb().prepare('SELECT enabled FROM scheduled_tasks WHERE id = ?').get(task.id).enabled,
+    0,
+    'DB 中 enabled 应为 0',
+  );
+
+  // PATCH 未传 enabled：保持原值
+  const patched = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${encodeURIComponent(task.id)}`, {
+    name: '默认停用任务改名',
+  });
+  assert.equal(patched.status, 200, patched.text);
+  assert.equal(patched.json.task.enabled, false, 'PATCH 不传 enabled 应保持 false');
+
+  // 显式传 enabled=true 仍然生效（只改创建默认值）
+  const enabledCreated = await adminWrite(
+    'POST',
+    '/api/admin/scheduled-tasks',
+    validTaskBody({ name: '显式启用任务', targets: { type: 'users', ids: [user.id] } }),
+  );
+  assert.equal(enabledCreated.status, 201, enabledCreated.text);
+  assert.equal(enabledCreated.json.task.enabled, true);
+});
+
+test('全部用户目标：允许 ids 为空，返回全部用户标记', async () => {
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '全员通知',
+    targets: { type: 'all' },
+  }));
+  assert.equal(created.status, 201, created.text);
+  assert.deepEqual(created.json.task.targets, { type: 'all', ids: [], names: ['全部用户'] });
+});
+
+test('复制定时任务：新 id、副本默认停用、复制计划/目标/加密 headers、nextRunAt 归零', async () => {
+  const user = createUser({ displayName: '复制目标用户' });
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '待复制任务',
+    targets: { type: 'users', ids: [user.id] },
+  }));
+  assert.equal(created.status, 201, created.text);
+  const source = created.json.task;
+
+  const duplicated = await adminWrite('POST', `/api/admin/scheduled-tasks/${encodeURIComponent(source.id)}/duplicate`);
+  assert.equal(duplicated.status, 201, duplicated.text);
+  const copy = duplicated.json.task;
+  assert.notEqual(copy.id, source.id);
+  assert.match(copy.id, /^task_/);
+  assert.equal(copy.name, '待复制任务（副本）');
+  assert.equal(copy.enabled, false, '副本默认停用');
+  assert.equal(copy.nextRunAt, 0, '停用副本不应有下次运行时间');
+  assert.deepEqual(copy.schedule, source.schedule);
+  assert.deepEqual(copy.targets.ids, source.targets.ids);
+  assert.deepEqual(copy.request.headerNames, source.request.headerNames);
+  assert.equal(copy.response.path, source.response.path);
+  assert.ok(!duplicated.text.includes('Bearer'), '复制响应不得包含 header 值');
+
+  const rows = getDb()
+    .prepare('SELECT id, request_headers_enc, enabled, next_run_at FROM scheduled_tasks WHERE id IN (?, ?)')
+    .all(source.id, copy.id);
+  const sourceRow = rows.find((row) => row.id === source.id);
+  const copyRow = rows.find((row) => row.id === copy.id);
+  assert.equal(sourceRow.enabled, 1);
+  assert.equal(copyRow.enabled, 0);
+  assert.equal(copyRow.next_run_at, 0);
+  assert.equal(copyRow.request_headers_enc, sourceRow.request_headers_enc, '加密 headers 应原样复制');
+  assertError(await adminWrite('POST', '/api/admin/scheduled-tasks/task_missing/duplicate'), 404, 'NOT_FOUND');
+});
+
+test('PATCH：局部更新、计划变更重算 next_run_at、headers 清空、enable/disable、校验', async () => {
+  const user = createUser();
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '待更新任务',
+    targets: { type: 'users', ids: [user.id] },
+  }));
+  const task = created.json.task;
+
+  const patched = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, {
+    name: '更新任务',
+    schedule: { type: 'interval', intervalMs: 7200000 },
+  });
+  assert.equal(patched.status, 200, patched.text);
+  assert.equal(patched.json.task.name, '更新任务');
+  assert.equal(patched.json.task.schedule.intervalMs, 7200000);
+  assert.ok(patched.json.task.nextRunAt > Date.now() + 3600000, '计划变更后 next_run_at 应重算');
+
+  const cleared = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, {
+    request: { method: 'GET', url: `http://127.0.0.1:${apiPort}/ok?city={taskName}`, headers: {} },
+  });
+  assert.equal(cleared.status, 200);
+  assert.deepEqual(cleared.json.task.request.headerNames, []);
+
+  const disabled = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, { enabled: false });
+  assert.equal(disabled.status, 200);
+  assert.equal(disabled.json.task.enabled, false);
+  assert.equal(disabled.json.task.nextRunAt, 0, '禁用后 next_run_at 归零');
+
+  const enabledAgain = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, { enabled: true });
+  assert.equal(enabledAgain.json.task.enabled, true);
+  assert.ok(enabledAgain.json.task.nextRunAt > Date.now(), '重新启用应重算 next_run_at');
+
+  assertError(
+    await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, { enabled: 'yes' }),
+    400,
+    'BAD_REQUEST',
+  );
+  assertError(
+    await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, { schedule: { type: 'daily', dailyTime: '9:5' } }),
+    400,
+    'BAD_REQUEST',
+  );
+  assertError(await adminWrite('PATCH', '/api/admin/scheduled-tasks/task_missing', { name: 'x' }), 404, 'NOT_FOUND');
+
+  assert.equal((await adminWrite('DELETE', `/api/admin/scheduled-tasks/${task.id}`)).status, 204);
+  assertError(await adminWrite('DELETE', `/api/admin/scheduled-tasks/${task.id}`), 404, 'NOT_FOUND');
+});
+
+test('POST /:id/test dry-run：真实调用不发送不写日志；返回请求/响应/回复/收件人数', async () => {
+  const user = createUser();
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '测试运行任务',
+    targets: { type: 'users', ids: [user.id] },
+  }));
+  const task = created.json.task;
+  const outboxBefore = Number(getDb().prepare('SELECT COUNT(*) AS c FROM outbox').get().c);
+  const logsBefore = Number(getDb().prepare('SELECT COUNT(*) AS c FROM scheduled_task_logs').get().c);
+
+  const run = await adminWrite('POST', `/api/admin/scheduled-tasks/${task.id}/test`, {});
+  assert.equal(run.status, 200, run.text);
+  assert.equal(run.json.status, 'success');
+  assert.equal(run.json.httpStatus, 200);
+  assert.equal(run.json.replyText, '通知：answer:测试运行任务');
+  assert.equal(run.json.recipientsCount, 1);
+  assert.deepEqual(run.json.request.headerNames, ['Authorization']);
+  assert.ok(run.json.request.url.includes('city=%E6%B5%8B%E8%AF%95%E8%BF%90%E8%A1%8C%E4%BB%BB%E5%8A%A1'));
+  assert.equal(typeof run.json.responseHeaders, 'object');
+
+  assert.equal(Number(getDb().prepare('SELECT COUNT(*) AS c FROM outbox').get().c), outboxBefore, 'dry-run 不发消息');
+  assert.equal(Number(getDb().prepare('SELECT COUNT(*) AS c FROM scheduled_task_logs').get().c), logsBefore, 'dry-run 不写日志');
+  assertError(await adminWrite('POST', '/api/admin/scheduled-tasks/task_missing/test', {}), 404, 'NOT_FOUND');
+});
+
+test('POST /:id/run：真实发送+写日志，保留 next_run_at；disabled → 400', async () => {
+  const user = createUser();
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '手动执行任务',
+    targets: { type: 'users', ids: [user.id] },
+  }));
+  const task = created.json.task;
+  const nextBefore = task.nextRunAt;
+
+  const run = await adminWrite('POST', `/api/admin/scheduled-tasks/${task.id}/run`, {});
+  assert.equal(run.status, 200, run.text);
+  assert.equal(run.json.status, 'success');
+  assert.equal(run.json.httpStatus, 200);
+  assert.equal(run.json.recipientsCount, 1);
+  assert.equal(run.json.error, '');
+
+  const outbox = getDb().prepare("SELECT * FROM outbox WHERE user_id = ? AND source = 'schedule'").all(user.id);
+  assert.equal(outbox.length, 1);
+  assert.match(outbox[0].text, /answer:手动执行任务/);
+  const logs = getDb().prepare('SELECT * FROM scheduled_task_logs WHERE task_id = ?').all(task.id);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].status, 'success');
+
+  const detail = await adminGet(`/api/admin/scheduled-tasks/${encodeURIComponent(task.id)}`);
+  assert.equal(detail.json.task.lastStatus, 'success');
+  assert.equal(detail.json.task.nextRunAt, nextBefore, '手动执行不应改变 next_run_at');
+
+  await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, { enabled: false });
+  assertError(await adminWrite('POST', `/api/admin/scheduled-tasks/${task.id}/run`, {}), 400, 'BAD_REQUEST');
+  assertError(await adminWrite('POST', '/api/admin/scheduled-tasks/task_missing/run', {}), 404, 'NOT_FOUND');
+});
+
+test('GET /api/admin/scheduled-task-logs：过滤/分页/字段/非法 status 400', async () => {
+  const task = store.createScheduledTask({
+    name: '日志任务',
+    enabled: true,
+    scheduleType: 'interval',
+    intervalMs: 60000,
+    targetType: 'users',
+    targetIds: [],
+    requestMethod: 'GET',
+    requestUrl: `http://127.0.0.1:${apiPort}/ok`,
+    requestHeadersEnc: null,
+    requestBodyTemplate: '',
+    responseType: 'json',
+    responsePath: '',
+    replyTemplate: 'hi',
+    fallbackText: '',
+    timeoutMs: 1000,
+    nextRunAt: Date.now() + 60000,
+  });
+  store.insertScheduledTaskLog({ taskId: task.id, status: 'success', httpStatus: 200, latencyMs: 5, recipientsCount: 3 });
+  store.insertScheduledTaskLog({ taskId: task.id, status: 'failed', error: 'HTTP 500', recipientsCount: 0 });
+
+  const all = await adminGet(`/api/admin/scheduled-task-logs?taskId=${encodeURIComponent(task.id)}`);
+  assert.equal(all.status, 200);
+  assert.equal(all.json.total, 2);
+  const success = all.json.items.find((item) => item.status === 'success');
+  assert.equal(success.taskName, '日志任务');
+  assert.equal(success.httpStatus, 200);
+  assert.equal(success.latencyMs, 5);
+  assert.equal(success.recipientsCount, 3);
+
+  const failed = await adminGet(`/api/admin/scheduled-task-logs?taskId=${encodeURIComponent(task.id)}&status=failed`);
+  assert.equal(failed.json.total, 1);
+  assert.equal(failed.json.items[0].error, 'HTTP 500');
+  const page = await adminGet(`/api/admin/scheduled-task-logs?taskId=${encodeURIComponent(task.id)}&limit=1`);
+  assert.equal(page.json.items.length, 1);
+  assert.equal(page.json.total, 2);
+
+  assertError(await adminGet('/api/admin/scheduled-task-logs?status=bogus'), 400, 'BAD_REQUEST');
+});
+
+// ---------------------------------------------------------------------------
+// 按用户模式（perUserMode）API / 校验
+// ---------------------------------------------------------------------------
+
+test('按用户模式：创建/读取/复制/更新 perUserMode；汇总模式凭据占位符 400', async () => {
+  const user = createUser();
+  const credentialUrl = `http://127.0.0.1:${apiPort}/per-user?token={credential:gps.token}`;
+
+  // 1) 汇总模式不允许请求模板出现凭据占位符（URL/Header 分别校验）
+  const summaryUrl = await adminWrite(
+    'POST',
+    '/api/admin/scheduled-tasks',
+    validTaskBody({
+      name: '汇总占位符URL',
+      targets: { type: 'users', ids: [user.id] },
+      request: { method: 'GET', url: credentialUrl, headers: {}, bodyTemplate: '' },
+    }),
+  );
+  assertError(summaryUrl, 400, 'BAD_REQUEST');
+  assert.match(summaryUrl.json.error.message, /按用户模式/);
+
+  const summaryHeader = await adminWrite(
+    'POST',
+    '/api/admin/scheduled-tasks',
+    validTaskBody({
+      name: '汇总占位符Header',
+      targets: { type: 'users', ids: [user.id] },
+      request: {
+        method: 'GET',
+        url: `http://127.0.0.1:${apiPort}/ok`,
+        headers: { Authorization: 'Bearer {credential:gps.token}' },
+        bodyTemplate: '',
+      },
+    }),
+  );
+  assertError(summaryHeader, 400, 'BAD_REQUEST');
+
+  // 2) 按用户模式允许凭据占位符，perUserMode 在 TaskView 中往返
+  const created = await adminWrite(
+    'POST',
+    '/api/admin/scheduled-tasks',
+    validTaskBody({
+      name: '按用户模式任务',
+      perUserMode: true,
+      targets: { type: 'users', ids: [user.id] },
+      request: {
+        method: 'GET',
+        url: credentialUrl,
+        headers: { Authorization: 'Bearer {credential:gps.token}' },
+        bodyTemplate: '',
+      },
+    }),
+  );
+  assert.equal(created.status, 201, created.text);
+  assert.equal(created.json.task.perUserMode, true);
+  const taskId = created.json.task.id;
+
+  const detail = await adminGet(`/api/admin/scheduled-tasks/${encodeURIComponent(taskId)}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.json.task.perUserMode, true);
+  const list = await adminGet('/api/admin/scheduled-tasks');
+  assert.equal(list.json.items.find((item) => item.id === taskId).perUserMode, true);
+
+  // 3) 复制保留按用户模式
+  const duplicated = await adminWrite('POST', `/api/admin/scheduled-tasks/${encodeURIComponent(taskId)}/duplicate`);
+  assert.equal(duplicated.status, 201, duplicated.text);
+  assert.equal(duplicated.json.task.perUserMode, true);
+
+  // 4) 已有凭据模板时关闭按用户模式 → 400（跨字段校验）
+  const toSummary = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${encodeURIComponent(taskId)}`, {
+    perUserMode: false,
+  });
+  assertError(toSummary, 400, 'BAD_REQUEST');
+  assert.match(toSummary.json.error.message, /按用户模式/);
+
+  // 5) 非 boolean → 400
+  const invalidFlag = await adminWrite(
+    'POST',
+    '/api/admin/scheduled-tasks',
+    validTaskBody({ name: '非法标记', perUserMode: 'yes' }),
+  );
+  assertError(invalidFlag, 400, 'BAD_REQUEST');
+});
+
+test('运行日志：status=partial 过滤合法', async () => {
+  const user = createUser();
+  const task = store.createScheduledTask({
+    name: '部分成功日志任务',
+    enabled: true,
+    scheduleType: 'interval',
+    intervalMs: 120000,
+    targetType: 'users',
+    targetIds: [user.id],
+    requestMethod: 'GET',
+    requestUrl: `http://127.0.0.1:${apiPort}/ok`,
+    requestHeadersEnc: null,
+    requestBodyTemplate: '',
+    responseType: 'json',
+    responsePath: '',
+    replyTemplate: 'hi',
+    fallbackText: '',
+    timeoutMs: 1000,
+    nextRunAt: Date.now() + 60000,
+  });
+  store.insertScheduledTaskLog({ taskId: task.id, status: 'partial', httpStatus: 200, recipientsCount: 1 });
+
+  const filtered = await adminGet(
+    `/api/admin/scheduled-task-logs?taskId=${encodeURIComponent(task.id)}&status=partial`,
+  );
+  assert.equal(filtered.status, 200, filtered.text);
+  assert.equal(filtered.json.total, 1);
+  assert.equal(filtered.json.items[0].status, 'partial');
+});

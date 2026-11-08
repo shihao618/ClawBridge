@@ -1,0 +1,973 @@
+# ClawBridge HTTP API 契约
+
+所有接口均返回 JSON（除静态页面与二维码 SVG）。错误统一格式：
+
+```json
+{ "error": { "code": "BAD_REQUEST", "message": "人类可读的错误信息" } }
+```
+
+错误码：`BAD_REQUEST`(400)、`UNAUTHORIZED`(401)、`FORBIDDEN`(403)、`NOT_FOUND`(404)、
+`CONFLICT`(409)、`RATE_LIMITED`(429)、`INTERNAL`(500)、`UNAVAILABLE`(503)。
+
+时间字段统一为 Unix 毫秒整数。所有写接口接受 `Content-Type: application/json`。
+
+## 0. 页面路由（静态）
+
+| 路径 | 内容 |
+| --- | --- |
+| `GET /` | 首页（公开绑定页，品牌介绍 + 开始绑定 + 管理入口） |
+| `GET /bind` | 302 跳转到 `/`（旧绑定地址） |
+| `GET /admin` | 管理后台（未登录时展示登录表单，SPA 由前端跳转） |
+| `GET /docs` | 内嵌的 API 使用文档页 |
+| `GET /assets/*` | 前端静态资源 |
+| `GET /health` | 健康检查，返回 `{"status":"ok","version":"...","uptimeMs":123}`（也兼容 `/api/health`） |
+
+## 1. 公开接口：扫码绑定
+
+### 1.1 创建绑定会话
+
+```
+POST /api/bind/sessions
+Body: { "displayName": "张三" }        // 可选，最长 40 字符
+Resp 201:
+{
+  "sessionId": "01J...",               // 不透明 ID
+  "token": "…",                        // 本会话的 secret，只有创建者拿到
+  "status": "waiting",
+  "displayName": "张三",
+  "qr": {
+    "svg": "data:image/svg+xml;base64,...",   // 服务端渲染好的二维码 SVG data URI，直接 <img src>
+    "content": "https://...",                  // 二维码原始内容（备用，可自行渲染）
+    "expiresAt": 1760000000000
+  },
+  "createdAt": 1760000000000
+}
+```
+
+- 该接口按 IP 限流（默认 20 次/小时，可由环境变量调整）；最多允许 50 个并发会话。
+- 会话有效期 10 分钟；过期由服务端清理。
+- 返回 503 且 `code=UNAVAILABLE` 表示连不上微信 API（如出网失败）。
+
+### 1.2 查询绑定状态（前端轮询，1s 间隔）
+
+```
+GET /api/bind/sessions/{sessionId}?token=<secret>
+Resp 200:
+{
+  "sessionId": "…",
+  "status": "waiting | scanned | need_verifycode | refreshing | verify_blocked | confirmed | already_bound | expired | timeout | error | cancelled",
+  "message": "人类可读状态说明",
+  "qr": { "svg": "...", "content": "...", "expiresAt": 1760000000000 },  // 刷新后更新
+  "refreshCount": 0,
+  "user": {                              // 仅 confirmed 时
+    "id": "u_...",
+    "displayName": "张三",
+    "wechatUserId": "…",
+    "boundAt": 1760000000000
+  },
+  "error": "…"                           // status=error 时的错误信息
+  ,"warning": "…"                        // 可选：绑定成功但入站监控启动失败时的提示（见下）
+}
+```
+
+状态语义：
+
+| status | 说明 |
+| --- | --- |
+| `waiting` | 等待扫码 |
+| `scanned` | 已扫码，等待手机确认 |
+| `need_verifycode` | 需要输入手机微信上显示的配对数字 |
+| `refreshing` | 二维码过期，正在自动刷新（最多 3 次） |
+| `verify_blocked` | 配对数字错误次数过多，正在刷新二维码 |
+| `confirmed` | 绑定成功（`user` 字段返回）。此状态之后会话仍可查询，约保留 10–20 分钟（`BINDING_TTL_MS` 到期后由清理任务回收） |
+| `already_bound` | 该微信已绑定过本服务（binded_redirect），`user` 可能返回已有用户；否则提示用户联系管理员。若绑定后收不到消息，提示在后台「重连」（`POST /api/admin/users/{id}/reconnect`）或解绑后重新扫码 |
+| `expired` / `timeout` / `cancelled` | 会话结束，需重新创建 |
+| `error` | 协议/网络错误导致失败，`error` 字段给出原因；可重试 |
+
+> **监控启动告警**：`confirmed` 时若入站监控 `monitor.start()` 失败（如达到 `MONITOR_MAX_ACCOUNTS`
+> 上限或用户状态/冷却校验失败），绑定本身仍成功，但响应可能带 `warning` 字段，提示
+> “绑定成功但入站监控未启动，请在后台对该用户点「重连」或解绑后重扫”。前端应展示该告警。
+
+### 1.3 提交配对数字
+
+```
+POST /api/bind/sessions/{sessionId}/verify-code
+Body: { "token": "…", "code": "1234" }
+Resp 202: { "ok": true }
+```
+
+会话状态不是 `need_verifycode` 时返回 409。`code` 只会用于下一次轮询。
+
+### 1.4 取消绑定
+
+```
+DELETE /api/bind/sessions/{sessionId}
+Body: { "token": "…" }
+Resp 204
+```
+
+## 2. 管理后台接口（Cookie 会话）
+
+登录后使用 HttpOnly Cookie `cb_session`（SameSite=Lax，12 小时有效）。管理后台的写接口要求
+`X-Requested-With: ClawBridge-Admin` 请求头（防 CSRF；缺失返回 403 FORBIDDEN）。
+**例外：`POST /api/admin/login` 不要求该头**（登录时尚无会话，也无法携带该头）；公开的
+绑定接口（`/api/bind/sessions` 系列）使用绑定会话 token，`/api/v1/messages` 等对外接口使用
+API Key，均不使用该头。
+
+### 2.1 登录 / 登出 / 当前身份
+
+```
+POST /api/admin/login    Body: { "password": "..." }
+  → 200 {"ok": true, "expiresAt": 1760000000000} + Set-Cookie: cb_session=...
+  → 401 {"error":{"code":"UNAUTHORIZED","message":"密码错误"}}
+
+POST /api/admin/logout   → 204 + 清除 Cookie
+GET  /api/admin/me       → 200 {"authenticated": true, "expiresAt": ...} 或 {"authenticated": false}
+```
+
+### 2.2 概览
+
+```
+GET /api/admin/overview
+→ 200 {
+  "stats": {
+    "totalUsers": 3,
+    "activeUsers": 3,             // status='active'
+    "pausedUsers": 0,             // token 失效冷却中
+    "usersWithContextToken": 2,   // 有 context_token 的用户数（可主动推送）
+    "messagesToday": 25,          // 今日入站+出站消息数（“今日”按 SCHEDULER_TIMEZONE，默认 Asia/Shanghai 计算零点）
+    "queued": 0, "sending": 0, "sent": 12, "failed": 1,
+    "inboundLast24h": 8
+  },
+  "server": {
+    "version": "1.0.0",
+    "uptimeMs": 123456,
+    "now": 1760000000000,
+    "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
+    "rateLimit": { "max": 7, "windowMs": 300000 },
+    "monitorsRunning": 3,
+    "bindingSessionsActive": 0
+  },
+  "metrics": {                        // 可观测性摘要（，新增字段；旧字段不变）
+    "uptimeMs": 123456,
+    "memory": { "rss": 73400320, "heapUsed": 31457280 },
+    "gauges": {
+      "monitorRunningAccounts": 3,
+      "mediaInboundActive": 0,
+      "mediaInboundQueued": 0,
+      "outboxQueued": 0,
+      "outboxSending": 0
+    },
+    "counters": {
+      "dispatcherSent": 12, "dispatcherFailed": 1, "dispatcherRetried": 2,
+      "dispatcherRateLimited": 0, "mediaDownloaded": 4, "mediaDownloadFailed": 0
+    },
+    "appRules24h": { "matched": 0, "success": 8, "failed": 1, "skipped": 0, "total": 9 },
+    "scheduledTasks24h": { "success": 2, "failed": 0, "skipped": 0, "total": 2 }
+  }
+}
+```
+
+### 2.3 用户列表
+
+```
+GET /api/admin/users?status=active|unbound|paused|all&q=<搜索>&limit=50&offset=0
+→ 200 {
+  "total": 3,
+  "items": [{
+    "id": "u_xxx",
+    "displayName": "张三",
+    "wechatUserId": "…",
+    "ilinkBotId": "…",
+    "status": "active | unbound | paused",
+    "boundAt": 1760000000000,
+    "updatedAt": 1760000000000,
+    "lastInboundAt": 1760000000000,
+    "lastOutboundAt": 1760000000000,
+    "hasContextToken": true,
+    "queuedCount": 0,
+    "sentCount": 12,
+    "failedCount": 0,
+    "pauseUntil": 0,              // 冷却结束时间，0 表示无
+    "note": ""                    // 预留
+  }]
+}
+```
+
+`status=unbound` 用户为历史记录（凭证已清除）；默认只返回 `active`（`status` 缺省 = active）。
+
+### 2.4 用户详情 / 发消息 / 解绑 / 重连
+
+```
+GET  /api/admin/users/{id}
+  → { "user": {同列表字段}, "recentInbound": [Message], "recentOutbound": [OutboxItem] }
+
+POST /api/admin/users/{id}/messages
+Body: { "text": "你好" }
+  → 202 { "queued": [{ "outboxId": "ob_...", "userId": "u_...", "status": "queued" }] }
+  → 404 用户不存在；409 用户未绑定或冷却中；400 文本为空/超长（默认 4000 字符）
+
+POST /api/admin/users/{id}/unbind
+  → 200 { "ok": true, "message": "已解绑（微信端授权需在手机微信中管理）" }
+  语义：停止轮询 → notifyStop → 清除凭证与 context_token → status=unbound
+
+POST /api/admin/users/{id}/reconnect
+  → 200 { "ok": true, "monitorsRunning": true }    // 重启该账号的入站轮询（冷却中返回 409）
+
+DELETE /api/admin/users/{id}
+  → 200 { "ok": true, "deleted": true, "userId": "u_...",
+          "attachmentsDeleted": 2, "updatedTasks": 1, "updatedRules": 0,
+          "cleared": { "outbox": 3, "inbound_messages": 5, "attachments": 2, ... } }
+  语义：先停止该用户入站监控 → 事务内删除 users / user_groups / outbox /
+  inbound_messages / attachments / app_rule_logs / events → 从定时任务目标与接口应用
+  「指定用户」范围移除该用户 → 删除其附件文件。**不可恢复**；只想停止收发请用 unbind。
+```
+
+### 2.5 广播
+
+```
+POST /api/admin/broadcast
+Body: { "text": "系统维护通知" }
+  → 202 { "queued": [...], "count": 3 }
+```
+
+### 2.6 消息记录
+
+```
+GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0&userId=
+→ 200 {
+  "total": 12,
+  "items": [{
+    "id": "…",
+    "direction": "inbound | outbound",
+    "userId": "u_…",
+    "displayName": "张三",
+    "text": "…",
+    "status": "sent | failed | queued | sending | received",   // inbound 恒为 received
+    "error": "",
+    "attempts": 1,                 // 实际发送尝试次数：首次投递成功=1，每次重试递增
+    "source": "admin",             // 出站来源（admin/api/broadcast/group/webhook/keepalive/rule/schedule）；入站为空串
+    "serverMessageId": "…",
+    "createdAt": 1760000000000
+  }]
+}
+```
+
+> 出站消息的 `attempts` 表示已尝试发送的次数（首次成功即为 1）；`status=queued` 时可能为 0。
+> `serverMessageId` 为微信返回的 uint64 消息 ID，按字符串无损返回。
+
+### 2.7 运行配置（脱敏）
+
+```
+GET /api/admin/config
+→ 200 {
+  "version": "1.0.0",
+  "rateLimit": { "max": 7, "windowMs": 300000 },
+  "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
+  "pushApiEnabled": true,
+  "apiTokenPreview": "claw…c9f2",      // 仅前 4 + 后 4；pushApiEnabled=false 时为“已禁用”
+  "dataDir": "/app/data",
+  "media": { "maxBytes":26214400, "inboundMaxBytes":104857600,
+             "allowedImage":["image/jpeg","image/png"], "allowedVideo":["video/mp4"],
+             "dir":"/app/data/media" },
+  "keepalive": { "enabled": true, "windowMs": 86400000, "leadMs": 43200000,
+                 "repeatMs": 21600000, "tickMs": 300000, "maxPerTick": 100, "text": "…" }
+}
+```
+
+> 运行期可改参数的完整列表与生效方式（含 `restartRequired`）以
+> `GET /api/admin/settings` 与 [`docs/SETTINGS.md`](SETTINGS.md) 为准；本接口只返回脱敏摘要。
+
+### 2.8 可观测性指标（只读）
+
+```
+GET /api/admin/metrics          # 需要管理后台 Cookie 会话（401 未登录）
+→ 200 {
+  "serverTime": 1760000000000,
+  "version": "1.0.0",
+  "pid": 12345,
+  "node": "v24.20.0",
+  "uptimeMs": 123456,             // 进程运行时长
+  "memory": { "rss": 73400320, "heapTotal": 41943040, "heapUsed": 31457280,
+              "external": 1048576, "arrayBuffers": 524288 },
+  "heap": { "totalBytes": 41943040, "usedBytes": 31457280, "usedPercent": 75 },
+  "counters": {                   // 进程内单调递增计数（重启清零）
+    "monitor.poll.total": 120, "monitor.poll.errors.total": 1,
+    "monitor.stale_token.total": 0, "monitor.inbound_save_retry.total": 0,
+    "dispatcher.sent.total": 12, "dispatcher.failed.total": 1,
+    "dispatcher.retry.total": 2, "dispatcher.rate_limited.total": 0,
+    "dispatcher.stale_token.total": 0,
+    "media.inbound.downloaded.total": 4, "media.inbound.failed.total": 0,
+    "media.inbound.gate_rejected.total": 0
+  },
+  "gauges": {                     // 瞬时值：静态 + 动态 provider 求值
+    "monitor.running_accounts": 3, "monitor.last_poll_at": 1760000000000,
+    "media.inbound.active": 0, "media.inbound.queued": 0,
+    "media.inbound.accepted": 4, "media.inbound.completed": 4,
+    "media.inbound.rejected": 0, "media.inbound.timedOut": 0,
+    "media.inbound.maxConcurrent": 4, "media.inbound.maxQueue": 64
+  },
+  "histograms": {                 // 延迟分布（桶为累计计数，最后一项=count）
+    "dispatcher.send_latency_ms": { "count": 12, "sum": 840.5, "min": 12.3,
+      "max": 320.1, "avg": 70.04,
+      "buckets": [ { "le": 5, "count": 0 }, { "le": 10, "count": 0 }, { "le": 25, "count": 3 }, "…" ] }
+  },
+  "aggregates": {                 // 从 SQLite 现有表聚合（不新增埋点）
+    "outbox": { "queued": 0, "sending": 0, "sent": 12, "failed": 1, "total": 13 },
+    "appRules24h": { "matched": 0, "success": 8, "failed": 1, "skipped": 0, "total": 9 },
+    "scheduledTasks24h": { "success": 2, "failed": 0, "skipped": 0, "total": 2 }
+  }
+}
+```
+
+- 仅管理端 Cookie 会话可读（`auth.requireAdmin`）；只读接口，不写库、不回传用户 id/token/消息正文。
+- 指标为**进程内内存态**：重启清零、不做持久化与多副本聚合（单进程部署）。
+- `counters` 为累积值，`gauges` 为快照时求值（如 monitor 运行账号数、媒体闸门排队数）；
+  `histograms` 的桶为累计计数（`le` 上界包含），最后一个桶应等于 `count`。
+- `aggregates` 依赖数据库：DB 不可用的瞬间对应分组可能为 `null`，接口本身仍返回 200。
+- `GET /api/admin/overview` 也会附带紧凑 `metrics` 摘要（见 §2.2），旧字段保持向后兼容。
+
+### 2.9 用户级凭据（只写不读）
+
+为每个绑定用户保存第三方密钥（一条凭据可含多个字段，如 `gps.token`），供接口应用规则与定时通知
+通过 `{credential:名称.字段}` 注入请求。**字段值 AES-256-GCM 加密落库，任何响应都不回显明文**，
+只返回字段名与掩码提示（`hints`）；用户删除时级联删除。
+
+```
+GET    /api/admin/users/{id}/secrets
+  → 200 { "items": [
+      { "name": "gps", "label": "定位服务", "fieldNames": ["token"],
+        "hints": { "token": "••••ab12" }, "createdAt": 1760000000000,
+        "updatedAt": 1760000000000, "lastUsedAt": 0 }
+    ] }
+  // 用户不存在 404；401 未登录
+
+PUT    /api/admin/users/{id}/secrets/{name}      # 新增或覆盖（upsert）
+  Body: { "label": "可选备注", "fields": { "token": "明文密钥值" } }
+  → 200 { "item": { …同上（不含明文）… } }
+  // 校验：name 1..32 位 [A-Za-z0-9_-]；fields 必填对象，字段名 1..32 位 [A-Za-z0-9_.-]，
+  // 字段数 1..20，单值长度 1..4096 字符，总大小 ≤32KB；label ≤200 字符；非法 400
+
+DELETE /api/admin/users/{id}/secrets/{name}
+  → 204（凭据不存在 404）
+```
+
+- 凭据值只由内部数据层解密供规则/定时注入使用；日志、运行日志预览、错误与事件中的凭据值统一替换为 `***`。
+- 汇总模式（非按用户）的定时任务请求模板不允许包含 `{credential:...}`（无法确定按谁解析），保存时 400；
+  规则按**触发用户**、定时按用户模式按**目标用户**解析。
+
+## 3. 对外推送 API（API Key）
+
+鉴权：`Authorization: Bearer <API_TOKEN>` 或 `X-Api-Key: <API_TOKEN>`。
+所有响应 401 时 `code=UNAUTHORIZED`。文本默认上限 4000 字符。接口按 API Key 限流
+（默认 60 次/分钟）。
+
+### 3.0 Webhook 兼容入口
+
+```
+POST /api/v1/webhook
+Auth: Authorization: Bearer <API_TOKEN> / X-Api-Key / ?token=<API_TOKEN>
+Query 目标（三选一）:
+  ?to=u_abc,u_def      # 用户 id，逗号分隔
+  ?groupId=grp_xxx     # 分组 id
+  ?broadcast=1         # 广播；可选 onlyBound=false
+Body: JSON 或纯文本/表单；文本依次取 text/content/message/msg，否则回退整个 JSON
+Resp 202: { "accepted": 1, "queued": [...], "target": "users|group|broadcast" }
+```
+
+- 目标也可放在 JSON body 的 `to` / `userIds` / `groupId` / `broadcast`；
+- 支持 `application/json`、`text/plain`、`application/x-www-form-urlencoded`；
+- 用于不能自定义请求头的 Webhook 服务时，可用 query `?token=`；注意 URL 可能被日志/代理记录，优先使用 Header；
+- 入队来源标记为 `source=webhook`，同样受每账号微信发送限流。
+
+### 3.1 给指定用户发消息
+
+```
+POST /api/v1/messages
+Body: {
+  "to": ["u_abc", "u_def"],       // 用户 id 数组（1..100）
+  "text": "您的订单已发货"
+}
+Resp 202: {
+  "accepted": 2,
+  "queued": [ { "outboxId": "ob_1", "userId": "u_abc", "status": "queued" },
+              { "outboxId": "ob_2", "userId": "u_def", "status": "queued" } ]
+}
+```
+
+- 部分目标不可发送时仍返回 202，并在响应中额外列出 `unknownUserIds`（不存在/未绑定）与
+  `pausedUserIds`（`-14` 冷却中，暂不能接收新消息）；
+- 全部目标都不可发送：冷却中 → `409 CONFLICT`；其余无效 → `404 NOT_FOUND`
+  （`error.details.unknownUserIds` / `error.details.pausedUserIds`）；
+- 冷却判定与后台发送一致（`pause_until > now`），dispatcher 不会把冷却账号的消息继续投递。
+```
+
+### 3.2 广播
+
+```
+POST /api/v1/broadcast
+Body: { "text": "系统维护通知", "onlyBound": true }
+Resp 202: { "accepted": 3, "queued": [...] }
+```
+
+`onlyBound` 是**兼容字段**，实际语义 = “是否包含 `-14` 冷却中的账号”（unbound 账号始终排除）：
+默认 `true`（只发给未冷却用户）；`onlyBound:false` 时冷却中账号也会入队（由 dispatcher 按现有逻辑失败）。
+Webhook 的 `?broadcast=1&onlyBound=false` 同义。
+
+### 3.3 查询投递状态
+
+```
+GET /api/v1/messages/{outboxId}
+→ 200 { "id": "ob_1", "userId": "u_abc", "status": "queued|sending|sent|failed",
+        "attempts": 1, "error": "", "serverMessageId": "…",
+        "createdAt": 1760000000000, "sentAt": 1760000001000 }
+```
+
+### 3.4 用户列表（供外部系统发现收件人）
+
+```
+GET /api/v1/users?status=active&limit=100
+→ 200 { "items": [ { "id": "u_abc", "displayName": "张三", "status": "active",
+                     "boundAt": 1760000000000, "hasContextToken": true } ] }
+```
+
+### 3.5 curl 示例
+
+```bash
+# 单发
+curl -X POST http://localhost:10380/api/v1/messages \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"to":["u_abc"],"text":"你好，来自 ClawBridge"}'
+
+# 广播
+curl -X POST http://localhost:10380/api/v1/broadcast \
+  -H "X-Api-Key: $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"text":"系统维护通知"}'
+```
+
+## 4. 内部行为约定（供后端实现 / 测试）
+
+- 绑定会话在服务端维护一个 worker：创建后立即开始长轮询 `get_qrcode_status`，状态写回会话。
+  worker 出错自动重试（最多 5 次连续网络错误），二维码过期自动刷新（≤3 次），整体 10 分钟超时。
+  浏览器只轮询本地 `/api/bind/sessions/{id}`，不会直接访问微信 API。
+- 绑定成功后：创建/更新用户（按 `wechat_user_id` upsert，等价官方 clearStaleAccountsForUserId），
+  保存加密的 bot_token/base_url，启动该用户的入站监控（notifystart + getupdates）。
+- 发送走 outbox 队列：`POST` 只负责入队（202），由 per-account 限流 worker 异步投递；
+  `-2` 限流按退避重试，`-14` 标记账号暂停 1 小时并失败剩余消息。
+- 所有 bot_token / context_token 必须以 AES-256-GCM 加密后落库，接口与日志不得返回明文。
+
+## 5. 多媒体接口（图片 / 视频 / 文件）
+
+完整协议、存储与实现契约见 [`docs/MEDIA.md`](MEDIA.md)。上传采用「原始二进制 + 请求头」方式
+（非 multipart，零新增依赖；前端可直接 `fetch(url,{method:'POST',body:file,headers:{...}})`）。
+
+### 5.1 上传媒体文件（管理后台）
+
+```
+POST /api/admin/media
+Header: Cookie: cb_session=...、X-Requested-With: ClawBridge-Admin
+Header: Content-Type: <文件 MIME>（如 image/jpeg）
+Header: X-File-Name: <encodeURIComponent(原始文件名)>
+Body: 文件原始二进制（上限 MEDIA_MAX_BYTES，默认 25MB）
+Resp 201:
+{ "media": { "id":"att_…", "kind":"image|video|file", "mime":"image/jpeg",
+             "fileName":"a.jpg", "size":12345, "url":"/api/admin/media/att_…" },
+  "limits": { "maxBytes":26214400, "inboundMaxBytes":104857600,
+              "allowedImage":["image/jpeg","image/png"], "allowedVideo":["video/mp4"] } }
+错误：400（缺少 X-File-Name 请求头、或请求体为空）、413（超过上限）、401（未登录）。
+```
+
+> **MIME 行为（当前实现，v1.0.0 起一致）**：服务端**不校验 MIME 白名单、也不会因 MIME 非法返回 400**。
+> `Content-Type` 取请求头（缺失或 `application/octet-stream` 时按文件名扩展名/魔数嗅探），
+> 然后按 MIME/扩展名归入 `image` / `video`，**其余一律按 `file` 入库并发送**。
+> `X-File-Name` 只做安全清洗（去目录、控制字符、限长；全空时回退 `file.bin`），
+> 仅当请求头缺失/为空或请求体为空时才返回 400。
+
+### 5.2 发送带媒体的消息
+
+`POST /api/admin/users/{id}/messages` / `POST /api/v1/messages` 请求体扩展：
+
+```json
+{ "text": "看图（可选 caption）", "mediaId": "att_xxx" }
+```
+
+- `text` 与 `mediaId` 至少一个；有 `mediaId` 时先发 caption 文本、再发媒体（两次 sendmessage）。
+- 入队响应 queued 项增加 media 摘要：
+
+```json
+{"queued":[{"outboxId":"ob_…","userId":"u_…","status":"queued",
+  "media":{"id":"att_…","kind":"image","fileName":"a.jpg","size":12345,
+           "url":"/api/admin/media/att_…"}}]}
+```
+
+- 广播接口仍只支持文本（不支持 mediaId）。
+- 微信「语音气泡」暂不支持发送（SILK 转码）；`audio/*` 文件会按普通文件发送。
+
+### 5.3 上传媒体（对外 API）
+
+```
+POST /api/v1/media
+Header: Authorization: Bearer <API_TOKEN> 或 X-Api-Key: <API_TOKEN>
+Header: Content-Type: <MIME>、X-File-Name: <encodeURIComponent(文件名)>
+Body: 原始二进制
+→ 201 { "media": {...}, "limits": {...} }
+```
+
+校验与归类规则同 §5.1（不校验 MIME 白名单；任意 MIME 均可上传，未命中 image/video 按 `file` 归类；
+仅 `X-File-Name` 缺失/为空或请求体为空时返回 400，超过 `MEDIA_MAX_BYTES` 返回 413）。
+
+### 5.4 读取媒体文件
+
+```
+GET /api/admin/media/{attId}      # admin Cookie 鉴权（后台 <img>/<video> 同源引用）
+GET /api/v1/media/{attId}         # API Key 鉴权
+Query: ?download=1               # 强制 Content-Disposition: attachment
+```
+
+- 响应含正确的 `Content-Type` / `Content-Length` / `Content-Disposition` /
+  `Cache-Control: private, max-age=3600`；支持 HTTP Range（视频拖动进度条）；文件不存在返回 404。
+- 媒体内容私有：未鉴权不可访问；路径来自数据库且限制在 `DATA_DIR/media` 内。
+
+### 5.5 消息记录中的附件
+
+`GET /api/admin/messages`、用户详情、outbox 状态（v1）中的消息项可能带：
+
+```json
+"attachments":[{"id":"att_…","kind":"image","mime":"image/jpeg","fileName":"a.jpg",
+                "size":12345,"url":"/api/admin/media/att_…",
+                "downloadUrl":"/api/admin/media/att_…?download=1","status":"ready"}]
+```
+
+`kind`：`image | video | file | voice`；入站媒体下载失败时 `status="failed"` 且无文件可读。
+
+### 5.6 配置接口补充
+
+`GET /api/admin/config` 增加：
+
+```json
+"media": { "maxBytes":26214400, "inboundMaxBytes":104857600,
+           "allowedImage":["image/jpeg","image/png"], "allowedVideo":["video/mp4"], "dir":"/app/data/media" }
+```
+
+### 5.7 curl 示例
+
+```bash
+# 1) 上传图片（原始二进制）
+MEDIA_ID=$(curl -s -X POST http://localhost:10380/api/v1/media \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: image/jpeg" \
+  -H "X-File-Name: $(python3 -c 'import urllib.parse;print(urllib.parse.quote("照片.jpg"))' 2>/dev/null || echo photo.jpg)" \
+  --data-binary @photo.jpg | python3 -c 'import sys,json;print(json.load(sys.stdin)["media"]["id"])')
+
+# 2) 发送（文字 caption + 图片）
+curl -X POST http://localhost:10380/api/v1/messages \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"to\":[\"u_abc\"],\"text\":\"今日订单截图\",\"mediaId\":\"$MEDIA_ID\"}"
+```
+
+## 6. 用户分组（多分组标签）
+
+完整契约见 [`docs/GROUPS_AND_INBOUND.md`](GROUPS_AND_INBOUND.md) §3/§4。用户可属于多个分组；
+分组用于用户筛选、消息筛选与按分组群发。
+
+**管理端（Cookie + CSRF）**
+
+```
+GET    /api/admin/groups                         → { items:[GroupView] }
+POST   /api/admin/groups   {name, description?, color?, keepaliveEnabled?}  → 201 { group }
+PATCH  /api/admin/groups/{id} {name?, description?, color?, keepaliveEnabled?} → { group }   // 404/409
+DELETE /api/admin/groups/{id}                    → 204                   // 同时清空归属
+PUT    /api/admin/users/{id}/groups {groupIds:[]} → { user }             // 全量替换
+GET    /api/admin/users?groupId=…                → 按分组过滤用户
+GET    /api/admin/messages?groupId=…             → 按分组过滤消息
+POST   /api/admin/groups/{id}/messages {text?, mediaId?} → 202 {queued,count}
+```
+
+GroupView：
+
+```json
+{ "id":"grp_…", "name":"VIP客户", "description":"重点客户", "color":"#07C160",
+  "keepaliveEnabled":false,
+  "userCount":3, "activeUserCount":2, "createdAt":1760000000000, "updatedAt":1760000000000 }
+```
+
+用户视图（admin/v1）新增 `groups:[{id,name,color}]`。分组名唯一（1–40 字符），描述 ≤200，颜色可为空或
+`#RRGGBB`。分组群发目标 = 分组内 `status=active` 且未冷却的用户，逐人入 outbox。
+
+**分组保活（schema v1）**：GroupView 的 `keepaliveEnabled` 为分组级保活开关。`POST /api/admin/groups/{id}/keepalive
+{enabled}` 会持久化该标志并批量设置当前成员的 `keepaliveEnabled`；`PATCH /api/admin/groups/{id}
+{keepaliveEnabled}` 与批量开关等价（也同步当前成员）。`keepaliveEnabled=true` 的分组，
+之后通过 `PUT /api/admin/users/{id}/groups` 加入的用户会**自动开启**保活（用户视图返回
+`keepaliveEnabled=true`，响应含 `inheritedKeepalive`=该用户当前是否属于任一开启保活的分组）。
+移出分组不会关闭用户保活；分组关闭保活时当前成员被关闭，之后加入的成员保持关闭。
+
+**对外 API（API Key）**
+
+```
+GET  /api/v1/groups                              → { items:[GroupView] }
+POST /api/v1/groups/{groupId}/messages {text?, mediaId?} → 202 {accepted, queued}
+```
+
+## 7. 入站消息 API（获取微信用户发来的消息）
+
+```
+GET /api/v1/inbound/messages
+Auth: Authorization: Bearer <API_TOKEN> 或 X-Api-Key
+
+Query:
+  limit   1..200，默认 50
+  since   毫秒时间戳（独占，仅 received_at > since）
+  cursor  不透明游标（优先于 since，来自上次 nextCursor）
+  userId  只返回指定用户的消息
+  groupId 只返回指定分组内用户的消息
+  wait    0..30 秒（可为小数，如 1.5），长轮询：无新消息时最多等待 N 秒（500ms 轮询间隔），有新消息立即返回
+
+排序：received_at ASC, id ASC（便于 cursor 增量拉取）
+响应 200:
+{
+  "items": [{
+    "id":"in_…", "userId":"u_…", "displayName":"演示用户A",
+    "groups":[{"id":"grp_…","name":"VIP客户","color":"#07C160"}],
+    "text":"消息文本；媒体消息为 [图片] 等占位", "itemTypes":"1" | "1,2",
+    "createdAt":1760000000000, "receivedAt":1760000000123,
+    "attachments":[{"id":"att_…","kind":"image","mime":"image/jpeg","fileName":"",
+      "size":448642,"status":"ready","url":"/api/v1/media/att_…",
+      "downloadUrl":"/api/v1/media/att_…?download=1"}]
+  }],
+  "nextCursor":"eyJ0IjoxNzYwMDAwMDAxMjMsImlkIjoiaW5fLi4uIn0",
+  "hasMore":false,
+  "serverTime":1760000002000
+}
+```
+
+- 游标编码：`base64url(JSON.stringify({t: receivedAt, id}))`；下一次用 `cursor=` 继续增量拉取。
+- `wait` 超时返回空 `items`（HTTP 200，`nextCursor` 为传入值/null），外部系统可循环长轮询。
+- 参数非法 400、鉴权失败 401；附件内容通过已鉴权的 `GET /api/v1/media/{attId}` 读取（支持 Range）。
+
+**轮询示例**
+
+```bash
+# 首次（最近 50 条）
+curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50" \
+  -H "Authorization: Bearer $API_TOKEN"
+
+# 增量长轮询（无新消息最多等 25s，有新消息立即返回）
+curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50&cursor=$NEXT&wait=25" \
+  -H "Authorization: Bearer $API_TOKEN"
+```
+
+## 8. 24h 会话保活（Keep-Alive）
+
+完整设计见 [`docs/KEEPALIVE.md`](KEEPALIVE.md)。微信 ClawBot 的主动下发依赖"用户最近一次主动消息"
+（约 24 小时会话窗口）。对**开启保活**的用户，ClawBridge 会在其最后一条入站消息满 12 小时时
+首次提醒，之后每 6 小时重复提醒，直到用户回复刷新窗口或窗口过期；默认关闭（opt-in），
+可对单个用户或整个分组批量开启。
+
+**管理端接口（Cookie + CSRF）**
+
+```
+PATCH /api/admin/users/{id}/keepalive
+  Body: { "enabled": true }
+  → 200 { "user": UserView }          # user 含 keepaliveEnabled / keepaliveLastSentAt
+
+POST /api/admin/groups/{id}/keepalive
+  Body: { "enabled": true }
+  → 200 { "updated": 3, "group": GroupView }
+
+GET /api/admin/users?...              # UserView 新增 keepaliveEnabled / keepaliveLastSentAt
+GET /api/admin/config                 # 新增 keepalive 配置（enabled/windowMs/leadMs/repeatMs/tickMs/text/…）
+GET /api/admin/overview               # stats 新增 keepaliveEnabledUsers / keepaliveSent24h
+                                      # （keepaliveSent24h = 最近 24h 内**入队**的保活消息数，含 queued/sent）
+GET /api/admin/messages               # 消息项含 source 字段：admin | api | broadcast | group | webhook |
+                                      # keepalive | rule | schedule（`system` 为保留值，当前实现不写入）
+```
+
+`GET /api/v1/users` 的 items 增加只读 `keepaliveEnabled`。
+
+**配置（环境变量）**
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `KEEPALIVE_ENABLED` | `true` | 全局调度开关 |
+| `KEEPALIVE_WINDOW_MS` | `86400000`（24h） | 会话窗口长度 |
+| `KEEPALIVE_LEAD_MS` | `43200000`（12h） | 首次提前触发量（最后入站满 window-lead 时触发） |
+| `KEEPALIVE_REPEAT_MS` | `21600000`（6h） | 用户未回复时重复提醒间隔，直到窗口过期 |
+| `KEEPALIVE_TICK_MS` | `300000`（5min） | 扫描间隔 |
+| `KEEPALIVE_TEXT` | `【消息通道保活】回复任意内容即可继续接收通知。` | 保活文本模板，支持 `{name}` |
+| `KEEPALIVE_MAX_PER_TICK` | `100` | 单次扫描最多处理用户数 |
+
+**触发条件**：用户 active、已开启保活、`last_inbound_at>0`、未冷却、
+`now-last_inbound_at ∈ [window-lead, window)`，且（本窗口未发过或距上次提醒 ≥ `repeatMs`）。
+不满足（含窗口已过期）不会发送。发送走 outbox（source=`keepalive`），受每账号限流。
+
+**curl 示例**
+
+```bash
+# 对单个用户开启保活
+curl -X PATCH http://localhost:10380/api/admin/users/u_xxxxxxxx/keepalive \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{"enabled":true}'
+
+# 对分组批量开启
+curl -X POST http://localhost:10380/api/admin/groups/grp_xxxxxxxx/keepalive \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{"enabled":true}'
+```
+
+## 9. 接口应用（关键词触发 → 外部 HTTP 接口 / 默认文本回复；含定时通知）
+
+完整契约见 [`docs/API_RULES.md`](API_RULES.md)。后台配置规则：命中「指定用户/分组 + 关键词/正则」的
+入站文本消息后，可以选择调用外部 HTTP 接口并解析回复，也可以直接回复一段默认文本。
+不请求模式：`request.mode="none"`（此时 `request.url=""`，不提取参数、不访问外部接口）。
+
+接口应用包含两种触发方式：**关键词触发**（本章正文）与 **定时通知**（§9.1，按时间计划主动调用）。
+两者共用请求/响应/SSRF/模板能力，后台都位于「接口应用」区块。
+
+**管理端接口（Cookie + CSRF）**
+
+```
+GET    /api/admin/app-rules?includeDisabled=1     → { items:[RuleView] }
+POST   /api/admin/app-rules                        → 201 { rule }
+POST   /api/admin/app-rules/{id}/duplicate         → 201 { rule }（副本默认停用；复制加密 Header）
+POST   /api/admin/template-preview                 → 200 { responseText, replyText, usedFallback, noreply }（示例响应离线预览；replyText 已按微信规则过滤+换行布局；noreply=true 表示模板要求不回复）
+GET    /api/admin/app-rules/{id}                   → { rule }
+PATCH  /api/admin/app-rules/{id}                   → { rule }
+DELETE /api/admin/app-rules/{id}                   → 204
+POST   /api/admin/app-rules/{id}/test              → 200（dry-run：不发送、不写运行日志）
+  Body: {"message":"查天气 北京","userId":"u_…"}
+  Resp: {"matched":true,"ruleId":"…","params":{"arg":"北京"},
+         "request":{"method":"GET","url":"…","headerNames":["Authorization"],"bodyPreview":""},
+         "httpStatus":200,"latencyMs":123,"responsePreview":"…","replyText":"…","error":"",
+         "noreply":false, "credentials":["gps"], "missingCredentials":[]}
+  // credentials = 本次用到的凭据名（不含值）；missingCredentials = 缺失的 `名称.字段` 列表（不含值）
+GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=&offset=
+  → { total, items:[{id,ruleId,ruleName,userId,status,httpStatus,latencyMs,error,
+                      paramsPreview,requestPreview,responsePreview,replyOutboxId,createdAt}] }
+  // status 过滤接受 matched | success | failed | skipped，其中 skipped 为**保留值**：
+  // 当前规则引擎不写入该状态，按 skipped 过滤的结果恒为空（保留字段以避免破坏既有 API 契约）。
+```
+
+RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,regexPattern}`、
+`extraction{mode,config}`、`request{mode,method,url,headerNames,bodyTemplate}`、
+`response{type,path,template,fallbackText}`、`limits{timeoutMs}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped24h}`。
+**`skipped24h` 为保留字段：当前引擎不写入 `skipped` 状态，统计恒为 0**（字段保留以兼容既有消费方）。
+`request.mode`：`http`（默认，调用外部接口）/ `none`（不请求，直接回复默认文本；此时 `url` 为空）。
+**Header 值只写不读**（落库 AES-256-GCM 加密，读取只返回 `requestHeaderNames`）。
+
+**触发/模板语法**
+
+- 匹配：`contains`（大小写不敏感）/`equals`/`regex`；范围 `all|users|groups`（分组为本系统用户分组）；
+  一消息命中多条规则时按 `priority` 升序**只执行第一条**。
+- 参数提取：`none`（不提取）或 `multi`（**多参数组合提取**：`config.extractors[]` 逐项提取后合并，
+  `config.required[]` 必填；extractor 类型 `trailing`/`regex`/`json`/`fulltext`）；
+  内置变量 `{text}`/`{userId}`/`{name}`/`{now}`（完整配置见 [`docs/API_RULES.md`](API_RULES.md) §3）。
+- 请求：URL/Header/Body 模板用 `{变量}`；URL 中变量自动 URL 编码，Header 原样，POST 发 body。
+  **凭据占位符**：`{credential:凭据名.字段}` 会按**触发用户**解析该用户的用户级凭据（见 §2.9）后注入；
+  缺失凭据时该次规则执行失败（日志只记录缺失的凭据名，不含值）。
+- **不请求模式**：`request.mode="none"`，关键词命中后直接使用 `response.template`（为空时用
+  `response.fallbackText`）回复；忽略参数提取与请求配置，不访问外部接口，运行日志 `httpStatus=null`。
+- 响应：`json` 按点路径（如 `data.answer`）或 `text`；回复模板用 `{{路径}}`（如 `{{data.answer}}`），
+  支持 `{{#each ...}}`（`where` 过滤、`@index`/`@number`、`{{else}}`）、`{{#if}}`/`{{#unless}}`/`{{else if}}`、
+  `{{default 路径 "兜底"}}`、`{{count 路径}}`；为空时用解析结果；可配置兜底文案。
+  **`{{noreply}}`**：模板渲染结果包含该指令时**不回复**（也不使用兜底文案）。
+- 频率控制：规则自身不再设置冷却/每小时上限；调用频率统一由微信账号默认发送限流控制（默认 7 条 / 5 分钟 / 账号）。
+- 保留保护：入站消息+规则去重、请求超时、响应大小限制。
+- 安全：默认拒绝访问内网/本机（SSRF）；需要访问内网接口时在 `APP_RULES_ALLOWED_HOSTS` 加白名单
+  （后台「运行配置 → 接口应用 → allowedHosts」可即时修改，`.env` 仅首次默认值）。
+
+**配置（环境变量）**
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `APP_RULES_ENABLED` | `true` | 规则引擎全局开关 |
+| `APP_RULE_TIMEOUT_MS` | `8000` | 单次接口超时上限 |
+| `APP_RULE_MAX_RESPONSE_BYTES` | `1048576` | 响应体大小上限 |
+| `APP_RULES_WORKER_CONCURRENCY` | `2` | 规则执行并发数 |
+| `APP_RULES_ALLOWED_HOSTS` | 空 | 允许访问的内网/本机主机白名单（逗号分隔；后台可改、即时生效，`.env` 仅首次默认值） |
+| `APP_RULE_MAX_QUEUE` | `200` | 内存队列上限 |
+
+> 定时通知（§9.1）有独立白名单 `SCHEDULER_ALLOWED_HOSTS`（空=继承本表 `APP_RULES_ALLOWED_HOSTS`），
+> 因此「接口应用」与「定时通知」可分别放行内网主机。
+
+**curl 示例**
+
+```bash
+# 1) 创建规则：查天气（组合提取关键词后文本作为 arg，调用外部 API 并解析 data.answer 回复）
+curl -X POST http://localhost:10380/api/admin/app-rules \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{
+    "name":"查天气","enabled":true,"priority":100,
+    "scope":{"type":"all"},
+    "matchMode":"contains","keywords":["查天气"],
+    "extraction":{"mode":"multi","config":{"extractors":[{"type":"trailing","param":"arg"}]}},
+    "request":{"method":"GET","url":"https://api.example.com/weather?city={arg}","headers":{}},
+    "response":{"type":"json","path":"data","template":"{{answer}}","fallbackText":"暂时无法查询天气"},
+    "timeoutMs":8000
+  }'
+
+# 2) 测试运行（dry-run，不发用户）
+curl -X POST http://localhost:10380/api/admin/app-rules/rule_xxxxxxxx/test \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{"message":"查天气 北京"}'
+
+# 3) 查看运行日志
+curl "http://localhost:10380/api/admin/app-rule-logs?limit=20" \
+  -H "Cookie: cb_session=$ADMIN_COOKIE"
+
+# 4) 不请求模式：关键词命中后直接回复默认文本
+curl -X POST http://localhost:10380/api/admin/app-rules \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{
+    "name":"关键词默认回复","enabled":true,
+    "scope":{"type":"all"},
+    "matchMode":"contains","keywords":["帮助"],
+    "request":{"mode":"none"},
+    "response":{"type":"text","path":"","template":"收到，我们会尽快处理。","fallbackText":""}
+  }'
+```
+
+### 9.1 定时通知（Scheduled Notifications，接口应用的时间计划模式）
+
+完整契约见 [`docs/SCHEDULED_TASKS.md`](SCHEDULED_TASKS.md)：按计划定时调用外部接口 → 解析返回 →
+把结果通过微信发送给指定用户/分组（无需用户先发消息）。
+
+**管理端接口（Cookie + CSRF）**
+
+```
+GET    /api/admin/scheduled-tasks                    → { items:[TaskView] }
+POST   /api/admin/scheduled-tasks                    → 201 { task }
+POST   /api/admin/scheduled-tasks/{id}/duplicate     → 201 { task }（副本默认停用、next_run_at=0）
+GET    /api/admin/scheduled-tasks/{id}               → { task }
+PATCH  /api/admin/scheduled-tasks/{id}               → { task }
+DELETE /api/admin/scheduled-tasks/{id}               → 204
+POST   /api/admin/scheduled-tasks/{id}/test          → 200（dry-run：真实调用接口渲染通知，不发送不写日志）
+POST   /api/admin/scheduled-tasks/{id}/run           → 200（手动执行一次：调用+发送+写日志，不改变 next_run_at）
+  // 停用任务调用 run 返回 400（提示先启用）；test（dry-run）对停用任务仍可用。
+GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset=
+  // status 过滤接受 success | failed | skipped | partial（partial = 按用户模式部分成功）
+```
+
+TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEnd,timezone}`、`targets{type,ids,names}`、
+`perUserMode`（布尔：按用户模式执行，详见下文「按用户模式」）、
+`request{method,url,headerNames,bodyTemplate}`、`response{type,path,template,fallbackText}`、
+`nextRunAt/lastRunAt/lastStatus`。Header 值加密保存、读取只返回名称。
+
+**计划**：`interval`（每 N 分钟，60s–30d；可选 `windowStart`/`windowEnd` 每日生效时间段，HH:mm、成对、支持跨午夜；区间 `[start,end]`，结束分钟也触发）
+或 `daily`（每天 HH:mm，时区 `SCHEDULER_TIMEZONE`，默认 Asia/Shanghai）；
+任务执行后写 `nextRunAt`，服务重启时过期任务补跑一次（避免漏发）。
+
+**发送**：解析成功后按回复模板（`{{path}}`/`{{response}}`/`{{raw}}` 及 `{{#each}}`/`{{#if}}`/`{{default}}`）
+渲染通知文本，对目标用户逐个入队 outbox（source=`schedule`），复用现有微信限流；失败时若配置了兜底文案也发送，
+否则本次不发送；模板输出 `{{noreply}}` 时不发送（不使用兜底）。目标 = 指定用户或指定分组内 `active` 用户
+（去重、上限 `SCHEDULER_MAX_RECIPIENTS`）。`POST /:id/run` 的 `status=success` 仅表示外部调用成功且通知已入队，
+实际微信送达由队列异步完成；删除任务不会级联删除历史运行日志（审计保留）。
+
+**按用户模式（`perUserMode=true`）**：任务为每个目标用户分别请求并通知（使用该用户自己的凭据）：
+
+- 请求 URL/Header/Body 模板可包含 `{credential:凭据名.字段}`，按**目标用户**解析其用户级凭据
+  （见 §2.9）；**汇总模式不允许**模板包含凭据占位符（保存时 400）。
+- 每个用户可用 `{{userName}}`/`{{userId}}` 等上下文渲染请求与通知模板；**相同凭据字段值的用户自动合并为
+  一次外部请求**（结果按用户分别渲染）。
+- 缺凭据的用户**跳过**（写事件，不使用兜底文案）；单用户失败只影响该用户（按配置兜底）；
+  任务整体状态可为 `partial`（部分成功）；受 `perUserMaxRecipients`（目标上限，默认 50）与
+  `perUserConcurrency`（并发，默认 2）限制，单任务总超时 30s。
+- 凭据值在日志/预览/错误/事件中统一脱敏为 `***`；事件明细只含 userId/httpStatus/凭据名/错误，不含值。
+
+**配置（环境变量）**
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `SCHEDULER_ENABLED` | `true` | 调度器全局开关 |
+| `SCHEDULER_TICK_MS` | `15000` | 扫描间隔 |
+| `SCHEDULER_TIMEZONE` | `Asia/Shanghai` | 每日任务时区（IANA） |
+| `SCHEDULER_MAX_RECIPIENTS` | `200` | 单任务单次最多收件人数 |
+| `SCHEDULER_TIMEOUT_MS` | `8000` | 外部请求超时上限 |
+| `SCHEDULER_MAX_RESPONSE_BYTES` | `0`（继承接口应用） | 定时任务独立响应体上限；`0`=继承 `APP_RULE_MAX_RESPONSE_BYTES` |
+| `SCHEDULER_ALLOWED_HOSTS` | 空（继承接口应用） | 定时任务独立私网白名单（逗号分隔）；空=继承 `APP_RULES_ALLOWED_HOSTS` |
+| `SCHEDULER_PER_USER_CONCURRENCY` | `2`（范围 1-10） | 按用户模式并发请求数 |
+| `SCHEDULER_PER_USER_MAX_RECIPIENTS` | `50`（范围 1-200） | 按用户模式单任务最多目标用户数 |
+
+> 以上均为 `.env` **首次启动默认值**；运行期以后台「运行配置 → 定时通知」为准（即时生效）。
+
+**curl 示例**
+
+```bash
+# 创建每天 08:00 给分组推送天气的任务
+curl -X POST http://localhost:10380/api/admin/scheduled-tasks \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin" \
+  -H "Content-Type: application/json" -d '{
+    "name":"每天天气推送","enabled":true,
+    "schedule":{"type":"daily","dailyTime":"08:00"},
+    "targets":{"type":"groups","ids":["grp_xxxxxxxx"]},
+    "request":{"method":"GET","url":"https://api.example.com/weather?city=北京","headers":{}},
+    "response":{"type":"json","path":"","template":"{{city}} 今天 {{weather}}，{{temp_min}}~{{temp_max}}℃","fallbackText":"天气获取失败"},
+    "timeoutMs":8000
+  }'
+
+# 测试运行（dry-run，不发用户）/ 立即执行一次
+curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/test -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
+curl -X POST http://localhost:10380/api/admin/scheduled-tasks/task_xxxxxxxx/run  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
+```
+
+## 10. 运行配置（后台可改设置）
+
+字段、默认值与后台操作说明以管理后台「运行配置」页及 [`docs/SETTINGS.md`](SETTINGS.md) 为准，
+本文档不再重复列出。API 契约摘要：
+
+```
+GET   /api/admin/settings            → { groups:[...], envOnly:[...] }
+PATCH /api/admin/settings            Body: {"appRules":{"allowedHosts":["192.168.88.10"]}}
+  → 200 { ok:true, groups:[...], restartRequired:[...] }
+POST  /api/admin/settings/reset      Body: {"group":"appRules"} → 200 { ok:true, groups:[...] }
+```
+
+## 11. 系统重启（重启容器）
+
+运行配置页顶部「重启容器」按钮使用。仅 **生产容器环境**（`NODE_ENV=production` 且检测到容器
+`/.dockerenv` 或 `DATA_DIR=/app/data`）可用；进程收到 SIGTERM 优雅退出后由 Docker
+`restart: unless-stopped` 自动拉起（通常 5-15 秒不可用）。测试/非容器环境返回 409，避免误杀进程。
+
+```
+POST /api/admin/system/restart     (Cookie + CSRF；无请求体)
+  → 202 { ok:true, message:"容器将在约 1 秒后重启，请稍候刷新页面", etaSeconds:10 }
+  → 409 { error:{ code:"CONFLICT", message:"当前非生产容器运行环境…" } }
+  → 429 重启请求过于频繁（15 秒冷却）
+```
+
+```bash
+curl -X POST http://localhost:10380/api/admin/system/restart \
+  -H "Cookie: cb_session=$ADMIN_COOKIE" -H "X-Requested-With: ClawBridge-Admin"
+```
+
+前端点击后轮询 `GET /health`，恢复后自动刷新页面；设置的 DB 覆盖会经 `loadOverrides()` 在重启后重新生效。
+
+## 12. 安全设置（管理密码 / API Token 后台管理）
+
+运行配置页「安全」卡片使用；**仅存 DB，不读取 `.env` 的 ADMIN_PASSWORD/API_TOKEN**，
+首次启动自动生成随机密码/Token（写入 `data/admin-password.txt`、`data/api-token.txt`）。
+**任何接口都不返回密码哈希或 Token 明文**（仅 preview/来源）。
+
+```
+POST /api/admin/security/password        Body: {currentPassword,newPassword}
+  → 200 { ok:true, adminPasswordSource:"db" }   // 当前密码错误 401/400，new 长度 8..128
+POST /api/admin/security/password/reset  Body: {currentPassword}
+  → 200 { ok:true, password:"随机新密码（仅此一次）", source:"db" }
+  // 校验当前密码后生成新随机密码，写 DB + data/admin-password.txt
+POST /api/admin/security/api-token/rotate
+  → 200 { ok:true, token:"cb_…（仅此一次）", apiTokenPreview, apiTokenSource:"db" }
+POST /api/admin/security/api-token/reset
+  → 200 { ok:true, token:"cb_…（仅此一次）", apiTokenPreview, apiTokenSource:"db" }
+  // 同样生成新 token，写 DB + data/api-token.txt；旧 token 立即失效
+```
+
+- 推送 API 开关：`PATCH /api/admin/settings` `{ "security": { "pushApiEnabled": true } }`。
+- 会话 TTL：`security.sessionTtlMs`（登录时生效）；修改密码不会强制已登录会话立即下线。
+- GET `/api/admin/settings` 增加 `security: {adminPasswordSource:'db', apiTokenSource:'db', apiTokenPreview,
+  pushApiEnabled, sessionTtlMs}`；`envOnly` 为 `APP_SECRET`、`DATA_DIR`、`MEDIA_DIR`、`PORT`、`HOST`、`NODE_ENV`。
+
+
+
+
+
+
+

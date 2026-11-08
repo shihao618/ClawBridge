@@ -1,0 +1,39 @@
+# dependencies & build
+node_modules/
+npm-debug.log*
+
+# runtime data (SQLite, secrets, generated admin password)；仅仓库根 data/，勿误伤 server/src/data/
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# 本地备份：真实数据库/机密副本，禁止入库（.db 已被上方忽略，这里覆盖整个目录）
+/backups/
+
+# 自定义媒体目录（若 MEDIA_DIR 指向仓库内，如 ./media）
+/media/
+
+# 自动生成的凭据文件（默认在 data/ 内；防止 DATA_DIR 指向仓库根时误提交）
+/app-secret.key
+/admin-password.txt
+/api-token.txt
+
+# local env & test artifacts
+.env
+.env.*
+!.env.example
+*.key
+coverage/
+test-results/
+mock/.tmp-*.log
+mock/.curl-live.log
+*.log
+*.tgz
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

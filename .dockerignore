@@ -1,0 +1,54 @@
+# =============================================================================
+# Docker 构建上下文排除项（.dockerignore 语法与 .gitignore 类似）
+# 目标：镜像只包含运行必需的 server/ + web/ + 生产依赖
+# =============================================================================
+
+# 依赖与构建产物
+node_modules
+npm-debug.log*
+*.tgz
+
+# 运行时数据 / SQLite / 本地密钥（绝不能进镜像）
+data
+backups
+media
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.key
+admin-password.txt
+api-token.txt
+
+# 本地环境变量（真实 .env 不进镜像）
+.env
+.env.*
+
+# 版本库 / 编辑器 / 系统文件
+.git
+.gitignore
+.gitattributes
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.log
+
+# 测试 / mock / 脚本（demo 的 mock 通过 compose volume 挂载，无需进 app 镜像）
+tests
+mock
+scripts
+coverage
+test-results
+
+# 文档 / 展示资源（web/docs.html 已内置文档页，无需 docs/ 与截图）
+docs
+screenshots
+README.md
+LICENSE
+
+# Docker 自身文件
+Dockerfile
+.dockerignore
+docker-compose*.yml
+.github
