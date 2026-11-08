@@ -922,6 +922,8 @@ test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立
     'schedule-daily-time',
     'schedule-user-list',
     'schedule-group-list',
+    'schedule-target-type',
+    '全部用户',
     'schedule-headers',
     'schedule-response-path',
     'schedule-reply-template',

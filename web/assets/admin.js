@@ -2638,6 +2638,7 @@ function schedulePlanSummary(task) {
 
 function scheduleTargetSummary(task) {
   const targets = task && task.targets && typeof task.targets === 'object' ? task.targets : {};
+  if (targets.type === 'all') return '全部用户';
   const ids = Array.isArray(targets.ids) ? targets.ids : [];
   const names = Array.isArray(targets.names) ? targets.names.filter(Boolean) : [];
   if (targets.type === 'groups') {
@@ -2912,24 +2913,29 @@ async function openScheduleEditor(task = null) {
   syncScheduleFields();
 
   // 目标
-  let targetType = targets.type === 'groups' ? 'groups' : 'users';
+  let targetType = targets.type === 'all'
+    ? 'all'
+    : targets.type === 'groups'
+      ? 'groups'
+      : 'users';
   const selectedUserIds = new Set(
     targetType === 'users' && Array.isArray(targets.ids) ? targets.ids.map(String) : [],
   );
   const selectedGroupIds = new Set(
     targetType === 'groups' && Array.isArray(targets.ids) ? targets.ids.map(String) : [],
   );
-  const targetRadios = ['users', 'groups'].map((type) =>
+  const targetTypeLabels = { all: '全部用户', users: '指定用户', groups: '指定分组' };
+  const targetRadios = ['users', 'groups', 'all'].map((type) =>
     el(
       'label',
       { class: 'radio-inline' },
       el('input', { type: 'radio', name: 'schedule-target-type', value: type, checked: type === targetType }),
-      el('span', { text: type === 'users' ? '指定用户' : '指定分组' }),
+      el('span', { text: targetTypeLabels[type] }),
     ),
   );
   for (const radio of targetRadios) {
     radio.querySelector('input').addEventListener('change', (event) => {
-      targetType = event.target.value === 'groups' ? 'groups' : 'users';
+      targetType = ['all', 'groups', 'users'].includes(event.target.value) ? event.target.value : 'users';
       syncTargetVisibility();
     });
   }
@@ -3213,7 +3219,7 @@ async function openScheduleEditor(task = null) {
     ),
     formSection(
       '目标',
-      '通知发送给指定用户或指定分组的 active 用户（去重，受服务端单次收件上限约束）。',
+      '通知发送给全部用户、指定用户或指定分组的 active 用户（去重，受服务端单次收件上限约束）。',
       el('div', { class: 'radio-list rule-radio-row' }, ...targetRadios),
       userPicker,
       groupPicker,
@@ -3306,8 +3312,12 @@ async function openScheduleEditor(task = null) {
             if (!/^\d{2}:\d{2}$/.test(dailyTime)) return showFormError('每日时间格式必须是 HH:mm');
             schedulePayload = { type: 'daily', dailyTime };
           }
-          const ids = targetType === 'users' ? [...selectedUserIds] : [...selectedGroupIds];
-          if (ids.length === 0) {
+          const ids = targetType === 'all'
+            ? []
+            : targetType === 'users'
+              ? [...selectedUserIds]
+              : [...selectedGroupIds];
+          if (targetType !== 'all' && ids.length === 0) {
             return showFormError(targetType === 'users' ? '请至少选择一位用户' : '请至少选择一个分组');
           }
           const url = urlInput.value.trim();

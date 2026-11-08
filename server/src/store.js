@@ -1144,7 +1144,9 @@ export function mapScheduledTaskRow(row) {
     targets: {
       type: targetType,
       ids: Array.isArray(targetIds) ? targetIds : [],
-      names: resolveScheduledTargetNames(targetType, Array.isArray(targetIds) ? targetIds : []),
+      names: targetType === 'all'
+        ? ['全部用户']
+        : resolveScheduledTargetNames(targetType, Array.isArray(targetIds) ? targetIds : []),
     },
     request: {
       method: row.request_method ?? 'GET',
@@ -1379,10 +1381,13 @@ export function resolveScheduledTaskRecipients(taskRow, { maxRecipients = config
   if (!taskRow) return { userIds: [], total: 0, truncated: false };
   const ids = parseJsonValue(taskRow.target_ids, []);
   const targetIds = Array.isArray(ids) ? ids.map(String) : [];
+  const targetType = taskRow.target_type ?? 'users';
   let rows = [];
-  if (targetIds.length > 0) {
+  if (targetType === 'all') {
+    rows = all("SELECT id FROM users WHERE status = 'active' ORDER BY id ASC");
+  } else if (targetIds.length > 0) {
     const placeholders = targetIds.map(() => '?').join(', ');
-    if ((taskRow.target_type ?? 'users') === 'groups') {
+    if (targetType === 'groups') {
       rows = all(
         `SELECT DISTINCT u.id AS id FROM user_groups ug JOIN users u ON u.id = ug.user_id
          WHERE ug.group_id IN (${placeholders}) AND u.status = 'active' ORDER BY u.id ASC`,

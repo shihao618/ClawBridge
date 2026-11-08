@@ -181,6 +181,15 @@ test('创建/查看：TaskView 结构、nextRunAt 计算、header 只回 names�
   assert.ok(list.json.items.some((item) => item.id === task.id));
 });
 
+test('全部用户目标：允许 ids 为空，返回全部用户标记', async () => {
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
+    name: '全员通知',
+    targets: { type: 'all' },
+  }));
+  assert.equal(created.status, 201, created.text);
+  assert.deepEqual(created.json.task.targets, { type: 'all', ids: [], names: ['全部用户'] });
+});
+
 test('复制定时任务：新 id、副本默认停用、复制计划/目标/加密 headers、nextRunAt 归零', async () => {
   const user = createUser({ displayName: '复制目标用户' });
   const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({

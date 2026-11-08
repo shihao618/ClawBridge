@@ -191,6 +191,17 @@ test('目标解析：users active 过滤 / groups 去重 / 稳定排序 / 上限
   assert.deepEqual(byGroups.userIds, [userA.id, userB.id].sort(), '分组去重且排除 unbound');
   assert.equal(byGroups.total, 2);
 
+  const allTask = createTask({ targetType: 'all', targetIds: [] });
+  const byAll = store.resolveScheduledTaskRecipients(store.getScheduledTaskRow(allTask.id));
+  assert.ok(byAll.userIds.includes(userA.id), '全部用户应包含 active 用户');
+  assert.ok(byAll.userIds.includes(userB.id), '全部用户应包含 active 用户');
+  assert.ok(!byAll.userIds.includes(inactive.id), '全部用户应排除非 active 用户');
+  assert.deepEqual(store.getScheduledTask(allTask.id).targets, {
+    type: 'all',
+    ids: [],
+    names: ['全部用户'],
+  });
+
   const limited = store.resolveScheduledTaskRecipients(store.getScheduledTaskRow(groupTask.id), { maxRecipients: 1 });
   assert.equal(limited.userIds.length, 1);
   assert.equal(limited.total, 2);

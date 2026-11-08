@@ -1464,7 +1464,8 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
           <ul class="doc-list">
             <li>接口失败 / 超时 / JSON 解析失败 / 模板为空：若配置了 <code class="code-inline">fallback_text</code>
               则把兜底文案发送给全部目标；否则本次不发送（<code class="code-inline">failed</code> 日志）。</li>
-            <li>目标：<code class="code-inline">targets.type=users</code> 为指定用户 id，
+            <li>目标：<code class="code-inline">targets.type=all</code> 为全部 active 用户；
+              <code class="code-inline">targets.type=users</code> 为指定用户 id，
               <code class="code-inline">targets.type=groups</code> 为指定分组 id（分组内 active 用户去重），
               上限 <code class="code-inline">SCHEDULER_MAX_RECIPIENTS</code>（默认 200，按用户 id 稳定排序截断）。</li>
           </ul>

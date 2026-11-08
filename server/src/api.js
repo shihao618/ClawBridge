@@ -764,7 +764,7 @@ function buildAppRulePatch(rawBody, { requireAll = false } = {}) {
 // ---------------------------------------------------------------------------
 
 const SCHEDULED_SCHEDULE_TYPES = new Set(['interval', 'daily']);
-const SCHEDULED_TARGET_TYPES = new Set(['users', 'groups']);
+const SCHEDULED_TARGET_TYPES = new Set(['all', 'users', 'groups']);
 const SCHEDULED_TASK_STATUSES = new Set(['success', 'failed', 'skipped']);
 const SCHEDULED_MIN_INTERVAL_MS = 60_000;
 const SCHEDULED_MAX_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -826,16 +826,23 @@ function buildScheduledTaskPatch(rawBody, { requireAll = false } = {}) {
   if (requireAll || body.targets !== undefined) {
     const targets = assertPlainObject(body.targets ?? {}, 'targets');
     const type = targets.type ?? 'users';
-    if (!SCHEDULED_TARGET_TYPES.has(type)) throw badRequest('targets.type 只能是 users | groups');
-    if (!Array.isArray(targets.ids) || targets.ids.length === 0) throw badRequest('targets.ids 必须是非空数组');
-    const ids = [...new Set(targets.ids.map((id) => String(id).trim()).filter(Boolean))];
-    if (ids.length === 0) throw badRequest('targets.ids 必须包含有效 id');
-    if (type === 'users') {
-      const unknown = ids.filter((id) => !store.getUserRow(id));
-      if (unknown.length > 0) throw badRequest(`targets.ids 中用户不存在：${unknown.join(', ')}`);
+    if (!SCHEDULED_TARGET_TYPES.has(type)) throw badRequest('targets.type 只能是 all | users | groups');
+    let ids = [];
+    if (type === 'all') {
+      // 全部用户为动态目标：不保存用户 id，执行时取当时所有 active 用户。
+      if (targets.ids !== undefined && !Array.isArray(targets.ids)) throw badRequest('targets.ids 必须是数组');
+      ids = [];
     } else {
-      const unknown = ids.filter((id) => !store.getGroupRow(id));
-      if (unknown.length > 0) throw badRequest(`targets.ids 中分组不存在：${unknown.join(', ')}`);
+      if (!Array.isArray(targets.ids) || targets.ids.length === 0) throw badRequest('targets.ids 必须是非空数组');
+      ids = [...new Set(targets.ids.map((id) => String(id).trim()).filter(Boolean))];
+      if (ids.length === 0) throw badRequest('targets.ids 必须包含有效 id');
+      if (type === 'users') {
+        const unknown = ids.filter((id) => !store.getUserRow(id));
+        if (unknown.length > 0) throw badRequest(`targets.ids 中用户不存在：${unknown.join(', ')}`);
+      } else {
+        const unknown = ids.filter((id) => !store.getGroupRow(id));
+        if (unknown.length > 0) throw badRequest(`targets.ids 中分组不存在：${unknown.join(', ')}`);
+      }
     }
     patch.targetType = type;
     patch.targetIds = ids;

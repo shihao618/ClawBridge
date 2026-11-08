@@ -1,12 +1,12 @@
 # 定时通知（Scheduled Notifications）设计契约
 
-> 需求：**定时访问外部接口 → 解析返回 → 把结果通过微信发送给指定用户/分组**。
+> 需求：**定时访问外部接口 → 解析返回 → 把结果通过微信发送给全部/指定用户或分组**。
 > 例如：每天 8:00 查天气并推送给「VIP 客户」分组；每 30 分钟拉取一次订单状态并通知相关用户。
 > 与「接口应用」（收到消息触发）互补：定时任务无需用户先发消息，按时间计划主动执行。
 
 ## 0. 范围与原则
 
-- 任务由后台配置：名称、启用、计划（间隔 / 每日定时）、目标（指定用户/指定分组）、
+- 任务由后台配置：名称、启用、计划（间隔 / 每日定时）、目标（全部用户 / 指定用户 / 指定分组）、
   请求（GET/POST、URL、Header、Body 模板）、响应解析（JSON 路径/文本）、Markdown 通知模板与兜底文案。
 - 调度器在服务进程内定时扫描（默认每 15s），到点执行一次 → 渲染文本 → 入队 outbox（source=schedule）
   → 由现有发送队列按微信限流投递；不绕过限流。
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   daily_time TEXT NOT NULL DEFAULT '08:00',         -- daily：HH:mm（SCHEDULER_TIMEZONE）
   window_start TEXT NOT NULL DEFAULT '',            -- interval：每日生效时间段开始 HH:mm（空=不限）
   window_end TEXT NOT NULL DEFAULT '',              -- interval：每日生效时间段结束 HH:mm
-  target_type TEXT NOT NULL DEFAULT 'users',        -- users | groups
+  target_type TEXT NOT NULL DEFAULT 'users',        -- all | users | groups
   target_ids TEXT NOT NULL DEFAULT '[]',            -- JSON string[]
   request_method TEXT NOT NULL DEFAULT 'GET',       -- GET | POST
   request_url TEXT NOT NULL,
@@ -177,7 +177,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
 
 - 创建/更新校验：name 1..60；schedule.type ∈ interval/daily；interval_ms 60000..2592000000；
   daily_time 合法 HH:mm；windowStart/windowEnd 必须同时为空或同时填写、仅 interval、合法 HH:mm 且不相等；
-  targets.type ∈ users/groups，ids 非空且存在；URL http(s)（创建时拒绝 userinfo）；
+  targets.type ∈ all/users/groups；all 时 ids 可为空，users/groups 时 ids 非空且存在；URL http(s)（创建时拒绝 userinfo）；
   headers 值加密（更新时不传=不变、{} 清空、传对象=全量替换；读取只回 headerNames）；
   timeoutMs 1000..30000；response.type json/text。
 - `POST /:id/test` 返回：`{matched:true, request:{method,url,headerNames,bodyPreview}, httpStatus, latencyMs,
@@ -195,7 +195,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
 2. 新建/编辑表单：
    - 基本信息：名称、启用；
    - 计划：类型（间隔 / 每日定时）+ 间隔分钟或 HH:mm 时间；间隔可另选「每日生效时间段」（HH:mm–HH:mm，留空不限，支持跨午夜）；展示时区；
-   - 目标：指定用户 / 指定分组（复选框列表，带全选/清空）；
+   - 目标：全部用户 / 指定用户 / 指定分组（指定用户/分组为复选框列表，带全选/清空）；
    - 请求：方法 GET/POST、URL 模板、Header（保留/重设/清空，值加密不回显）、Body 模板（仅 POST 显示；GET 参数写在 URL）；
    - 响应：类型 JSON/文本、JSON 路径、Markdown 通知模板（`{{path}}`/`{{response}}`/`{{raw}}`）、失败兜底文案；
    - 超时；
@@ -222,7 +222,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
 
 **单元**
 - 全新库 v10 建表/索引/幂等，旧 schema 拒绝启动；
-- store：任务 CRUD/视图（headerNames 不含值）、到期查询、日志、目标用户解析（users/groups、active 过滤、去重、上限）；
+- store：任务 CRUD/视图（headerNames 不含值）、到期查询、日志、目标用户解析（all/users/groups、active 过滤、去重、上限）；
 - scheduler：interval/daily/每日生效时间段时间计算（窗口内/前/后、跨午夜、启动对账、时区）、tick 只执行到期任务、
   成功渲染+入队 source=schedule、失败 fallback、无 fallback 不发送、收件人去重/上限、日志写入、
   start/stop 幂等、单任务异常不影响其他任务；
