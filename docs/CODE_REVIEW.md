@@ -45,9 +45,11 @@
 | 部署配置 | `docker compose config`（3 份） | 均校验通过；GHCR `amd64+arm64` 匿名可拉 |
 | 页面资源可达性 | 浏览器冒烟 + 静态测试 | 三页面 200、全部 `/assets/*` 可加载、无外部 CDN 引用 |
 
-> 每轮验证完成后更新"部署提示"：本轮全部改动仍在**工作区未提交**；线上 `clawbridge-app` 容器仍运行审查前构建的旧镜像（healthy）。
-> 本轮代码已通过 `npm test`、`npm run test:ui`、`npm run lint`、`docker build` + 容器内 `/health`、`/admin` 冒烟验证；
-> 部署步骤（备份 → 停止旧容器 → `docker compose up -d --build` → health 校验）与回滚方式见交付说明。
+> **部署记录（2026-11-08）**：本报告完成后已在本机实例完成部署验证：`docker compose build` 构建新镜像
+> （`clawbridge:local` new image）→ 停止旧容器 → `docker compose up -d` 创建新容器（`clawbridge-app`，compose 管理）。
+> 结果：health 通过、`/`、`/admin`、`/docs` 均 200、安全响应头完整；旧数据卷 `clawbridge-data` 保留，
+> schema v10 直接打开、既有绑定用户入站监控恢复成功（monitor started: 1）、新增 maintenance 任务启动日志出现。
+> 回滚方式：`git checkout a23c2be` 重建镜像，或使用 GHCR 上上一版本的 `:latest`/`sha-*` 镜像。
 
 > 运维提示：当前运行实例的日志出现"DB 已有管理密码、但 data/admin-password.txt 不存在（旧卷升级）"告警。若数据卷只保留了 DB 而丢失首批 secret 文件，后台密码将无法从文件找回，只能登录后重置（或按日志提示操作 DB）。建议升级/恢复流程中同时保留 `data/` 整个目录，并在 README 升级章节明确。
 
