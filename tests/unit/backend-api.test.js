@@ -114,10 +114,12 @@ test('静态页面：/、/bind、/admin、/docs 与 /assets/*', async () => {
     assert.ok(result.text.includes(marker), `${pathName} 应包含页面标记 ${marker}`);
     // 安全头同样作用于页面
     assert.equal(result.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(result.headers.get('cache-control') || '', /no-store/, `${pathName} 页面入口不应缓存旧版本`);
   }
   const css = await request('GET', '/assets/style.css');
   assert.equal(css.status, 200);
   assert.match(css.headers.get('content-type') || '', /text\/css/);
+  assert.match(css.headers.get('cache-control') || '', /no-cache/, '静态资源升级后必须重新校验');
 });
 
 test('API 404 返回统一 JSON 错误', async () => {

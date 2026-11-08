@@ -1386,6 +1386,7 @@ test('表单行：2/3 个输入框等宽均分并占满一行', async () => {
   const css = await readAsset('style.css');
   assert.ok(css.includes('grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))'), '表单行应使用等宽自适应列');
   assert.ok(css.includes('.rule-form-grid .input-narrow'), '窄输入框应在表单行内填满列宽');
+  assert.ok(css.includes('.form-grid-2 .input-narrow'), '两列行内的时间输入框应填满半列');
   assert.ok(css.includes('max-width: none'), '表单行内窄输入框不应限制最大宽度');
 });
 test('规则/任务基本信息：启用项在名称上方，规则名称与优先级同一行', async () => {

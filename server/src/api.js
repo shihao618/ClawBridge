@@ -118,9 +118,14 @@ function sendPage(res, filename, next) {
       res.status(404).json({ error: { code: ErrorCodes.NOT_FOUND, message: '页面尚未部署' } });
       return;
     }
-    res.sendFile(filePath, (sendErr) => {
-      if (sendErr) next(sendErr);
-    });
+    // 页面入口禁止缓存，避免升级后仍加载旧版 admin.js/style.css。
+    res.sendFile(
+      filePath,
+      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate', Pragma: 'no-cache', Expires: '0' } },
+      (sendErr) => {
+        if (sendErr) next(sendErr);
+      },
+    );
   });
 }
 
@@ -1813,7 +1818,17 @@ export function createApp() {
   // 静态页面
   // -------------------------------------------------------------------------
 
-  app.use(express.static(WEB_DIR, { index: false, fallthrough: true }));
+  app.use(
+    express.static(WEB_DIR, {
+      index: false,
+      fallthrough: true,
+      setHeaders(res) {
+        // 版本升级后浏览器必须重新校验 JS/CSS，避免继续使用旧界面。
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      },
+    }),
+  );
+
   // 首页与扫码绑定页是同一个页面：统一使用 /，/bind 只做 302 跳转
   app.get('/', (req, res, next) => sendPage(res, 'index.html', next));
   app.get('/bind', (req, res) => res.redirect(302, '/'));
