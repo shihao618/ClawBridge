@@ -48,29 +48,22 @@ test('SETTINGS_SCHEMA / getSettings：10 分组、字段元数据、envOnly 仅�
   assert.equal(appRules.fields.find((field) => field.key === 'allowedHosts').type, 'stringArray');
   assert.equal(appRules.fields.find((field) => field.key === 'timeoutMs').min, 1000);
 
+  // BA-09：定时通知拥有独立的网络防护配置（缺省继承接口应用）
+  const schedulerFields = view.groups.find((group) => group.key === 'scheduler').fields;
+  assert.equal(schedulerFields.find((field) => field.key === 'maxResponseBytes').type, 'number');
+  assert.equal(schedulerFields.find((field) => field.key === 'allowedHosts').type, 'stringArray');
+
   const restartFields = view.groups
     .flatMap((group) => group.fields.filter((field) => field.restartRequired).map((field) => `${group.key}.${field.key}`))
     .sort();
   assert.deepEqual(restartFields, [
-    'ilink.appId',
-    'ilink.botAgent',
-    'ilink.botType',
-    'ilink.cdnBaseUrl',
-    'ilink.channelVersion',
-    'ilink.clientVersion',
-    'ilink.defaultBaseUrl',
-    'ilink.loginBaseUrl',
-    'ilink.longPollTimeoutMs',
-    'ilink.qrPollTimeoutMs',
-    'ilink.requestTimeoutMs',
-    'ilink.routeTag',
+    'media.inboundMaxConcurrent',
+    'media.inboundMaxQueue',
     'media.maxBytes',
     'monitor.longPollTimeoutMs',
     'monitor.maxAccounts',
-    'push.apiRateLimitPerMinute',
     'push.rateLimitMax',
     'push.rateLimitWindowMs',
-    'push.tickMs',
     'server.trustProxy',
   ]);
 
@@ -98,7 +91,7 @@ test('updateSettings：校验 → 持久化 → config 生效 → hooks → rest
   const result = settings.updateSettings({
     keepalive: { enabled: false, text: '自定义保活文案 {name}' },
     appRules: { allowedHosts: '127.0.0.1, 192.168.88.10,127.0.0.1', workerConcurrency: 4 },
-    scheduler: { timezone: 'UTC', maxRecipients: 50 },
+    scheduler: { timezone: 'UTC', maxRecipients: 50, maxResponseBytes: 2048, allowedHosts: ['127.0.0.1'] },
     media: { maxBytes: 5 * 1024 * 1024 },
     binding: { maxActive: 80 },
   });
@@ -113,6 +106,8 @@ test('updateSettings：校验 → 持久化 → config 生效 → hooks → rest
   assert.equal(config.appRules.workerConcurrency, 4);
   assert.equal(config.scheduler.timezone, 'UTC');
   assert.equal(config.scheduler.maxRecipients, 50);
+  assert.equal(config.scheduler.maxResponseBytes, 2048);
+  assert.deepEqual(config.scheduler.allowedHosts, ['127.0.0.1']);
   assert.equal(config.media.outboundMaxBytes, 5 * 1024 * 1024);
   assert.equal(config.binding.maxActiveSessions, 80);
 

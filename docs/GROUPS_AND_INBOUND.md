@@ -7,7 +7,8 @@
 ## 0. 范围与假设
 
 - "分组"采用 **多对多标签**（一个用户可属于多个分组），比单分组更灵活；管理端用多选编辑。
-- 现有真实数据（2 个用户、历史消息）必须**无损保留**；schema 采用 v3 additive migration。
+- 现有真实数据必须保留：**历史设计（已废弃）** 曾计划用 schema v3 additive migration 无损升级；
+  现行 schema v10 起旧版本库启动直接拒绝，只能备份 `DATA_DIR` 后用空库重建并重新绑定（见 §1）。
 - 入站消息 API 为 **拉取式 REST**（支持 `since` / `cursor` / `wait` 长轮询），不改动现有
   `getupdates` 长轮询与 outbox 架构；Webhook 推送不在本次范围（可作为后续扩展）。
 - 分组群发复用现有 outbox：为分组内每个 active 用户各入队一条；文本/媒体限制与单发一致。
@@ -35,11 +36,18 @@ CREATE INDEX IF NOT EXISTS idx_user_groups_group ON user_groups(group_id);
 CREATE INDEX IF NOT EXISTS idx_user_groups_user ON user_groups(user_id);
 ```
 
-迁移要求：
-- `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；
-- 从 v2 升级保留全部 users/outbox/inbound_messages/attachments/events；
-- 无法从 v1 直接跨级？仍走顺序迁移（v1→v2→v3），现有 `db.js` 迁移框架支持；
-- 测试必须覆盖：构造 v2 数据库（含用户/消息/附件）→ 迁移到 v3 数据不丢、重复打开幂等。
+迁移要求（**历史设计记录，已废弃**）：
+
+> **⚠️ 现行 schema v10 不提供任何旧版本数据库迁移**：`server/src/db.js` 在
+> `schema_version !== SCHEMA_VERSION` 时直接抛错拒绝启动（`tests/unit/backend-schema-version.test.js` 断言）。
+> 旧库升级只能：备份 `DATA_DIR` → 空库重建 → 重新扫码绑定。下面的 v2→v3 逐级迁移描述仅为历史设计对照保留。
+> 完整升级/回滚实操见 [`docs/UPGRADE.md`](UPGRADE.md)。
+
+- 历史设计（v3 时点）：`SCHEMA_VERSION` 当时为 3；`CREATE TABLE IF NOT EXISTS` 幂等；
+- 历史设计（v3 时点）：从 v2 升级保留全部 users/outbox/inbound_messages/attachments/events；
+- 历史设计（v3 时点）：不能从 v1 直接跨级，仍走顺序迁移（v1→v2→v3），当时 `db.js` 迁移框架支持；
+- 历史测试要求（v3 时点）：构造 v2 数据库（含用户/消息/附件）→ 迁移到 v3 数据不丢、重复打开幂等；
+  **该测试已随迁移逻辑一起移除**，现行测试只断言“旧版本库启动直接拒绝”。
 
 ## 2. 数据模型与视图
 
@@ -154,7 +162,7 @@ Query:
   "items": [ {
     "id": "in_…",
     "userId": "u_…",
-    "displayName": "杨星雨",
+    "displayName": "演示用户A",
     "groups": [ { "id":"grp_…", "name":"VIP客户", "color":"#07C160" } ],
     "text": "消息文本（媒体消息为 [图片]/[视频]/[文件]/[语音] 占位）",
     "itemTypes": "1" 或 "1,2",
@@ -219,7 +227,8 @@ curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50&cursor=$NEXT&wa
 ## 7. 测试要求
 
 **单元（backend-dev）**
-- db：v2→v3 迁移（含 v2 数据）保留数据、幂等；全新库 v3；
+- db（历史已废弃）：v2→v3 迁移测试已随迁移逻辑移除；现行断言见 `tests/unit/backend-schema-version.test.js`
+  （旧版本库启动直接拒绝、空库直接建到 v10）；
 - store：groups CRUD/重名、user_groups 替换/去重/级联删除、用户列表按 groupId 过滤、
   消息列表按 groupId 过滤、GroupView 计数、入站查询 cursor/since/分页/附件关联；
 - v1 inbound：cursor 编解码、since 独占、limit 边界、wait（短超时，真实等待 ≤1s）、
@@ -233,11 +242,11 @@ curl -s "http://localhost:10380/api/v1/inbound/messages?limit=50&cursor=$NEXT&wa
 - v1 入站消息：绑定两用户、注入文本/图片/文件入站 → `GET /api/v1/inbound/messages` 按 cursor
   增量拉取两次（不重复/不遗漏）、since 过滤、userId/groupId 过滤、附件元数据与 `/api/v1/media/...`
   字节一致、鉴权 401、limit/wait 参数校验、wait 超时返回空；
-- 迁移：v2 数据库副本升级后数据保留（e2e 或单测均可）；
+- 迁移（历史已废弃）：v2 数据库副本升级验证随 v10 起“旧库直接拒绝”策略取消，改为验证“旧库启动失败”；
 - `npm test` 全绿（原 142 + 新增）。
 
 **验收（QA）**
 - 独立跑测试矩阵；Docker 容器内用真实 API 完成分组/入站 API 黑盒；
-- 真实数据 v2→v3 迁移副本验证（users/outbox/inbound/attachments 数量与样本一致、幂等）；
+- 真实数据副本验证（历史已废弃）：v2→v3 升级验证已取消；现行升级只能备份后空库重建并重新绑定（见 §1）；
 - 安全：分组/入站接口鉴权、参数边界、入站数据不泄漏 token/密钥、分页不越权；
 - 文档一致性（README/API/ARCHITECTURE 与实现一致）。

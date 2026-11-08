@@ -9,12 +9,15 @@
 
 | 分组 | 字段 |
 | --- | --- |
-| push | `rateLimitMax`、`rateLimitWindowMs`、`maxAttempts`、`retryDelaysMs`(逗号分隔)、`apiRateLimitPerMinute`、`maxTextLength` |
+| push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`retryDelaysMs`(逗号分隔)、`apiRateLimitPerMinute`、`maxTextLength` |
 | keepalive | `enabled`、`windowMs`、`leadMs`、`repeatMs`、`tickMs`、`text`、`maxPerTick` |
 | appRules | `enabled`、`timeoutMs`、`maxResponseBytes`、`workerConcurrency`、`allowedHosts`(数组/逗号分隔)、`maxQueue` |
-| scheduler | `enabled`、`tickMs`、`timezone`(IANA)、`maxRecipients`、`timeoutMs` |
-| media | `maxBytes`、`inboundMaxBytes` |
-| binding | `ttlMs`、`maxRefreshes`、`maxActive`、`ipLimitPerHour`、`verifyTimeoutMs` |
+| scheduler | `enabled`、`tickMs`、`timezone`(IANA)、`maxRecipients`、`timeoutMs`、`maxResponseBytes`（0=继承 appRules）、`allowedHosts`（数组/逗号分隔；空=继承 appRules） |
+| media | `maxBytes`、`inboundMaxBytes`、`downloadTimeoutMs`、`uploadTimeoutMs`、`inboundMaxConcurrent`、`inboundMaxQueue`、`allowedHosts`(数组/逗号分隔)、`allowInsecureHttp`、`allowedImageMime`、`allowedVideoMime`（数组/逗号分隔） |
+| binding | `ttlMs`、`maxRefreshes`、`maxActive`、`ipLimitPerHour`、`verifyTimeoutMs`、`networkErrorLimit`、`pollGapMs` |
+
+> 上表为第一批字段；`ilink` / `monitor` / `server` / `security` 等第二批扩展分组与完整字段见 §7.2，
+> 最终以 `GET /api/admin/settings` 返回为准。
 
 **仍只由 `.env` 管理（启动前必须/根密钥/存储与监听）**：`APP_SECRET`、`DATA_DIR`、`MEDIA_DIR`、`PORT`、
 `HOST`、`NODE_ENV`。管理密码与 API Token 只存 DB（后台「安全」卡片，首启自动生成到 data/ 文件）；
@@ -31,6 +34,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 ```
 
 - 当前 `SCHEMA_VERSION=10`；旧版本 schema 启动直接拒绝，不提供迁移；新表空时使用 env 默认值。
+  升级/回滚（备份 → 空库重建 → 重新绑定）的实操步骤见 [`docs/UPGRADE.md`](UPGRADE.md)。
 - 只存**被修改过**的字段（新增/删除字段不影响未设置的默认值）。
 
 ## 2. 服务端 `server/src/settings.js`
@@ -107,22 +111,36 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 
 以上在后台只读展示 + 脱敏/路径展示。其余全部迁移到 DB（后台可改）。
 
+> **例外（尚未并入后台运行配置）**：数据维护（`server/src/maintenance.js`：孤儿附件 / 日志保留 GC）
+> 的参数目前从 env 读取（`MAINTENANCE_*`，默认开启、每天一次），见 [`docs/UPGRADE.md`](UPGRADE.md) §8
+> 「数据维护」。此类运维参数后续可并入 settings 分组。
+
 ### 7.2 新增设置分组/字段（全部 DB 可改）
+
+> 下表按 **当前实现（schema v10）** 列出后台可改字段与生效方式；以 `GET /api/admin/settings` 的
+> `groups[].fields[].restartRequired` 为准。`.env` 对应变量只是**首次启动默认值**。
 
 | 分组 | 字段（type/范围） | 生效 |
 | --- | --- | --- |
-| server | `publicBaseUrl`(string，空/URL)、`trustProxy`(bool)、`cookieSecure`(bool)、`logLevel`(enum debug/info/warn/error/silent) | publicBaseUrl/cookieSecure/logLevel 即时（logLevel 调用 logger.setLogLevel）；trustProxy restartRequired |
-| security | `sessionTtlMs`(number)、`pushApiEnabled`(bool) | 即时（登录时读取） |
-| ilink | `loginBaseUrl`、`defaultBaseUrl`、`cdnBaseUrl`(URL)、`appId`、`channelVersion`、`botAgent`、`botType`、`routeTag`(string)、`clientVersion`、`requestTimeoutMs`、`qrPollTimeoutMs`、`longPollTimeoutMs`(number) | 全部 restartRequired |
-| monitor | `longPollTimeoutMs`、`maxAccounts`(number) | restartRequired |
-| media | 新增 `downloadTimeoutMs`、`uploadTimeoutMs`、`allowedImageMime`、`allowedVideoMime`（数组/逗号串） | 即时 |
-| push | 新增 `tickMs`(number) | restartRequired |
-| binding | 新增 `networkErrorLimit`、`pollGapMs`(number) | 即时 |
+| server | `publicBaseUrl`(string，空/URL)、`trustProxy`(bool)、`cookieSecure`(bool)、`logLevel`(enum debug/info/warn/error/silent) | publicBaseUrl/cookieSecure/logLevel 即时；trustProxy restartRequired |
+| security | `sessionTtlMs`(number)、`pushApiEnabled`(bool) | 即时（登录/请求时读取） |
+| ilink | `loginBaseUrl`、`defaultBaseUrl`、`cdnBaseUrl`(URL)、`appId`、`channelVersion`、`botAgent`、`botType`、`routeTag`(string)、`clientVersion`、`requestTimeoutMs`、`qrPollTimeoutMs`、`longPollTimeoutMs`(number) | 即时（每次请求实时读取；已建立的绑定会话沿用原 Base URL） |
+| monitor | `longPollTimeoutMs`、`maxAccounts`(number) | restartRequired（监控账号/长轮询在启动时创建） |
+| media | `maxBytes`、`inboundMaxBytes`、`downloadTimeoutMs`、`uploadTimeoutMs`、`inboundMaxConcurrent`、`inboundMaxQueue`、`allowedHosts`(数组/逗号分隔)、`allowInsecureHttp`(bool)、`allowedImageMime`、`allowedVideoMime`（数组/逗号串） | `maxBytes`、`inboundMaxConcurrent`、`inboundMaxQueue` restartRequired（body 解析器/下载信号量启动时创建）；其余即时 |
+| push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`apiRateLimitPerMinute`、`maxTextLength`、`retryDelaysMs`(逗号分隔) | `rateLimitMax`/`rateLimitWindowMs` restartRequired（令牌桶启动时创建）；`tickMs`（每轮实时读取）与 `apiRateLimitPerMinute`（每请求同步）即时；其余即时 |
+| scheduler | `enabled`、`tickMs`、`timeoutMs`、`timezone`(IANA)、`maxRecipients`、`maxResponseBytes`、`allowedHosts` | 即时（引擎/定时器经 hook 重启）；`maxResponseBytes=0` / `allowedHosts` 为空时继承接口应用 |
+| binding | `ttlMs`、`maxRefreshes`、`maxActive`、`ipLimitPerHour`、`verifyTimeoutMs`、`networkErrorLimit`、`pollGapMs`(number) | 即时 |
+
+以上字段对应的 `.env` **首次启动默认值**变量名见 `.env.example`（如 `BINDING_VERIFY_TIMEOUT_MS`、
+`BINDING_NETWORK_ERROR_LIMIT`、`BINDING_POLL_GAP_MS`、`ILINK_ROUTE_TAG`、`MEDIA_ALLOWED_IMAGE_MIME`、
+`MEDIA_ALLOWED_VIDEO_MIME`）；后台修改后以 DB 为准。
 
 ### 7.3 机密（管理密码 / API Token）改为后台管理
 
 - DB 新增（仍在 `app_settings`，不新增表）：
-  - `security.adminPasswordHash`：`scrypt` 哈希记录（salt/参数），登录校验优先用它，否则回退 env/自动生成密码；
+  - `security.adminPasswordHash`：`scrypt` 哈希记录（salt/参数），**登录校验只使用 DB 哈希**；
+    密码来源恒为 DB（首启 bootstrap 生成，写入 `data/admin-password.txt`），不再读取 `.env` 的
+    `ADMIN_PASSWORD`，也不做任何 env/文件回退；
   - `security.apiTokenEnc`：AES-256-GCM 加密的 API Token；`pushApiEnabled` 控制开关。
 - 新增 API（Cookie + CSRF）：
   - `POST /api/admin/security/password` `{currentPassword,newPassword}` → 当前密码校验（仅 DB scrypt 哈希），
@@ -147,8 +165,8 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 - 运行配置页自动渲染新增分组（server/security/ilink/monitor/media 扩展字段）；
 - 新增「安全」卡片：
   - 管理密码：当前密码/新密码/确认新密码 + 提交（POST security/password）、「重置为随机密码」按钮；
-  - API Token：当前预览 + 来源（数据库）；「重新生成」按钮 → 弹窗显示新 Token 一次 + 复制按钮；
-    「恢复环境变量默认」按钮；推送 API 开关；
+  - API Token：当前预览 + 来源（恒为数据库）；「重新生成」按钮 → 弹窗显示新 Token 一次 + 复制按钮；
+    推送 API 开关；
   - 全部提示：Token 只显示一次、修改密码不强制下线已登录会话（过期后失效）。
 - 文档页更新「运行配置」章节与端点表；`.env.example` 标注仅 6 项必须 env + 其余可后台改。
 

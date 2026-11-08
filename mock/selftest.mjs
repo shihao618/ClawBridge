@@ -252,6 +252,18 @@ try {
     assert.match(qr.qrcode_img_content, /^https?:\/\//);
   });
 
+  await check('GET /mock-bind 返回占位 HTML（qrcode_img_content 不再 404）', async () => {
+    const bindUrl = new URL(qr.qrcode_img_content);
+    assert.equal(bindUrl.pathname, '/mock-bind', `qrcode_img_content 应指向 /mock-bind，实际 ${bindUrl.pathname}`);
+    assert.equal(bindUrl.searchParams.get('qrcode'), qr.qrcode, 'qrcode_img_content 应携带 qrcode 参数');
+    const res = await fetch(qr.qrcode_img_content);
+    assert.equal(res.status, 200, `mock-bind 应返回 200，实际 ${res.status}`);
+    assert.match(res.headers.get('content-type') ?? '', /^text\/html/, 'mock-bind 应返回 HTML 页面');
+    const html = await res.text();
+    assert.ok(html.includes(qr.qrcode), '占位页应展示 qrcode 参数');
+    assert.ok(html.includes('模拟器'), '占位页应说明这是本地模拟器/演示用途');
+  });
+
   await check('get_qrcode_status 初始为 wait（长轮询有上限）', async () => {
     const startedAt = Date.now();
     const res = await c.proto('GET', `/ilink/bot/get_qrcode_status?qrcode=${qr.qrcode}`);

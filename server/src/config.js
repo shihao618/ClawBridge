@@ -119,12 +119,24 @@ export function loadConfig(env = process.env) {
     ? (path.isAbsolute(mediaDirRaw) ? mediaDirRaw : path.resolve(ROOT_DIR, mediaDirRaw))
     : path.join(dataDir, 'media');
 
+  const mediaDownloadTimeoutMs = envInt(env, 'MEDIA_DOWNLOAD_TIMEOUT_MS', 60000);
+
   const media = {
     dir: mediaDir,
     outboundMaxBytes: envInt(env, 'MEDIA_MAX_BYTES', 25 * 1024 * 1024),
     inboundMaxBytes: envInt(env, 'INBOUND_MEDIA_MAX_BYTES', 100 * 1024 * 1024),
-    downloadTimeoutMs: envInt(env, 'MEDIA_DOWNLOAD_TIMEOUT_MS', 60000),
+    downloadTimeoutMs: mediaDownloadTimeoutMs,
     uploadTimeoutMs: envInt(env, 'MEDIA_UPLOAD_TIMEOUT_MS', 60000),
+    // BA-02：入站下载进程级有界并发闸门（默认 2 并发 + 64 排队；超出排队直接失败，避免无限堆积）。
+    inboundMaxConcurrent: Math.min(32, Math.max(1, envInt(env, 'INBOUND_MEDIA_MAX_CONCURRENT', 2))),
+    inboundMaxQueue: Math.min(10000, Math.max(0, envInt(env, 'INBOUND_MEDIA_MAX_QUEUE', 64))),
+    inboundQueueTimeoutMs: Math.max(1000, envInt(env, 'INBOUND_MEDIA_QUEUE_TIMEOUT_MS', mediaDownloadTimeoutMs)),
+    // BA-05：入站下载 URL 协议/主机校验（默认仅 https；主机白名单 = iLink/CDN 主机 + MEDIA_ALLOWED_HOSTS）。
+    allowedHosts: envStr(env, 'MEDIA_ALLOWED_HOSTS', '')
+      .split(',')
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean),
+    allowInsecureHttp: envBool(env, 'MEDIA_ALLOW_INSECURE_HTTP', false),
     allowedImageMime: envStr(env, 'MEDIA_ALLOWED_IMAGE_MIME', 'image/jpeg,image/png,image/gif,image/webp,image/bmp')
       .split(',')
       .map((v) => v.trim().toLowerCase())
@@ -196,12 +208,19 @@ export function loadConfig(env = process.env) {
   };
 
   // 定时通知（docs/SCHEDULED_TASKS.md）：按时间计划调用外部接口并把结果推送微信。
+  // BA-09：定时任务有独立的网络防护配置；maxResponseBytes=0 / allowedHosts=[] 表示
+  // 继承 appRules 的对应值（保持历史行为），后台可在「定时通知」分组单独覆盖。
   const scheduler = {
     enabled: envBool(env, 'SCHEDULER_ENABLED', true),
     tickMs: Math.max(1000, envInt(env, 'SCHEDULER_TICK_MS', 15000)),
     timezone: envStr(env, 'SCHEDULER_TIMEZONE', 'Asia/Shanghai'),
     maxRecipients: Math.max(1, envInt(env, 'SCHEDULER_MAX_RECIPIENTS', 200)),
     timeoutMs: Math.max(1000, envInt(env, 'SCHEDULER_TIMEOUT_MS', 8000)),
+    maxResponseBytes: Math.max(0, envInt(env, 'SCHEDULER_MAX_RESPONSE_BYTES', 0)),
+    allowedHosts: envStr(env, 'SCHEDULER_ALLOWED_HOSTS', '')
+      .split(',')
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean),
   };
 
   const config = {

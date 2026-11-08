@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
-import { sleep, startE2E, startMockApi, waitFor } from '../helpers/e2e-env.mjs';
+import { expectNoChange, startE2E, startMockApi, waitFor } from '../helpers/e2e-env.mjs';
 
 let e2e;
 let externalApi;
@@ -414,8 +414,13 @@ test('失败无兜底：不发送任何通知、日志 failed', async () => {
     label: '无兜底失败日志',
   });
   assert.ok(String(log.error).length > 0);
-  await sleep(900);
-  const messagesAfter = (await e2e.mockState()).sentMessages.length;
+  // 负向断言：失败后 mock sentMessages 数量稳定为基线（不依赖固定 sleep）
+  const messagesAfter = Number(
+    await expectNoChange(async () => (await e2e.mockState()).sentMessages.length, {
+      label: '失败无兜底不发送微信消息',
+      observeMs: 900,
+    }),
+  );
   assert.equal(messagesAfter, messagesBefore, '无 fallback 时失败不应发送任何微信消息');
   externalApi.setResponse({ json: { ok: true } });
 });
@@ -457,10 +462,18 @@ test('测试运行（dry-run）：真实调用并返回诊断，但不发送、�
   assert.equal(dryRun.json.error, '');
   assert.equal(externalApi.requests.length, 1, 'dry-run 应调用外部接口一次');
 
-  await sleep(800);
-  assert.equal(await mockSentCount(user1.wechatUserId), mockCountBefore, 'dry-run 不应发送微信消息');
-  const logsAfter = await e2e.getScheduledTaskLogs({ taskId: task.id });
-  assert.equal(logsAfter.json.total, logsBeforeCount, 'dry-run 不应写运行日志');
+  // 快照式负向断言：dry-run 前后“mock 收到数 + 运行日志数”稳定不变
+  const dryRunStable = JSON.parse(
+    await expectNoChange(
+      async () => ({
+        mockSent: await mockSentCount(user1.wechatUserId),
+        logs: (await e2e.getScheduledTaskLogs({ taskId: task.id })).json.total,
+      }),
+      { label: 'dry-run 不发送、不写日志', observeMs: 800 },
+    ),
+  );
+  assert.equal(dryRunStable.mockSent, mockCountBefore, 'dry-run 不应发送微信消息');
+  assert.equal(dryRunStable.logs, logsBeforeCount, 'dry-run 不应写运行日志');
   assert.equal(JSON.stringify(dryRun.json).includes('dry-run-secret'), false, 'dry-run 响应不应回显 Header 值');
 
   // 429：响应头诊断

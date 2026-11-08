@@ -251,6 +251,50 @@ async function readAsset(name) {
   return fs.readFile(path.join(ASSETS_DIR, name), 'utf8');
 }
 
+/**
+ * 递归列出 web/assets 下全部前端脚本（相对路径，POSIX 分隔符，稳定排序）。
+ * 拆分 admin.js 为多个 ES Module 后，静态契约改为扫描全部脚本，避免只覆盖入口文件。
+ */
+async function listAssetFiles(dir = ASSETS_DIR, prefix = '') {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...(await listAssetFiles(path.join(dir, entry.name), rel)));
+    } else if (entry.name.endsWith('.js')) {
+      files.push(rel);
+    }
+  }
+  return files.sort();
+}
+
+/** 读取 web/assets/**\/*.js 全量源码并拼接（带文件分隔注释，便于定位）。 */
+async function readAllAssets() {
+  const files = await listAssetFiles();
+  const contents = await Promise.all(
+    files.map(async (file) => `/* ==== ${file} ==== */\n${await fs.readFile(path.join(ASSETS_DIR, file), 'utf8')}`),
+  );
+  return contents.join('\n');
+}
+
+/** 读取 web/assets 下的指定脚本（相对路径）。 */
+async function readAssetAt(relPath) {
+  return fs.readFile(path.join(ASSETS_DIR, relPath), 'utf8');
+}
+
+/**
+ * 读取规则/定时任务两套编辑器所在视图模块并拼接。
+ * 精确计数断言（如「重设 Header 逻辑恰好两份」）针对具体模块文件，不依赖 admin.js 单文件结构。
+ */
+async function readEditorModules() {
+  const [appRules, schedules] = await Promise.all([
+    readAssetAt('admin/views/app-rules.js'),
+    readAssetAt('admin/views/schedules.js'),
+  ]);
+  return `${appRules}\n${schedules}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* 1. 页面路由                                                         */
 /* ------------------------------------------------------------------ */
@@ -389,20 +433,25 @@ test('HTML / CSS 不引用任何外部 URL（CDN / 字体 / 图片）', async ()
 });
 
 test('前端 JS 不使用 innerHTML 拼接动态内容，且不引用外部 URL', async () => {
-  const jsFiles = ['common.js', 'bind.js', 'admin.js', 'docs.js'];
+  const jsFiles = await listAssetFiles();
+  assert.ok(jsFiles.length >= 4, `web/assets 下应至少有 4 个前端脚本，实际：${jsFiles.join(', ')}`);
+  // 仅允许占位示例域名（输入框 placeholder，不是资源引用）
+  const PLACEHOLDER_HOSTS = /^https:\/\/(?:api\.example\.com|example\.com)(?:[/?#]|$)/;
   for (const file of jsFiles) {
-    const source = await readAsset(file);
+    const source = await readAssetAt(file);
     assert.doesNotMatch(source, /\.innerHTML\b/, `${file} 不允许使用 innerHTML`);
     assert.doesNotMatch(source, /\.outerHTML\b/, `${file} 不允许使用 outerHTML`);
-    if (file === 'admin.js') {
-      // 规则表单中的 https://api.example.com 仅作输入框占位示例，不是资源引用
-      assert.doesNotMatch(
-        source,
-        /fetch\(\s*['"]https?:|import\s*\(\s*['"]https?:|\.src\s*=\s*['"]https?:/,
-        `${file} 不允许从外部 URL 加载资源`,
+    assert.doesNotMatch(
+      source,
+      /fetch\(\s*['"]https?:|import\s*\(\s*['"]https?:|\.src\s*=\s*['"]https?:/,
+      `${file} 不允许从外部 URL 加载资源`,
+    );
+    for (const match of source.matchAll(/https?:\/\/[^\s'"`)<]+/g)) {
+      assert.match(
+        match[0],
+        PLACEHOLDER_HOSTS,
+        `${file} 不允许引用外部 URL：${match[0]}（仅允许输入框占位示例域名）`,
       );
-    } else {
-      assert.doesNotMatch(source, /https?:\/\//, `${file} 不允许引用外部 URL`);
     }
     assert.match(source, /^import\s|\bexport\s/m, `${file} 应为 ES Module`);
   }
@@ -452,7 +501,7 @@ test('绑定脚本覆盖 docs/API.md 中全部绑定状态', async () => {
 });
 
 test('后台脚本覆盖管理 API 契约与 CSRF 请求头', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const endpoint of [
     '/api/admin/me',
     '/api/admin/login',
@@ -498,7 +547,7 @@ test('文档页内容与 docs/API.md 一致（关键端点与错误码）', asyn
 });
 
 test('多媒体：管理后台脚本实现上传、预览与附件渲染', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     '/api/admin/media',
     'X-File-Name',
@@ -583,7 +632,7 @@ test('文档页多媒体章节与 docs/MEDIA.md 契约一致', async () => {
 });
 
 test('分组：管理后台脚本实现分组 CRUD、归属、筛选与群发', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     '/api/admin/groups',
     '/api/admin/groups/',
@@ -606,7 +655,7 @@ test('分组：管理后台脚本实现分组 CRUD、归属、筛选与群发', 
 });
 
 test('分组保活继承：行内开关、分组分配提示与接口字段', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     'keepaliveEnabled',
     'isGroupKeepaliveEnabled',
@@ -681,7 +730,7 @@ test('文档页分组与入站消息 API 与 docs/GROUPS_AND_INBOUND.md 一致',
 });
 
 test('保活：管理后台脚本实现用户/分组开关、配置小节与来源标签', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     '/keepalive',
     'keepaliveEnabled',
@@ -741,14 +790,14 @@ test('文档页消息保活章节与 docs/KEEPALIVE.md 一致', async () => {
 });
 
 test('接口应用：管理后台脚本实现规则 CRUD、表单、测试运行与日志', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     '/api/admin/app-rules',
     '/api/admin/app-rule-logs',
     'includeDisabled=1',
     'requestBody.headers',
     'headerNames',
-    'rule-headers',
+    'createHeaderModeField',
     '重设 Header',
     '••••••',
     '值不会回显',
@@ -756,7 +805,7 @@ test('接口应用：管理后台脚本实现规则 CRUD、表单、测试运行
     '响应头（诊断）',
     'Header 值已加密保存（不会回显）',
     'syncHeaderModeUi',
-    'scopeTypeValue',
+    'createPickerSection',
     'extractionModeSelect',
     '不提取（直接调用接口）',
     'rule-extraction-mode',
@@ -784,7 +833,7 @@ test('接口应用：管理后台脚本实现规则 CRUD、表单、测试运行
 });
 
 test('接口应用：规则日志改为弹窗（移除独立日志 Tab）', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     'openRuleLogsModal',
     'rule-log-modal-status',
@@ -809,7 +858,7 @@ test('接口应用：规则日志改为弹窗（移除独立日志 Tab）', asyn
 });
 
 test('定时通知：interval 可选每日生效时间段（windowStart/windowEnd）', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     'windowStart',
     'windowEnd',
@@ -870,7 +919,7 @@ test('菜单模式：侧栏固定 7 项菜单与视图区块一一对应', async
 });
 
 test('菜单模式：hash 路由、懒加载与移动抽屉实现', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     'MENU_VIEWS',
     'VIEW_BY_ID',
@@ -887,9 +936,8 @@ test('菜单模式：hash 路由、懒加载与移动抽屉实现', async () => 
     'navigateToView',
     'resolveInitialView',
     'loadView',
-    'openDrawer',
     'closeDrawer',
-    'toggleDrawer',
+    'initSidebarDrawer',
   ]) {
     assert.ok(admin.includes(token), `admin.js 应包含菜单/路由实现：${token}`);
   }
@@ -901,7 +949,7 @@ test('菜单模式：hash 路由、懒加载与移动抽屉实现', async () => 
 });
 
 test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立即执行与日志', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     'buildRequestRow',
     'buildResponseRow',
@@ -928,15 +976,12 @@ test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立
     'schedule-plan-main-row',
     'schedule-interval-minutes',
     'schedule-daily-time',
-    'schedule-user-list',
-    'schedule-group-list',
+    'createPickerSection',
+    'withPickerActions',
     'schedule-target-type',
     '全部用户',
-    'schedule-headers',
-    'schedule-response-path',
-    'schedule-reply-template',
-    'schedule-fallback',
-    'schedule-timeout',
+    'createHeaderModeField',
+    'createResponseInputs',
     'recipientsCount',
     'responseHeaders',
     'headerNames',
@@ -963,41 +1008,49 @@ test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立
 });
 
 test('接口应用与定时通知：重设 Header 的实际操作一致（保留名称、清除掩码、补全新值）', async () => {
-  const admin = await readAsset('admin.js');
-  const count = (pattern) => (admin.match(pattern) || []).length;
-  assert.equal(count(/function syncHeaderModeUi\(\)/g), 2, '规则和定时应各有一个 Header 模式同步函数');
+  const editorModules = await readEditorModules();
+  const all = await readAllAssets();
+  const headerMode = await readAssetAt('admin/integrations/header-mode.js');
+  const count = (pattern) => (headerMode.match(pattern) || []).length;
+  // F-04：两套编辑器共用 integrations/header-mode.js，能力只实现一次，两侧都引用共享模块
+  assert.equal(count(/function syncHeaderModeUi\(\)/g), 1, 'Header 模式同步函数应统一在共享模块中实现');
   assert.equal(
     count(/if \(headerModeValue === 'keep'\) headersTextarea\.value = headerNamesText;/g),
-    2,
+    1,
     '保留模式应显示掩码 Header',
   );
   assert.equal(
     count(/const headerResetText = headerNames\.map\(\(name\) => `\$\{name\}: `\)/g),
-    2,
+    1,
     '重设模式应为每个 Header 保留名称',
   );
   assert.equal(
     count(/else if \(headerModeValue === 'replace'\) headersTextarea\.value = headerResetText;/g),
-    2,
+    1,
     '重设模式应填入保留名称、清除隐藏值的文本',
   );
   assert.equal(
     count(/请补全每个 Header 的值；如需全部删除，请选择「清空 Header」/g),
-    2,
+    1,
     '规则和定时都应校验空 Header 值',
   );
   assert.equal(
     count(/请选择「重设 Header」，保留名称并补全新值/g),
-    2,
+    1,
     '规则和定时的重设提示应一致',
   );
-  assert.ok(!admin.includes('schedule-header-mask'), '定时通知不应再有单独的 Header 掩码提示');
-  assert.ok(!admin.includes('现有 Header（值已加密不回显）'), '旧 Header 展示不应保留');
+  assert.equal(
+    (editorModules.match(/createHeaderModeField\(/g) || []).length,
+    2,
+    '规则编辑器与定时任务编辑器都应引用共享 Header 模块',
+  );
+  assert.ok(!all.includes('schedule-header-mask'), '定时通知不应再有单独的 Header 掩码提示');
+  assert.ok(!all.includes('现有 Header（值已加密不回显）'), '旧 Header 展示不应保留');
 });
 
 test('响应模板：条件判断、默认值与离线预览入口', async () => {
   const [admin, html, css] = await Promise.all([
-    readAsset('admin.js'),
+    readAllAssets(),
     readPage('docs.html'),
     readAsset('style.css'),
   ]);
@@ -1083,13 +1136,13 @@ test('定时通知：文档页章节与 docs/SCHEDULED_TASKS.md 一致', async (
   }
   assert.ok(/curl -X POST[^\n]*scheduled-tasks/.test(html), 'docs.html 应包含创建定时任务 curl 示例');
   assert.ok(html.includes('测试运行') && html.includes('立即执行'), 'docs.html 应说明测试运行/立即执行');
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   assert.ok(admin.includes('手动执行不会改变下一次定时时间'), '后台立即执行应提示不影响定时');
   assert.ok(admin.includes('定时计划不变'), '后台成功提示应注明定时计划不变');
 });
 
 test('运行配置：后台可编辑设置表单（分组/保存/恢复默认/只读 env）', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     '/api/admin/settings',
     '/api/admin/settings/reset',
@@ -1135,7 +1188,7 @@ test('运行配置：后台可编辑设置表单（分组/保存/恢复默认/�
 });
 
 test('运行配置：第二批分组与安全卡片（改密/API Token）', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of [
     '/api/admin/security/password',
     '/api/admin/security/password/reset',
@@ -1342,14 +1395,20 @@ test('后台脚本在模块末尾才调用 init()（避免顶层 let/const TDZ �
 });
 
 test('接口应用：新建规则弹窗点击遮罩不关闭（closeOnBackdrop=false）', async () => {
-  const [admin, common] = await Promise.all([readAsset('admin.js'), readAsset('common.js')]);
-  assert.match(admin, /closeOnBackdrop: false/, '规则编辑弹窗应设置 closeOnBackdrop: false');
+  const [editorModules, editorShell, common] = await Promise.all([
+    readEditorModules(),
+    readAssetAt('admin/integrations/editor-shell.js'),
+    readAsset('common.js'),
+  ]);
+  // F-04：编辑器弹窗骨架统一在 integrations/editor-shell.js，默认 closeOnBackdrop=false（长表单防误关）
+  assert.match(editorShell, /closeOnBackdrop = false/, '规则编辑弹窗应设置 closeOnBackdrop: false');
+  assert.match(editorModules, /openEditorModal\(\{/, '规则与定时任务编辑器应使用共享弹窗骨架');
   assert.match(common, /closeOnBackdrop = true/, 'openModal 应支持 closeOnBackdrop 选项');
   assert.match(common, /!busy && closeOnBackdrop\) close\('dismiss'\)/, '遮罩关闭需受 closeOnBackdrop 控制');
 });
 
 test('接口应用：参数提取支持多参数组合模式', async () => {
-  const admin = await readAsset('admin.js');
+  const admin = await readAllAssets();
   for (const token of ['多参数组合提取', 'MULTI_EXTRACTOR_TYPE_LABELS', 'multi-extractor-row', 'multi-extractor-list', '＋ 添加提取项', 'multiExtractors']) {
     assert.ok(admin.includes(token), `admin.js 应包含多参数提取实现：${token}`);
   }
@@ -1367,23 +1426,26 @@ test('移动端后台顶栏：标题与刷新/退出按钮不冲突', async () =
   ]) {
     assert.ok(css.includes(token), `style.css 应包含移动端顶栏适配：${token}`);
   }
-  assert.ok(css.includes('.admin-topbar .topbar-actions'), '旧的 topbar-actions 宽度规则应只作用于旧 .admin-topbar');
+  assert.ok(!css.includes('.admin-topbar .topbar-actions'), '旧的 .admin-topbar 死规则已删除（F-16：仅保留 .admin-topbar-bar）');
 });
 test('表单：GET 隐藏 Body 模板、POST 显示；定时任务弹窗遮罩不关闭', async () => {
-  const admin = await readAsset('admin.js');
-  for (const token of ['syncRuleRequestFields', 'syncScheduleRequestFields', 'schedule-body', 'rule-body']) {
-    assert.ok(admin.includes(token), `admin.js 应包含请求表单方法联动：${token}`);
+  const [editorModules, responseSection, editorShell] = await Promise.all([
+    readEditorModules(),
+    readAssetAt('admin/integrations/response-section.js'),
+    readAssetAt('admin/integrations/editor-shell.js'),
+  ]);
+  // F-04：Body 模板字段与「GET 隐藏 / POST 显示」联动统一在共享模块中实现一次
+  for (const token of ['syncRuleRequestFields', 'syncScheduleRequestFields']) {
+    assert.ok(editorModules.includes(token), `编辑器模块应包含请求表单方法联动：${token}`);
   }
+  assert.match(editorModules, /createBodyTemplateField\(/, '规则与定时任务编辑器应使用共享 Body 模板字段');
+  assert.ok(responseSection.includes('${prefix}-body'), '共享 Body 模板字段应按前缀生成 id');
   assert.equal(
-    (admin.match(/setHidden\(bodyField, methodSelect\.value !== 'POST'\)/g) || []).length,
-    2,
-    '规则与定时任务表单都应在 GET 时隐藏 Body',
+    (responseSection.match(/setHidden\(bodyField, methodSelect\.value !== 'POST'\)/g) || []).length,
+    1,
+    '规则与定时任务表单都应在 GET 时隐藏 Body（共享实现一次）',
   );
-  assert.equal(
-    (admin.match(/closeOnBackdrop: false/g) || []).length,
-    2,
-    '规则编辑与定时任务编辑弹窗都应设置 closeOnBackdrop: false',
-  );
+  assert.match(editorShell, /closeOnBackdrop = false/, '规则编辑与定时任务编辑弹窗都应设置 closeOnBackdrop: false');
 });
 test('移动端文档页：黑色示例框不超出屏幕', async () => {
   const css = await readAsset('style.css');
@@ -1401,7 +1463,7 @@ test('表单行：2/3 个输入框等宽均分并占满一行', async () => {
   assert.ok(css.includes('max-width: none'), '表单行内窄输入框不应限制最大宽度');
 });
 test('规则/任务基本信息：启用项在名称上方，规则名称与优先级同一行', async () => {
-  const [admin, css] = await Promise.all([readAsset('admin.js'), readAsset('style.css')]);
+  const [admin, css] = await Promise.all([readAllAssets(), readAsset('style.css')]);
   for (const token of ['class: \'check-field\'', 'rule-priority-input', '启用规则', '启用任务', "formField('规则名称'", "formField('任务名称"]) {
     assert.ok(admin.includes(token), `规则/任务基本信息应包含：${token}`);
   }
@@ -1439,14 +1501,10 @@ test('首页：使用与后台一致的侧边栏/顶栏导航', async () => {
   assert.ok(html.includes('id="bind-form"'), '首页仍应包含扫码绑定表单');
 });
 test('全站响应式：页面/导航只有一套 DOM 与交互，无 JS 设备判断或独立 PC/移动端分支', async () => {
-  const [adminHtml, docsHtml, indexHtml, admin, common, docs, bind, css] = await Promise.all([
+  const [adminHtml, docsHtml, indexHtml, css] = await Promise.all([
     readPage('admin.html'),
     readPage('docs.html'),
     readPage('index.html'),
-    readAsset('admin.js'),
-    readAsset('common.js'),
-    readAsset('docs.js'),
-    readAsset('bind.js'),
     readAsset('style.css'),
   ]);
   for (const [name, html] of [['admin.html', adminHtml], ['docs.html', docsHtml], ['index.html', indexHtml]]) {
@@ -1454,10 +1512,15 @@ test('全站响应式：页面/导航只有一套 DOM 与交互，无 JS 设备�
     assert.ok(!html.includes('br-mobile'), `${name} 不应包含单独的移动端换行标记`);
     assert.ok(!html.includes('mobile-nav') && !html.includes('desktop-nav'), `${name} 不应维护 PC/移动两套导航 DOM`);
   }
-  for (const [name, source] of [['admin.js', admin], ['common.js', common], ['docs.js', docs], ['bind.js', bind]]) {
-    assert.doesNotMatch(source, /matchMedia|innerWidth|screen\.width|isMobile\b|isDesktop\b/, `${name} 不应在 JS 中判断设备/屏幕宽度`);
+  // 设备判断扫描覆盖 web/assets/**/*.js 全量（拆分模块后新增文件同样受约束）
+  const DEVICE_PATTERN = /matchMedia|innerWidth|screen\.width|isMobile\b|isDesktop\b/;
+  for (const file of await listAssetFiles()) {
+    const source = await readAssetAt(file);
+    assert.doesNotMatch(source, DEVICE_PATTERN, `${file} 不应在 JS 中判断设备/屏幕宽度`);
   }
-  for (const [name, source] of [['admin.js', admin], ['common.js', common], ['docs.js', docs], ['bind.js', bind]]) {
+  // 各页面入口脚本（含管理后台入口）都复用共享响应式导航实现
+  for (const name of ['admin.js', 'common.js', 'docs.js', 'bind.js']) {
+    const source = await readAsset(name);
     assert.ok(source.includes('initSidebarDrawer'), `${name} 应复用共享响应式导航`);
   }
   assert.match(css, /@media \(max-width: 1023px\)/, '响应式断点应由 CSS 统一处理');
@@ -1466,7 +1529,7 @@ test('全站响应式：页面/导航只有一套 DOM 与交互，无 JS 设备�
 });
 
 test('后台表单三列栅格：下拉占 1 列、输入占 2 列、长文本/单选整行', async () => {
-  const [admin, css] = await Promise.all([readAsset('admin.js'), readAsset('style.css')]);
+  const [admin, css] = await Promise.all([readAllAssets(), readAsset('style.css')]);
   for (const token of ['form-field--wide', 'form-field--full', 'span: 2', 'span: 3']) {
     assert.ok(admin.includes(token), `admin.js 应使用三列栅格字段跨度：${token}`);
   }
@@ -1486,12 +1549,22 @@ test('后台表单三列栅格：下拉占 1 列、输入占 2 列、长文本/�
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/, '手机应降为单列');
 });
 
-test('后台弹窗：分组加载失败禁止保存，会话过期清理弹窗', async () => {
-  const admin = await readAsset('admin.js');
+test('后台弹窗：分组加载失败禁止保存，会话过期统一调用 closeAllModals 清理弹窗', async () => {
+  const admin = await readAllAssets();
   assert.match(admin, /if \(!groupsLoaded\)/, '分组弹窗保存前必须检查分组是否加载成功');
   assert.ok(admin.includes('加载分组失败，请关闭弹窗后重试'), '分组加载失败应给出明确提示且禁止保存');
-  assert.match(admin, /for \(const modal of \[\.\.\.openModals\]\)/, '登录页应清理跟踪中的弹窗');
-  assert.match(admin, /document\.querySelectorAll\('\.modal-backdrop'\)/, '登录页应移除残留遮罩/弹窗');
+  assert.match(admin, /export function closeAllModals\(/, 'common.js 应导出 closeAllModals() 统一关闭弹窗');
+  assert.match(admin, /closeAllModals\('unauthorized'\)/, '会话过期/登出应调用 closeAllModals 关闭全部弹窗（含 confirmDialog）');
+  assert.doesNotMatch(admin, /querySelectorAll\('\.modal-backdrop'\)/, '不得再手工 remove 弹窗遮罩 DOM');
+});
+test('接口应用/定时任务：新建表单启用项默认不勾选，编辑保留原值', async () => {
+  const editorModules = await readEditorModules();
+  assert.equal(
+    (editorModules.match(/checked: isEdit \? source\.enabled === true : false/g) || []).length,
+    2,
+    '规则与定时任务编辑器新建时「启用」都应默认不勾选（编辑保留原值）',
+  );
+  assert.doesNotMatch(editorModules, /checked: isEdit \? source\.enabled === true : true/, '新建表单不应默认勾选启用');
 });
 test('输入框聚焦提示：长 placeholder 在窄输入框下方完整展示', async () => {
   const [common, css] = await Promise.all([readAsset('common.js'), readAsset('style.css')]);
@@ -1501,4 +1574,136 @@ test('输入框聚焦提示：长 placeholder 在窄输入框下方完整展示'
   for (const token of ['.focus-hint', '.focus-hint.is-visible', 'overflow-wrap: anywhere', 'white-space: pre-line']) {
     assert.ok(css.includes(token), `style.css 应包含聚焦提示样式：${token}`);
   }
+});
+
+test('无障碍：Tab 组件具备 tabpanel/aria-controls/roving tabindex 与键盘切换（F-07）', async () => {
+  const [html, entry, ui, messages, appRules] = await Promise.all([
+    readPage('admin.html'),
+    readAssetAt('admin.js'),
+    readAssetAt('admin/ui.js'),
+    readAssetAt('admin/views/messages.js'),
+    readAssetAt('admin/views/app-rules.js'),
+  ]);
+  // 消息方向 Tab：tab 与共用内容面板建立关联
+  for (const token of [
+    'id="messages-tab-inbound"',
+    'id="messages-tab-outbound"',
+    'aria-controls="messages-panel"',
+    'id="messages-panel"',
+    'role="tabpanel"',
+    'aria-labelledby="messages-tab-inbound"',
+  ]) {
+    assert.ok(html.includes(token), `admin.html 消息 Tab 应包含无障碍语义：${token}`);
+  }
+  // 接口应用 Tab：两个面板各自关联对应 tab
+  for (const token of [
+    'id="rule-tab-rules"',
+    'id="rule-tab-schedule"',
+    'aria-controls="rule-rules-panel"',
+    'aria-controls="rule-schedule-panel"',
+    'aria-labelledby="rule-tab-rules"',
+    'aria-labelledby="rule-tab-schedule"',
+    'tabindex="0"',
+    'tabindex="-1"',
+  ]) {
+    assert.ok(html.includes(token), `admin.html 接口应用 Tab 应包含无障碍语义：${token}`);
+  }
+  // 键盘交互：方向键 / Home / End + roving tabindex 统一由 ui.js setupTablist 实现
+  for (const token of ['setupTablist', 'ArrowRight', 'ArrowLeft', 'Home', 'End', 'tabIndex', 'aria-selected']) {
+    assert.ok(ui.includes(token), `ui.js setupTablist 应实现键盘/roving 语义：${token}`);
+  }
+  assert.match(entry, /tablist: els\.messagesTabs/, '入口应初始化消息方向 Tab');
+  assert.match(entry, /tablist: els\.ruleTabs/, '入口应初始化接口应用 Tab');
+  assert.match(messages, /aria-labelledby.*messages-tab/, '消息方向切换应同步面板 aria-labelledby');
+  assert.match(appRules, /button\.tabIndex = active \? 0 : -1/, '规则/定时 Tab 切换应维护 roving tabindex');
+});
+
+test('无障碍：关键文字/主按钮颜色达到 WCAG AA（F-08）', async () => {
+  const css = await readAsset('style.css');
+  // token：加深后的次要文字与绿色文字（白底 / 页面底对比度见 :root 注释）
+  for (const token of [
+    '--text-muted: #5b6675',
+    '--wechat-green-text: #047a3a',
+    '--wechat-green-text-strong: #056c35',
+    '--wechat-green: #07c160',
+  ]) {
+    assert.ok(css.includes(token), `style.css 应包含对比度达标 token：${token}`);
+  }
+  assert.match(css, /\.btn-primary\s*\{[\s\S]*?background:\s*var\(--wechat-green-text\)/, '主按钮应使用 AA 级绿底（白字 ≥4.5:1）');
+  assert.match(css, /\.menu-item\.is-active\s*\{[\s\S]*?color:\s*var\(--wechat-green-text\)/, '菜单激活文字应使用 AA 级绿字');
+  assert.match(css, /\.form-hint\s*\{[\s\S]*?color:\s*var\(--text-muted\)/, '提示文字应使用加深后的 --text-muted');
+  assert.ok(/WCAG AA/.test(css), ':root 注释应标注颜色 token 的最低对比度（WCAG AA）');
+  assert.ok(!/color:\s*#8b95a5/i.test(css), '旧的 3.03:1 灰色文字不应残留');
+  assert.ok(!/color:\s*#64748b/i.test(css), '旧的 4.34:1 徽章/状态文字不应残留');
+});
+
+test('CSS 变量：所有 var() 引用均有定义或 fallback（F-17）', async () => {
+  const css = await readAsset('style.css');
+  const defined = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((match) => match[1]));
+  const missing = new Set();
+  for (const match of css.matchAll(/var\(\s*(--[a-z0-9-]+)\s*(,)?/g)) {
+    if (!defined.has(match[1]) && !match[2]) missing.add(match[1]);
+  }
+  assert.deepEqual([...missing], [], `存在未定义且无 fallback 的 CSS 变量：${[...missing].join(', ')}`);
+  assert.ok(css.includes('--text-primary: var(--text)'), '应补上 --text-primary 别名（F-17）');
+});
+
+test('CSS 死选择器清理：旧壳/旧弹窗/旧表单样式不再保留（F-16）', async () => {
+  const css = await readAsset('style.css');
+  for (const dead of [
+    '.site-header',
+    '.site-nav',
+    '.nav-link',
+    '.container-wide',
+    '.radio-item',
+    '.rule-form-grid-4',
+    '.rule-inline-row',
+    '.admin-topbar .topbar-actions',
+    '.docs-layout',
+    '.doc-nav-sub',
+    '.doc-subsection',
+    '.doc-heading-nested',
+    '.modal-user',
+    '.media-preview-video',
+    '.section-block',
+    '.section-head ',
+    '.config-subtitle',
+    '.schedule-header-mask',
+    '.rule-control-align',
+    '.docs-topbar-actions',
+  ]) {
+    assert.ok(!css.includes(dead), `style.css 不应再保留死选择器：${dead}`);
+  }
+  // 与死规则相邻的现役规则必须保留
+  for (const live of [
+    '.admin-topbar-bar .topbar-actions',
+    '.doc-sidebar',
+    '.modal-header',
+    '.badge-muted',
+    '.section-head-actions',
+  ]) {
+    assert.ok(css.includes(live), `style.css 应保留现役规则：${live}`);
+  }
+});
+
+test('CSS 断点统一：mobile <640 / tablet 640–1023 / desktop ≥1024，公共页 899/900（F-23）', async () => {
+  const css = await readAsset('style.css');
+  const widthQueries = [...css.matchAll(/@media\s*\(([^)]*)\)/g)]
+    .map((match) => match[1].replace(/\s+/g, ' ').trim())
+    .filter((query) => /width/.test(query));
+  const allowed = new Set([
+    'max-width: 639px',
+    'max-width: 899px',
+    'max-width: 1023px',
+    'min-width: 640px',
+    'min-width: 900px',
+    'min-width: 1024px',
+  ]);
+  const unexpected = [...new Set(widthQueries.filter((query) => !allowed.has(query)))];
+  assert.deepEqual(unexpected, [], `存在白名单外的宽度断点：${unexpected.join(', ')}`);
+  for (const query of [...allowed]) {
+    assert.ok(css.includes(`@media (${query})`), `断点体系应包含：@media (${query})`);
+  }
+  assert.ok(!/@media\s*\(max-width:\s*900px\)/.test(css), '900/899 断点应统一为 899');
+  assert.ok(!/@media\s*\(min-width:\s*560px\)/.test(css), '560 断点应统一到 640');
 });

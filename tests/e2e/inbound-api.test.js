@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { after, before, test } from 'node:test';
 
-import { sleep, startE2E } from '../helpers/e2e-env.mjs';
+import { startE2E, waitFor, waitNextMillis } from '../helpers/e2e-env.mjs';
 
 let e2e;
 let userA;
@@ -100,18 +100,18 @@ before(async () => {
   fixtures.fileB = makeBytes(700, 72);
 
   await injectTextAndWait(userA, accountA, fixtures.textA1);
-  await sleep(20);
+  await waitNextMillis(2);
   await injectTextAndWait(userA, accountA, fixtures.textA2);
-  await sleep(20);
+  await waitNextMillis(2);
   await injectTextAndWait(userB, accountB, fixtures.textB1);
-  await sleep(20);
+  await waitNextMillis(2);
   await injectMediaAndWait(userA, accountA, {
     kind: 'image',
     fileName: 'in.png',
     mime: 'image/png',
     content: fixtures.imageA,
   });
-  await sleep(20);
+  await waitNextMillis(2);
   await injectMediaAndWait(userB, accountB, {
     kind: 'file',
     fileName: '入站报告.pdf',
@@ -377,7 +377,12 @@ test('wait 长轮询：并发注入新消息时在等待窗口内及时返回，
   const waitText = 'inbound-wait-concurrent';
   const startedAt = Date.now();
   const pending = e2e.getV1InboundMessages({ cursor, limit: 50, wait: 3, timeoutMs: 8000 });
-  await sleep(400);
+  // 等长轮询请求真正进入等待（服务端已开始处理）后再注入；用条件等待替代固定 sleep
+  await waitFor(() => Date.now() - startedAt >= 400, {
+    timeoutMs: 2000,
+    intervalMs: 10,
+    label: '长轮询请求已发出',
+  });
   await e2e.mockInbound(accountA.botId, {
     text: waitText,
     context_token: 'ctx-wait-concurrent',

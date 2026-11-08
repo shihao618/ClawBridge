@@ -1,0 +1,35 @@
+# =============================================================================
+# EditorConfig（https://editorconfig.org）
+#
+# 目的：统一跨编辑器/跨平台的换行、编码与缩进，减少无意义 diff。
+# 与 .gitattributes 保持一致：源码/文档 LF；Windows PowerShell 脚本 CRLF。
+# 注意：Markdown 允许行尾双空格（硬换行），因此 md 不去尾空格。
+# =============================================================================
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+# Markdown 的行尾双空格是硬换行语义，不能自动去除
+trim_trailing_whitespace = false
+indent_style = unset
+indent_size = unset
+
+[*.{ps1,psm1,psd1}]
+# PowerShell 5.1 在 Windows 上对 LF 支持不佳，脚本保持 CRLF（与 .gitattributes 一致）
+end_of_line = crlf
+
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[Makefile]
+indent_style = tab
+
+[Dockerfile]
+indent_size = 2

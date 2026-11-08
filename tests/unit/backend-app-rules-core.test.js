@@ -8,6 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import zlib from 'node:zlib';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-app-rules-core-'));
 process.env.DATA_DIR = dataDir;
@@ -62,6 +63,18 @@ test.before(async () => {
       } else if (url.pathname === '/redirect-cross') {
         res.writeHead(302, { location: `http://localhost:${port}/weather` });
         res.end();
+      } else if (url.pathname === '/redirect-private') {
+        // 重定向目标既跨源又位于私网/保留网段：必须在校验阶段拒绝，不得建立连接
+        res.writeHead(302, { location: 'http://10.0.0.1:1/internal-meta' });
+        res.end();
+      } else if (url.pathname === '/gzip') {
+        const payload = zlib.gzipSync(JSON.stringify({ data: { answer: '压缩响应' } }));
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'content-encoding': 'gzip',
+          'content-length': payload.length,
+        });
+        res.end(payload);
       } else if (url.pathname === '/binary') {
         res.writeHead(200, { 'content-type': 'image/png' });
         res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
@@ -97,6 +110,34 @@ test.after(() => {
   closeDb();
   server?.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('日志 URL 脱敏：敏感 query 参数值替换为 [redacted]，保留 origin+path 与非敏感参数', () => {
+  // 常见第三方接口凭据写法：token / api_key / key / authorization 等参数值不得落库
+  assert.equal(
+    appRules.redactUrlForLog('https://x.example/api?token=SECRET&a=1'),
+    'https://x.example/api?token=[redacted]&a=1',
+  );
+  assert.equal(
+    appRules.redactUrlForLog('https://x.example/api?api_key=SECRET&token=T&a=1'),
+    'https://x.example/api?api_key=[redacted]&token=[redacted]&a=1',
+  );
+  assert.equal(
+    appRules.redactUrlForLog('https://x.example/api?key=SECRET&authorization=Bearer%20X&page=2'),
+    'https://x.example/api?key=[redacted]&authorization=[redacted]&page=2',
+  );
+  // 非敏感参数（含 keyword 这类包含 key 字样的参数名）保留原值
+  assert.equal(
+    appRules.redactUrlForLog('https://x.example/api?keyword=weather&city=%E5%8C%97%E4%BA%AC'),
+    'https://x.example/api?keyword=weather&city=%E5%8C%97%E4%BA%AC',
+  );
+  // userinfo 仍按原逻辑脱敏，且 query 一并脱敏
+  const userinfo = appRules.redactUrlForLog('https://user:pass@x.example/api?token=SECRET');
+  assert.ok(!userinfo.includes('user:pass'), 'userinfo 不应出现在日志 URL 中');
+  assert.ok(userinfo.includes('token=[redacted]'), 'query token 应脱敏');
+  // 无 query 原样返回
+  assert.equal(appRules.redactUrlForLog('https://x.example/api'), 'https://x.example/api');
+  assert.equal(appRules.redactUrlForLog(''), '');
 });
 
 test('matchRule：scope all/users/groups + contains/equals/regex', () => {
@@ -578,4 +619,224 @@ test('模板根=JSON 路径选中节点：相对引用、旧全路径回退、�
     appRules.renderReplyTemplate('{{#each groups}}{{#each members}}{{@root.groups.0.name}}/{{../name}}/{{name}};{{/each}}{{/each}}', { root: nestedRoot }),
     'A/A/a1;A/A/a2;A/B/b1;',
   );
+});
+
+// ---------------------------------------------------------------------------
+// BA-01：SSRF DNS rebinding（校验时解析 → 连接时二次解析）修复验证
+//
+// 修复方式：validateTargetUrl 返回校验通过的 IP 列表，requestExternal 每跳把该 IP
+// 通过 lookup 固定到 node:http/https 连接层；连接层不会再自行解析 DNS。
+// ---------------------------------------------------------------------------
+
+test('SSRF DNS rebinding：连接层 lookup 只返回校验过的 IP，校验后不再解析 DNS', async () => {
+  // 攻击者 DNS：第一次解析返回公网 IP（通过校验），若之后再次解析则返回 127.0.0.1（rebinding）
+  const answers = [
+    [{ address: '93.184.216.34', family: 4 }],
+    [{ address: '127.0.0.1', family: 4 }],
+  ];
+  let dnsCalls = 0;
+  const dnsLookup = async () => {
+    const answer = answers[Math.min(dnsCalls, answers.length - 1)];
+    dnsCalls += 1;
+    return answer;
+  };
+  const lookupResults = [];
+  let transportCalls = 0;
+  const httpRequest = async (options) => {
+    transportCalls += 1;
+    assert.equal(options.hostname, 'rebind.example');
+    // 连接层被要求解析域名时，必须拿回校验过的公网 IP，而不是 rebinding 后的 127.0.0.1
+    assert.equal(options.address, '93.184.216.34');
+    assert.equal(options.family, 4);
+    const viaAll = await new Promise((resolve, reject) => {
+      options.lookup(options.hostname, { all: true }, (err, list) => (err ? reject(err) : resolve(list)));
+    });
+    const viaSingle = await new Promise((resolve, reject) => {
+      options.lookup(options.hostname, {}, (err, address, family) => (err ? reject(err) : resolve({ address, family })));
+    });
+    assert.deepEqual(viaAll, [{ address: '93.184.216.34', family: 4 }], 'lookup(all) 只能返回已校验 IP');
+    assert.deepEqual(viaSingle, { address: '93.184.216.34', family: 4 }, 'lookup(single) 只能返回已校验 IP');
+    lookupResults.push(viaAll[0].address, viaSingle.address);
+    // 固定到公网 IP 后连接失败（模拟目标不可达）：绝不能因为“再解析一次”而落到内网
+    throw Object.assign(new Error('connect ECONNREFUSED 93.184.216.34:9'), { code: 'ECONNREFUSED' });
+  };
+
+  await assert.rejects(
+    appRules.requestExternal({
+      url: 'http://rebind.example:9/api',
+      timeoutMs: 1000,
+      allowedHosts: [],
+      dnsLookup,
+      httpRequest,
+    }),
+    /ECONNREFUSED/,
+  );
+  assert.equal(dnsCalls, 1, 'DNS 只允许在校验阶段解析一次，连接层不得二次解析');
+  assert.equal(transportCalls, 1);
+  assert.deepEqual(lookupResults, ['93.184.216.34', '93.184.216.34']);
+});
+
+test('SSRF：重定向每跳重新校验 DNS 并重新固定 IP（http→https 升级后的 rebinding 拒绝）', async () => {
+  let dnsCalls = 0;
+  const dnsLookup = async () => {
+    dnsCalls += 1;
+    // 第一跳解析到公网 → 通过；重定向后第二跳被 rebinding 为云元数据地址 → 必须拒绝
+    return dnsCalls === 1
+      ? [{ address: '93.184.216.34', family: 4 }]
+      : [{ address: '169.254.169.254', family: 4 }];
+  };
+  const transportCalls = [];
+  const httpRequest = async (options) => {
+    transportCalls.push(options);
+    assert.equal(options.address, '93.184.216.34');
+    // 同主机 http→https 升级属于允许的重定向
+    return new Response(null, { status: 302, headers: { location: 'https://rebind.example/steal' } });
+  };
+
+  await assert.rejects(
+    appRules.requestExternal({
+      url: 'http://rebind.example/start',
+      timeoutMs: 1000,
+      allowedHosts: [],
+      dnsLookup,
+      httpRequest,
+    }),
+    /SSRF/,
+    '重定向后的目标被解析到私网/保留网段时必须拒绝',
+  );
+  assert.equal(dnsCalls, 2, '重定向后必须重新解析并校验 DNS');
+  assert.equal(transportCalls.length, 1, '第二跳校验失败后不得建立连接（不得连内网）');
+});
+
+test('SSRF：重定向 Location 指向私网必须拒绝', async () => {
+  const before = requests.length;
+  await assert.rejects(
+    appRules.requestExternal({ url: `http://127.0.0.1:${port}/redirect-private`, timeoutMs: 2000 }),
+    /跨源重定向/,
+    '重定向 Location 指向私网/跨源地址必须拒绝',
+  );
+  assert.equal(requests.length, before + 1, '只允许发出第一跳请求，不得连接重定向目标');
+  await assert.rejects(appRules.requestExternal({ url: 'http://169.254.169.254/latest/meta-data' }), /SSRF/);
+});
+
+test('requestExternal：正常 mock HTTP 服务器链路成功（域名经固定 lookup 连接，不依赖系统 DNS）', async () => {
+  const before = requests.length;
+  // 系统 DNS 无法解析 rebind.internal：只有连接层真正使用校验过的固定 IP 才能成功建连。
+  const url = `http://rebind.internal:${port}/weather?city=shanghai`;
+  const result = await appRules.requestExternal({
+    url,
+    timeoutMs: 2000,
+    allowedHosts: ['rebind.internal'],
+    dnsLookup: async () => [{ address: '127.0.0.1', family: 4 }],
+  });
+  assert.equal(result.status, 200);
+  assert.match(result.text, /今天晴/);
+  assert.equal(result.finalUrl, url);
+  assert.equal(typeof result.latencyMs, 'number');
+  assert.ok(result.latencyMs >= 0);
+  assert.equal(String(result.headers['content-type']), 'application/json');
+
+  const sent = requests[before];
+  assert.equal(sent.method, 'GET');
+  assert.equal(sent.query.city, 'shanghai');
+  // Host 头必须对应 URL 域名+端口（而非固定后的 IP），否则虚拟主机/证书语义会被破坏
+  assert.equal(sent.headers.host, `rebind.internal:${port}`, 'Host 头应保留 URL 主机名与端口');
+});
+
+test('requestExternal：gzip 响应自动解压（与 fetch 行为一致）', async () => {
+  const result = await appRules.requestExternal({ url: `http://127.0.0.1:${port}/gzip`, timeoutMs: 2000 });
+  assert.equal(result.status, 200);
+  assert.match(result.text, /压缩响应/);
+});
+
+test('configureDependencies/resetDependencies：HTTP 传输与 DNS 均可注入（默认 node:http/https）', async () => {
+  const received = [];
+  appRules.configureDependencies({
+    dnsLookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    httpRequest: async (options) => {
+      received.push(options);
+      return new Response('injected-ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+    },
+  });
+  try {
+    const result = await appRules.requestExternal({ url: 'http://api.example.test/x', allowedHosts: [] });
+    assert.equal(result.status, 200);
+    assert.equal(result.text, 'injected-ok');
+    assert.equal(received.length, 1);
+    assert.equal(received[0].address, '93.184.216.34');
+  } finally {
+    appRules.resetDependencies();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// BA-22 / BA-09：模板输出上限、shared 通用执行管线
+// ---------------------------------------------------------------------------
+
+test('renderReplyTemplate：输出达到 maxTextLength 后停止 {{#each}} 迭代（BA-22）', async () => {
+  const { config } = await import('../../server/src/config.js');
+  let reads = 0;
+  const items = Array.from({ length: 5000 }, (_, index) => ({
+    get value() {
+      reads += 1;
+      return `item-${index}`;
+    },
+  }));
+  const rendered = appRules.renderReplyTemplate('{{#each .}}[{{value}}]{{/each}}', { root: items });
+  assert.equal(rendered.length, config.push.maxTextLength, '输出应截断到 maxTextLength');
+  assert.ok(reads < items.length, `达到上限后应停止迭代（实际读取 ${reads}/${items.length}）`);
+
+  // 未超限的小模板行为不变（完整渲染）
+  assert.equal(
+    appRules.renderReplyTemplate('{{#each .}}{{value}};{{/each}}', { root: [{ value: 'a' }, { value: 'b' }] }),
+    'a;b;',
+  );
+});
+
+test('shared/http-execute：renderHttpRequest + executeHttpRequest 通用管线（BA-09）', async () => {
+  const { executeHttpRequest, renderHttpRequest } = await import('../../server/src/shared/http-execute.js');
+  const prepared = renderHttpRequest(
+    { method: 'POST', url: 'https://api.example.test/x?q={arg}', headers: { 'X-Arg': '{arg}' }, bodyTemplate: '{"v":"{arg}"}' },
+    { arg: '北京' },
+  );
+  assert.equal(prepared.method, 'POST');
+  assert.equal(prepared.url, 'https://api.example.test/x?q=%E5%8C%97%E4%BA%AC');
+  assert.equal(prepared.headers['X-Arg'], '北京');
+  assert.equal(prepared.body, '{"v":"北京"}');
+  assert.deepEqual(prepared.headerNames, ['X-Arg']);
+
+  let received = null;
+  const outcome = await executeHttpRequest({
+    request: prepared,
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '兜底' },
+    timeoutMs: 1000,
+    maxResponseBytes: 1024,
+    allowedHosts: [],
+    dnsLookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    httpRequest: async (options) => {
+      received = options;
+      return new Response(JSON.stringify({ data: { answer: 'ok' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(received.method, 'POST');
+  assert.equal(received.address, '93.184.216.34');
+  assert.equal(outcome.status, 200);
+  assert.equal(outcome.replyText, 'ok');
+  assert.equal(outcome.error, '');
+  assert.deepEqual(outcome.parsed.value, { answer: 'ok' });
+
+  // 非 2xx：以 error + fallback 返回（不抛错），两种调用方共用同一语义
+  const failed = await executeHttpRequest({
+    request: prepared,
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '兜底' },
+    allowedHosts: [],
+    dnsLookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    httpRequest: async () => new Response(null, { status: 500, headers: { 'content-type': 'application/json' } }),
+  });
+  assert.equal(failed.status, 500);
+  assert.equal(failed.error, 'HTTP 500');
+  assert.equal(failed.replyText, '兜底');
 });

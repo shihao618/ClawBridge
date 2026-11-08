@@ -14,6 +14,8 @@
   每日任务在配置的 HH:mm 执行（错过则启动后立即补一次，然后按下次时间继续）。
 - 单实例调度（与 keepalive 一致）；多副本部署需只让一个副本启用调度器。
 - 默认不启用（无任务），配置后不影响现有功能；任务停用后不再执行。
+- 注：创建任务时未传 `enabled` 则按契约写入 `false`（管理后台新建表单默认不勾选「启用」）；
+  下表中的 `DEFAULT 1` 仅为 DDL 层兜底默认值，API/管理端创建都会显式写入 `enabled`。
 
 ## 1. 数据库 Schema（当前 v10）
 
@@ -62,7 +64,8 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_task ON scheduled_task_logs(t
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_logs(created_at DESC);
 ```
 
-- `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；旧版本 schema 启动直接拒绝，不提供迁移。
+- `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；旧版本 schema 启动直接拒绝，不提供迁移
+  （升级/回滚实操见 [`docs/UPGRADE.md`](UPGRADE.md)）。
 
 ## 2. 配置（config.js：`config.scheduler`）
 
@@ -73,8 +76,14 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
 | `SCHEDULER_TIMEZONE` | `Asia/Shanghai` | 每日任务时区（IANA） |
 | `SCHEDULER_MAX_RECIPIENTS` | `200` | 单次任务最多收件人数（超出截断并 warn） |
 | `SCHEDULER_TIMEOUT_MS` | `8000` | 单次外部请求超时上限 |
+| `SCHEDULER_MAX_RESPONSE_BYTES` | `0`（继承接口应用） | 定时任务独立的响应体大小上限；`0` = 继承 `appRules.maxResponseBytes` |
+| `SCHEDULER_ALLOWED_HOSTS` | 空（继承接口应用） | 定时任务独立的私网白名单（逗号分隔）；空 = 继承 `appRules.allowedHosts` |
 
-`config.scheduler = { enabled, tickMs, timezone, maxRecipients, timeoutMs }`。
+`config.scheduler = { enabled, tickMs, timezone, maxRecipients, timeoutMs, maxResponseBytes, allowedHosts }`。
+
+> 定时通知与接口应用共用同一套 HTTP 执行管线（`server/src/shared/http-execute.js`），但
+> **响应上限与私网白名单可以在「运行配置 → 定时通知」独立设置**：留空/0 时继承「接口应用」配置
+> （保持既有行为），设置后仅影响定时通知，两者互不覆盖。所有字段后台修改即时生效。
 
 ## 3. 计划计算
 
@@ -230,23 +239,22 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
   run 真实入队并写日志（不改变 next_run_at）、日志过滤分页。
 
 **e2e（本地 mock 外部 API + iLink mock）**
-- 创建间隔任务（如 interval 1 分钟，测试用可注入更小 tick？调度器外部真实等待 → 用 `SCHEDULER_TICK_MS=200` 与
-  测试可配置 interval 最小 60000，e2e 等 60s 太久 → 需要支持测试覆盖：允许 PATCH 后立即触发 `POST /:id/run` 来验证执行链路；
-  以及调度器到期执行可用「创建任务 + 手动改数据库 next_run_at？e2e 不直接改 DB」。
-  → 设计补充：`POST /:id/run` 覆盖真实执行链路；调度自动触发的 e2e 可用 `SCHEDULER_TIMEZONE`/tick 加“立即执行”替代。
-  另外允许 interval 最小值在测试环境通过环境变量放宽？不建议。
+- 间隔任务最小 `intervalMs` 固定为 60000（60s，无测试专用放宽开关）；e2e 通过 `SCHEDULER_TICK_MS=200`
+  缩短扫描间隔，并用 `POST /:id/run` 立即触发覆盖真实执行链路；调度到期计算由单测覆盖。
 - 用 `POST /:id/run` 验证：外部 API 收到请求 → 解析 → 目标用户收到微信（mock 收到文本）→ outbox source=schedule →
-  日志 success/recipients_count；失败（500/超时）→ fallback 发给目标；无 fallback 不发送；多用户/分组目标去重；
-  停用任务 run 返回 409/不执行？→ run 对停用任务返回 400（或允许手动执行？定义：disabled 任务不允许 run，返回 400）。
-- 调度自动触发：创建 interval 任务后将 next_run_at 通过 `PATCH`? 不可改。可加测试专用环境 `SCHEDULER_TICK_MS=200` 
-  且 interval 最小值支持在 `SCHEDULER_ALLOW_MIN_INTERVAL_MS` 配置？简单方案：e2e 使用「立即执行」验证发送链路 + 单测覆盖到期计算；
-  自动触发用 `POST /:id/run` 模拟。QA 认可即可。
+  日志 success/recipients_count；失败（500/超时）→ fallback 发给目标；无 fallback 不发送；多用户/分组目标去重。
+  停用任务调用 `POST /:id/run` 返回 **400**（禁止立即执行，需先启用）；`POST /:id/test`（dry-run）对停用任务仍可用。
+- 调度自动触发：e2e 用 `SCHEDULER_TICK_MS=200` + 到期任务验证；自动执行的发送结果用 `POST /:id/run` 验证发送链路，
+  单测覆盖到期计算。
 
 ## 9. 真实环境上线
 
-- 当前 schema v10；旧版本库启动直接拒绝，不提供迁移；
+- 当前 schema v10；旧版本库启动直接拒绝，不提供迁移（升级/回滚实操见 [`docs/UPGRADE.md`](UPGRADE.md)）；
 - 默认无任务；调度器启动日志；管理员按需创建任务（默认可先建一条 disabled 任务 + 测试运行验证，再启用）；
 - 建议先「测试运行」确认接口与文案，再启用或立即执行；注意外部接口费用与微信 7 条/5 分钟限流。
-- **访问内网接口**（如 `http://192.168.x.x:8000`）：SSRF 防护会默认拒绝私网/保留地址；
-  在 `.env` 增加 `APP_RULES_ALLOWED_HOSTS=192.168.88.10`（逗号分隔多个主机，仅添加需要的）
-  并重启容器（`docker compose up -d`）后即可访问；该白名单只放行列出的主机，其他私网地址仍拒绝。
+- **访问内网接口**（如 `http://192.168.x.x:8000`）：SSRF 防护会默认拒绝私网/保留地址。可任选以下方式放行：
+  - **定时通知独立白名单**：`SCHEDULER_ALLOWED_HOSTS`（空 = 继承「接口应用」白名单；逗号分隔），
+    或在后台「运行配置 → 定时通知 → 内网/本机白名单」设置（即时生效）；
+  - **接口应用白名单**：`APP_RULES_ALLOWED_HOSTS`（`.env` 仅首次默认值；也可在后台「运行配置 → 接口应用 → allowedHosts」
+    修改，即时生效），`SCHEDULER_ALLOWED_HOSTS` 为空时继承；
+  - 白名单只放行列出的主机，其他私网地址仍拒绝。

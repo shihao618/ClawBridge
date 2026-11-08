@@ -2,8 +2,8 @@
  * 定时通知调度器（docs/SCHEDULED_TASKS.md）。
  *
  * 流程：tick 扫描到期任务 → 渲染外部请求（{now}/{date}/{time}/{taskName}）→ 调用接口
- * （复用 app-rules 的 SSRF/超时/大小防护）→ 解析响应/渲染通知 → 逐目标入队 outbox
- * （source='schedule'，由 dispatcher 统一限流投递）→ 写 scheduled_task_logs → 更新 next_run_at。
+ * （复用 shared/http-execute 通用管线：SSRF/超时/大小防护）→ 解析响应/渲染通知 → 逐目标入队
+ * outbox（source='schedule'，由 dispatcher 统一限流投递）→ 写 scheduled_task_logs → 更新 next_run_at。
  *
  * 计划：interval（从执行开始时间 + 间隔；启动时过期 ≤5min 补跑否则顺延）与
  * daily（SCHEDULER_TIMEZONE 的 HH:mm；过期立即补跑一次）。
@@ -12,13 +12,9 @@ import { config } from './config.js';
 import { decryptSecretOrNull } from './crypto.js';
 import { conflict } from './errors.js';
 import { logger } from './logger.js';
-import {
-  parseResponse,
-  renderReplyTemplate,
-  renderRequestTemplate,
-  requestExternal,
-  truncate,
-} from './app-rules.js';
+import { defaultHttpRequest } from './shared/http-client.js';
+import { executeHttpRequest, renderHttpRequest } from './shared/http-execute.js';
+import { truncate } from './shared/template.js';
 import * as store from './store.js';
 
 const log = logger.child({ mod: 'scheduler' });
@@ -30,10 +26,10 @@ const MAX_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CATCHUP_MS = 5 * 60 * 1000;
 const TICK_BATCH = 10;
 
-/** 可注入依赖（测试用；默认真实 Date/fetch）。 */
+/** 可注入依赖（测试用；默认真实 Date/node:http 传输）。 */
 const defaultDeps = {
   now: () => Date.now(),
-  fetch: (...args) => globalThis.fetch(...args),
+  httpRequest: defaultHttpRequest,
 };
 let deps = { ...defaultDeps };
 export function configureDependencies(overrides = {}) {
@@ -41,6 +37,20 @@ export function configureDependencies(overrides = {}) {
 }
 export function resetDependencies() {
   deps = { ...defaultDeps };
+}
+
+/**
+ * 定时任务自己的网络防护配置（BA-09）：缺省（0/空数组）继承「接口应用」的值，
+ * 保持历史行为；后台可在「定时通知」分组单独覆盖，配置来源不再隐式混用。
+ */
+export function getHttpLimits() {
+  const ownBytes = Number(config.scheduler.maxResponseBytes);
+  const ownHosts = Array.isArray(config.scheduler.allowedHosts) ? config.scheduler.allowedHosts : [];
+  return {
+    maxResponseBytes:
+      Number.isFinite(ownBytes) && ownBytes > 0 ? ownBytes : config.appRules.maxResponseBytes,
+    allowedHosts: ownHosts.length > 0 ? ownHosts : config.appRules.allowedHosts,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,44 +460,27 @@ async function executeScheduledTaskInternal(taskRow, { dryRun = false, now = dep
   let latencyMs = 0;
   let error = '';
   try {
-    const url = renderRequestTemplate(task.request.url, vars, { urlEncode: true });
-    const headers = {};
-    for (const [key, value] of Object.entries(task.request.headers ?? {})) {
-      headers[key] = truncate(renderRequestTemplate(value, vars), 2000);
-    }
-    const body =
-      task.request.method === 'POST' ? renderRequestTemplate(task.request.bodyTemplate, vars) : '';
-    result.request.url = url;
-    result.request.bodyPreview = truncate(body, 500);
-    const response = await requestExternal({
-      url,
-      method: task.request.method,
-      headers,
-      body,
+    const limits = getHttpLimits();
+    const prepared = renderHttpRequest(task.request, vars);
+    result.request.url = prepared.url;
+    result.request.bodyPreview = prepared.bodyPreview;
+    const outcome = await executeHttpRequest({
+      request: prepared,
+      response: task.response,
       timeoutMs: Math.min(task.limits.timeoutMs, config.scheduler.timeoutMs),
-      maxResponseBytes: config.appRules.maxResponseBytes,
-      allowedHosts: config.appRules.allowedHosts,
-      fetchImpl: deps.fetch,
+      maxResponseBytes: limits.maxResponseBytes,
+      allowedHosts: limits.allowedHosts,
+      httpRequest: deps.httpRequest,
     });
-    httpStatus = response.status;
-    latencyMs = response.latencyMs;
+    httpStatus = outcome.status;
+    latencyMs = outcome.latencyMs;
     result.httpStatus = httpStatus;
     result.latencyMs = latencyMs;
-    result.responsePreview = truncate(response.text, 1000);
-    result.responseHeaders = response.headers ?? {};
-    if (httpStatus < 200 || httpStatus >= 300) throw new Error(`HTTP ${httpStatus}`);
-    const parsed = parseResponse({
-      responseType: task.response.type,
-      responsePath: task.response.path,
-      rawText: response.text,
-    });
-    const rendered = renderReplyTemplate(task.response.template, {
-      root: parsed.templateRoot,
-      responseRoot: parsed.root,
-      responseText: parsed.responseText,
-      rawText: parsed.rawText,
-    });
-    replyText = rendered.trim();
+    result.responsePreview = truncate(outcome.text, 1000);
+    result.responseHeaders = outcome.headers ?? {};
+    // 非 2xx / 空回复在通用管线中以 error 返回；这里统一转为失败状态（文案与旧实现一致）。
+    if (outcome.error) throw new Error(outcome.error);
+    replyText = outcome.replyText.trim();
     if (!replyText) throw new Error('empty reply');
     status = 'success';
   } catch (err) {
@@ -525,20 +518,25 @@ async function executeScheduledTaskInternal(taskRow, { dryRun = false, now = dep
     ? Number(task.nextRunAt) || computeNextAfterRun(task, startedAt)
     : computeNextAfterRun(task, startedAt);
   try {
-    store.insertScheduledTaskLog({
+    // 日志 + last_run/next_run 同一事务（BA-04）：避免只写入其一导致重启后重复执行或日志丢失。
+    store.completeScheduledTaskRun({
       taskId: task.id,
-      status,
-      httpStatus,
-      latencyMs,
-      error,
-      responsePreview: result.responsePreview,
-      replyPreview: truncate(replyText, 1000),
-      recipientsCount: queuedCount,
-      createdAt: startedAt,
+      log: {
+        status,
+        httpStatus,
+        latencyMs,
+        error,
+        responsePreview: result.responsePreview,
+        replyPreview: truncate(replyText, 1000),
+        recipientsCount: queuedCount,
+        createdAt: startedAt,
+      },
+      lastRunAt: startedAt,
+      lastStatus: status,
+      nextRunAt,
     });
-    store.markScheduledTaskRun(task.id, { lastRunAt: startedAt, lastStatus: status, nextRunAt });
   } catch (err) {
-    log.warn('定时任务写日志/更新计划失败', { taskId: task.id, message: err?.message });
+    log.warn('定时任务写日志/更新计划失败（事务已回滚）', { taskId: task.id, message: err?.message });
   }
   if (status === 'success') {
     log.info('定时任务执行成功', { taskId: task.id, recipients: queuedCount, httpStatus, latencyMs });
@@ -556,9 +554,40 @@ let running = false;
 /** @type {NodeJS.Timeout|null} */
 let timer = null;
 let scanning = false;
+/** 在途 tick Promise 集合：stop()/restart()/退出时等待其 settle（BA-04）。 */
+const activeTicks = new Set();
+/** stop() 等待在途 tick 的上限（媒体/接口调用不可中止；超时后由进程级兜底退出）。 */
+const DRAIN_TIMEOUT_MS = 8000;
 
-/** 扫描并执行到期任务（最多 10 个，按 next_run_at 升序；单任务异常不影响其他）。 */
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, Math.max(0, ms));
+    t.unref?.();
+  });
+}
+
+/** 等待全部在途 tick settle（stop/restart/退出用）；返回是否在超时前全部完成。 */
+export async function waitForIdleTicks(timeoutMs = DRAIN_TIMEOUT_MS) {
+  if (activeTicks.size === 0) return true;
+  const pending = Promise.allSettled([...activeTicks]).then(() => true);
+  const timedOut = sleep(Math.max(1, Number(timeoutMs) || DRAIN_TIMEOUT_MS)).then(() => false);
+  return Promise.race([pending, timedOut]);
+}
+
+/**
+ * 扫描并执行到期任务（最多 10 个，按 next_run_at 升序；单任务异常不影响其他）。
+ * 在途 Promise 会被登记，供 stop()/restart() 等待（BA-04）。
+ */
 export async function tick(now = deps.now()) {
+  const task = runTick(now);
+  activeTicks.add(task);
+  const cleanup = () => activeTicks.delete(task);
+  task.then(cleanup, cleanup);
+  return task;
+}
+
+/** tick 的实际扫描实现（同步登记在途 Promise 的外层包装见 tick()）。 */
+async function runTick(now = deps.now()) {
   if (!config.scheduler.enabled || scanning) return 0;
   scanning = true;
   let executed = 0;
@@ -592,13 +621,13 @@ export async function tick(now = deps.now()) {
         try {
           const task = parseScheduledTaskRow(row);
           const failedAt = deps.now();
-          store.insertScheduledTaskLog({
+          store.completeScheduledTaskRun({
             taskId: row.id,
-            status: 'failed',
-            error: truncate(err?.message ?? String(err), 500),
-            createdAt: failedAt,
-          });
-          store.markScheduledTaskRun(row.id, {
+            log: {
+              status: 'failed',
+              error: truncate(err?.message ?? String(err), 500),
+              createdAt: failedAt,
+            },
             lastRunAt: failedAt,
             lastStatus: 'failed',
             nextRunAt: computeNextAfterRun(task, failedAt),
@@ -636,15 +665,17 @@ export function start() {
   return true;
 }
 
-/** 停止调度器（幂等）。 */
-export function stop() {
+/** 停止调度器（幂等；先停止定时器，再等待在途 tick settle）。 */
+export async function stop() {
   const wasRunning = running;
   running = false;
   if (timer) {
     clearInterval(timer);
     timer = null;
   }
-  if (wasRunning) log.info('定时通知调度器已停止');
+  const drained = await waitForIdleTicks();
+  if (!drained) log.warn('定时通知调度器停止时仍有在途任务（等待超时，由进程级兜底退出）');
+  if (wasRunning) log.info('定时通知调度器已停止', { drained });
   return wasRunning;
 }
 
@@ -652,9 +683,9 @@ export function isRunning() {
   return running;
 }
 
-/** 重启调度器（运行配置热更新用；enabled=false 时停止）。 */
-export function restart() {
-  stop();
+/** 重启调度器（运行配置热更新用；先等待在途任务收尾再按 enabled 状态启动）。 */
+export async function restart() {
+  await stop();
   return start();
 }
 /**

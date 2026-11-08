@@ -65,7 +65,7 @@ function extractNewToken(json, exclude = []) {
   };
   walk(json);
   return {
-    token: candidates.find((value) => !excluded.has(value) && /^[A-Za-z0-9_.\-]{16,256}$/.test(value)),
+    token: candidates.find((value) => !excluded.has(value) && /^[A-Za-z0-9_.-]{16,256}$/.test(value)),
     preview,
   };
 }
@@ -215,6 +215,7 @@ test('GET settings：新分组/扩展字段/security 摘要齐全', async () => 
   }
   assert.equal(fieldOf(settings, 'server', 'trustProxy').restartRequired, true);
   assert.equal(fieldOf(settings, 'server', 'logLevel').restartRequired, false);
+  // BA-12：iLink 客户端在每次请求时实时读取 config → 新请求即生效，无需重启
   for (const field of [
     'loginBaseUrl', 'defaultBaseUrl', 'cdnBaseUrl', 'appId', 'channelVersion',
     'botAgent', 'botType', 'routeTag', 'clientVersion', 'requestTimeoutMs',
@@ -222,7 +223,7 @@ test('GET settings：新分组/扩展字段/security 摘要齐全', async () => 
   ]) {
     const meta = fieldOf(settings, 'ilink', field);
     assert.ok(meta, `应存在 ilink.${field}`);
-    assert.equal(meta.restartRequired, true, `ilink.${field} 应为 restartRequired`);
+    assert.equal(meta.restartRequired, false, `ilink.${field} 应即时生效（无需重启）`);
   }
   for (const field of ['longPollTimeoutMs', 'maxAccounts']) {
     assert.ok(fieldOf(settings, 'monitor', field), `应存在 monitor.${field}`);
@@ -232,7 +233,7 @@ test('GET settings：新分组/扩展字段/security 摘要齐全', async () => 
     assert.ok(fieldOf(settings, 'media', field), `应存在 media.${field}`);
   }
   assert.ok(fieldOf(settings, 'push', 'tickMs'), '应存在 push.tickMs');
-  assert.equal(fieldOf(settings, 'push', 'tickMs').restartRequired, true);
+  assert.equal(fieldOf(settings, 'push', 'tickMs').restartRequired, false, 'push.tickMs 每轮实时读取，无需重启');
   for (const field of ['networkErrorLimit', 'pollGapMs']) {
     assert.ok(fieldOf(settings, 'binding', field), `应存在 binding.${field}`);
   }
@@ -246,7 +247,7 @@ test('GET settings：新分组/扩展字段/security 摘要齐全', async () => 
   assert.equal(typeof security.sessionTtlMs, 'number');
 });
 
-test('PATCH 新字段生效；restartRequired 标记正确（logLevel 即时，ilink/monitor/push.tickMs 需重启）', async () => {
+test('PATCH 新字段生效；restartRequired 标记正确（logLevel/tickMs/ilink 即时，trustProxy/monitor 需重启）', async () => {
   await e2e.ensureAdmin();
   const patch = {
     server: { logLevel: 'debug', publicBaseUrl: 'http://clawbridge.example.test:3000', trustProxy: true, cookieSecure: false },
@@ -272,10 +273,12 @@ test('PATCH 新字段生效；restartRequired 标记正确（logLevel 即时，i
   assert.equal(res.status, 200, `PATCH 新字段应 200：${res.status} ${res.text}`);
   assert.equal(res.json.ok, true);
   const restartRequired = res.json.restartRequired ?? [];
-  for (const key of ['server.trustProxy', 'ilink.loginBaseUrl', 'monitor.maxAccounts', 'push.tickMs']) {
+  for (const key of ['server.trustProxy', 'monitor.maxAccounts']) {
     assert.ok(restartRequired.includes(key), `restartRequired 应包含 ${key}，实际 ${JSON.stringify(restartRequired)}`);
   }
-  assert.equal(restartRequired.includes('server.logLevel'), false, 'logLevel 应即时生效');
+  for (const key of ['server.logLevel', 'push.tickMs', 'ilink.loginBaseUrl']) {
+    assert.equal(restartRequired.includes(key), false, `${key} 应即时生效，不应出现在 restartRequired`);
+  }
 
   const settings = await getSettingsJson();
   assert.equal(fieldOf(settings, 'server', 'logLevel').value, 'debug');

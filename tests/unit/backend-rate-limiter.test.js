@@ -8,7 +8,7 @@ import test from 'node:test';
 import { SlidingWindowLimiter, TokenBucketLimiter } from '../../server/src/rate-limiter.js';
 
 test('TokenBucketLimiter: 容量内允许，超额返回等待时间（假时钟）', () => {
-  let now = 0;
+  const now = 0;
   const limiter = new TokenBucketLimiter({ max: 3, windowMs: 1000, now: () => now });
 
   assert.deepEqual(limiter.tryAcquire('u1'), { allowed: true, waitMs: 0 });
@@ -43,7 +43,7 @@ test('TokenBucketLimiter: 时间流逝按速率回填，waitMs 不消费令牌',
 });
 
 test('TokenBucketLimiter: 不同 key 隔离/reset/clear', () => {
-  let now = 0;
+  const now = 0;
   const limiter = new TokenBucketLimiter({ max: 1, windowMs: 1000, now: () => now });
   assert.equal(limiter.tryAcquire('a').allowed, true);
   assert.equal(limiter.tryAcquire('a').allowed, false);
@@ -83,7 +83,7 @@ test('SlidingWindowLimiter: 严格窗口计数与 retryAfterMs', () => {
 });
 
 test('SlidingWindowLimiter: key 隔离、peek 不计数、reset', () => {
-  let now = 0;
+  const now = 0;
   const limiter = new SlidingWindowLimiter({ limit: 1, windowMs: 1000, now: () => now });
   assert.equal(limiter.hit('a').allowed, true);
   assert.equal(limiter.hit('b').allowed, true, '不同 key 独立计数');

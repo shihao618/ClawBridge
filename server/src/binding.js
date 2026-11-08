@@ -40,10 +40,17 @@ export const BINDING_STATUSES = Object.freeze([
 /** 终态：worker 停止，会话保留一段时间供前端查询。 */
 const TERMINAL = new Set(['confirmed', 'already_bound', 'expired', 'timeout', 'error', 'cancelled']);
 
-/** 二维码内容的有效期（官方约 5 分钟，且不超过会话总 TTL）。 */
-const QR_VALIDITY_MS = Math.min(config.binding.ttlMs, 5 * 60 * 1000);
-/** 终态后的保留时长：供前端继续查询结果。 */
-const RETENTION_MS = config.binding.ttlMs;
+/**
+ * 二维码内容的有效期（官方约 5 分钟，且不超过会话总 TTL）。
+ * BA-12：运行配置可在后台热更新 binding.ttlMs，这里必须实时计算，不能在模块加载时冻结。
+ */
+function qrValidityMs() {
+  return Math.min(config.binding.ttlMs, 5 * 60 * 1000);
+}
+/** 终态后的会话保留时长：供前端继续查询结果（实时读取运行配置，与 createSession 的 TTL 保持一致）。 */
+function retentionMs() {
+  return config.binding.ttlMs;
+}
 
 const STATUS_MESSAGES = Object.freeze({
   waiting: '等待微信扫码',
@@ -119,6 +126,7 @@ export function publicSessionView(session) {
     }
   }
   if (session.error) view.error = session.error;
+  if (session.warning) view.warning = session.warning;
   return view;
 }
 
@@ -138,7 +146,7 @@ export function getActiveSessionCount() {
 /** 会话是否超过保留期（可清理）。 */
 function isPastRetention(session, now) {
   const base = Math.max(session.expiresAt, TERMINAL.has(session.status) ? session.updatedAt : 0);
-  return now > base + RETENTION_MS;
+  return now > base + retentionMs();
 }
 
 function findSession(sessionId) {
@@ -244,7 +252,7 @@ export async function createSession({ displayName = '', ip = '' } = {}) {
     qrcode: qr.qrcode,
     qrContent: qr.qrcode_img_content,
     qrSvg,
-    qrExpiresAt: now + QR_VALIDITY_MS,
+    qrExpiresAt: now + qrValidityMs(),
     refreshCount: 0,
     verifyCode: null,
     verifyNeededAt: 0,
@@ -362,7 +370,7 @@ async function refreshQr(session) {
     session.qrcode = qr.qrcode;
     session.qrContent = qr.qrcode_img_content;
     session.qrSvg = await renderQrSvg(qr.qrcode_img_content);
-    session.qrExpiresAt = Date.now() + QR_VALIDITY_MS;
+    session.qrExpiresAt = Date.now() + qrValidityMs();
     session.apiBaseUrl = config.ilink.loginBaseUrl;
     session.redirectHost = '';
     session.verifyCode = null;
@@ -471,7 +479,9 @@ async function handleStatus(session, resp) {
       finishSession(
         session,
         'already_bound',
-        user ? '该微信号已绑定过本服务，可直接使用' : '该微信号已绑定过本服务，请在管理后台查看或联系管理员',
+        user
+          ? '该微信号已绑定过本服务，可直接使用；如收不到消息，请在管理后台“重连”或解绑后重新扫码。'
+          : '该微信号已绑定过本服务，请在管理后台查看或联系管理员；如收不到消息，可解绑后重新扫码。',
       );
       store.addEvent({ type: 'bind', userId: user?.id ?? null, detail: 'binded_redirect' });
       log.info('绑定返回 binded_redirect', { sessionId: session.id, userId: session.userId });
@@ -526,8 +536,19 @@ async function handleStatus(session, resp) {
         // 换绑后重置该账号发送限流桶（旧 bot 的限流窗口不应影响新账号）
         dispatcher.resetRateLimit(result.user.id);
       }
-      // 启动新凭据的入站监控（notifyStart + getupdates）
-      monitor.start(session.userId);
+      // 启动新凭据的入站监控（notifyStart + getupdates）。
+      // BA-19：monitor.start 可能因监控账号上限/状态校验失败，不阻断绑定但必须留痕并提示用户重连。
+      const monitorStarted = monitor.start(session.userId);
+      if (!monitorStarted) {
+        session.warning =
+          '绑定成功，但入站监控未能启动（可能已达监控账号上限）；如一段时间收不到消息，请在管理后台对该用户执行“重连”。';
+        store.addEvent({
+          type: 'bind_monitor_failed',
+          userId: session.userId,
+          detail: 'monitor.start 返回 false（监控上限/状态校验失败）',
+        });
+        log.warn('绑定成功但入站监控启动失败', { sessionId: session.id, userId: session.userId });
+      }
       return true;
     }
     default: {

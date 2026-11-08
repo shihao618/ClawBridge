@@ -4,6 +4,9 @@
 # 一条命令起「app + mock 微信 iLink」全栈，无需真实微信：
 #   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d --build
 #
+# 注意：mock-ilink 属于 `demo` profile，**必须带 `--profile demo`**（启动、`config` 校验/`down` 一致）；
+# 不带 profile 时 compose 会因 `<缺少依赖目标 service "mock-ilink">` 报 invalid compose project。
+#
 # 或使用脚本（推荐，自动检查 .env、等待健康并打印操作指引）：
 #   scripts/demo.ps1        # Windows PowerShell
 #   scripts/demo.sh         # bash
@@ -45,6 +48,13 @@ services:
       - "${MOCK_PORT:-3100}:3100"
     init: true
     restart: unless-stopped
+    # 与主 compose 的 app 服务对齐的运行加固（INF-10）：
+    # - mock 收到 SIGTERM 后在 ≤2s 内退出（ilink-mock.mjs shutdown()），10s 停机宽限足够；
+    # - 禁止容器内提权；
+    # - json-file 日志滚动上限，避免长时间演示把宿主机磁盘写满。
+    stop_grace_period: 10s
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test:
         - CMD
@@ -55,6 +65,11 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   clawbridge:
     environment:

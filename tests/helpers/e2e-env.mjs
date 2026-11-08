@@ -86,6 +86,85 @@ export async function waitStable(fn, { samples = 4, intervalMs = 80, timeoutMs =
   );
 }
 
+/**
+ * 反向断言（替代 `await sleep(N); assert 状态未变化`）：
+ * 1) 先等待状态“稳定”（连续 samples 次采样序列化结果一致）；
+ * 2) 再观察 observeMs，观察窗口内只要状态发生变化即失败。
+ * fn 返回值需可 JSON 序列化；可用 serializer 定制比较口径。
+ * 返回稳定基线（便于附加断言）。
+ */
+export async function expectNoChange(fn, {
+  samples = 3,
+  intervalMs = 100,
+  observeMs = 500,
+  timeoutMs = 15000,
+  serializer = stableStringify,
+  label = '状态不变量',
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let previous = null;
+  let stable = 0;
+  while (Date.now() < deadline) {
+    const current = serializer(await fn());
+    if (previous !== null && current === previous) stable += 1;
+    else stable = 0;
+    previous = current;
+    if (stable >= samples) break;
+    await sleep(intervalMs);
+  }
+  if (stable < samples) {
+    throw new Error(`expectNoChange 超时（${timeoutMs}ms）：${label} 未能在观察前稳定`);
+  }
+  const baseline = previous;
+  const observeUntil = Date.now() + observeMs;
+  while (Date.now() < observeUntil) {
+    await sleep(Math.max(1, Math.min(intervalMs, observeUntil - Date.now())));
+    const current = serializer(await fn());
+    if (current !== baseline) {
+      throw new Error(
+        `expectNoChange 失败（${label}）：观察窗口内状态发生变化\n  稳定基线：${baseline}\n  观察结果：${current}`,
+      );
+    }
+  }
+  return baseline;
+}
+
+/** 键排序的稳定序列化（同名对象/数组可直接字符串比较）。 */
+export function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+
+/**
+ * 等待跨过一个毫秒边界：用于让后续写入获得不同的毫秒时间戳，
+ * 替代 `await sleep(20)` 这类“睡够就行”的时序 hack（最多等 2s，确定性更好）。
+ */
+export async function waitNextMillis(ms = 2) {
+  const target = Date.now() + Math.max(1, ms);
+  await waitFor(() => Date.now() >= target, { timeoutMs: 2000, intervalMs: 1, label: `等待时间推进 ${ms}ms` });
+}
+
+/**
+ * 子进程环境变量白名单：只透传 OS/运行时必需变量，避免宿主进程里的
+ * KEEPALIVE_ENABLED / DATA_DIR / LOG_LEVEL / ILINK_* 等污染被测 app/mock。
+ * 测试覆盖只能通过 startE2E({appEnv})、mockEnv 或显式 E2E_APP_ENV 注入。
+ */
+const CHILD_ENV_PASSTHROUGH = [
+  'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'ComSpec',
+  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA',
+  'OS', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'LANG', 'LC_ALL', 'TZ',
+];
+
+export function buildChildEnv(overrides = {}) {
+  const env = {};
+  for (const key of CHILD_ENV_PASSTHROUGH) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return { ...env, ...overrides };
+}
+
 /** 获取一个空闲端口（先监听 127.0.0.1:0 再关闭）。 */
 export function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -419,7 +498,17 @@ export function parseOutboundAesKey(aesKeyBase64) {
 // E2E 环境
 // ---------------------------------------------------------------------------
 class E2E {
-  constructor({ appProc, mockProc, appPort, mockPort, dataDir, appLogs, mockLogs, ownsDataDir = true }) {
+  constructor({
+    appProc,
+    mockProc,
+    appPort,
+    mockPort,
+    dataDir,
+    appLogs,
+    mockLogs,
+    ownsDataDir = true,
+    allowMockViolations = [],
+  }) {
     this.appProc = appProc;
     this.mockProc = mockProc;
     this.appPort = appPort;
@@ -430,6 +519,8 @@ class E2E {
     this.ownsDataDir = ownsDataDir;
     this.appLogs = appLogs;
     this.mockLogs = mockLogs;
+    /** 允许豁免的 mock 协议违规（字符串按 reason 子串匹配，函数接收 rejection 条目）。 */
+    this.allowMockViolations = allowMockViolations;
     this.adminCookie = '';
     // 首启自动生成的机密明文（startE2E 等文件生成后填入）
     this.adminPassword = '';
@@ -559,6 +650,27 @@ class E2E {
 
   async mockHealth() {
     return this.mockRequest('GET', '/__mock/health');
+  }
+
+  /**
+   * 协议合规断言：mock 侧 state.rejections 必须为空（客户端请求头/字段/结构未违规）。
+   * allowMockViolations 中字符串按 reason 子串匹配、函数接收 {endpoint, reason, at} 返回 true 即豁免。
+   * @returns {Promise<object[]>} 未豁免的违规列表（空数组）
+   */
+  async assertNoMockViolations() {
+    const state = await this.mockState();
+    const rejections = Array.isArray(state.rejections) ? state.rejections : [];
+    const allowed = (rejection) =>
+      this.allowMockViolations.some((rule) =>
+        typeof rule === 'function' ? rule(rejection) : String(rejection?.reason ?? '').includes(String(rule)),
+      );
+    const violations = rejections.filter((rejection) => !allowed(rejection));
+    assert.deepEqual(
+      violations,
+      [],
+      `mock 记录了 ${violations.length} 条协议违规：${JSON.stringify(violations.slice(0, 5))}`,
+    );
+    return violations;
   }
 
   mockScan(qrcode, body = {}) {
@@ -1268,23 +1380,38 @@ class E2E {
   // ---- 清理 ----
   /**
    * 停止 mock/app 并（仅当 DATA_DIR 由本实例创建时）删除临时目录。
-   * @param {{keepDataDir?: boolean}} [options] keepDataDir=true 时保留 DATA_DIR（二次启动用例）
+   * 停止前统一断言 mock 无未豁免的协议违规（不通过时仍会完成清理，最后抛出首个错误）。
+   * @param {{keepDataDir?: boolean, skipMockViolationCheck?: boolean}} [options]
+   *   keepDataDir=true 时保留 DATA_DIR（二次启动用例）；
+   *   skipMockViolationCheck=true 时跳过协议合规断言（仅在测试故意构造违规时使用）。
    */
-  async cleanup({ keepDataDir = false } = {}) {
+  async cleanup({ keepDataDir = false, skipMockViolationCheck = false } = {}) {
     if (this.finished) return;
     this.finished = true;
-    if (this.appProc) await stopProcess(this.appProc, this.appLogs, 'app');
-    this.appProc = null;
-    await stopProcess(this.mockProc, this.mockLogs, 'mock');
-    this.mockProc = null;
-    if (this.ownsDataDir && !keepDataDir) {
+    let violationError = null;
+    if (!skipMockViolationCheck && this.mockProc && this.mockProc.exitCode == null) {
       try {
-        await fsp.rm(this.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        await this.assertNoMockViolations();
       } catch (err) {
-        console.warn(`[e2e] 清理临时目录失败（忽略）：${err.message}`);
+        violationError = err;
       }
     }
-    activeInstances.delete(this);
+    try {
+      if (this.appProc) await stopProcess(this.appProc, this.appLogs, 'app');
+      this.appProc = null;
+      await stopProcess(this.mockProc, this.mockLogs, 'mock');
+      this.mockProc = null;
+    } finally {
+      if (this.ownsDataDir && !keepDataDir) {
+        try {
+          await fsp.rm(this.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        } catch (err) {
+          console.warn(`[e2e] 清理临时目录失败（忽略）：${err.message}`);
+        }
+      }
+      activeInstances.delete(this);
+    }
+    if (violationError) throw violationError;
   }
 
   /** 仅停止 app 进程（保留 mock 与 DATA_DIR），用于「二次启动/重启不重新生成机密」用例。 */
@@ -1292,6 +1419,50 @@ class E2E {
     if (!this.appProc) return;
     await stopProcess(this.appProc, this.appLogs, 'app');
     this.appProc = null;
+  }
+
+  /**
+   * 主动终止 app 进程并等待退出，返回 {code, signal, logs}（logs 为信号发出后新增的日志）。
+   * 用于生命周期/优雅退出测试；终止后 cleanup() 只清理 mock 与临时目录。
+   * @param {{signal?: 'SIGTERM'|'SIGINT'|'SIGKILL', timeoutMs?: number, label?: string}} [options]
+   */
+  async terminateApp({ signal = 'SIGTERM', timeoutMs = 15000, label = 'app 进程退出' } = {}) {
+    if (!this.appProc) throw new Error('terminateApp：app 进程未运行');
+    const proc = this.appProc;
+    const logStart = this.appLogs.lines.length;
+    const exited = new Promise((resolve) => {
+      proc.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
+    });
+    // 注意：超时计时器必须 unref + clear，否则测试进程会被不必要地拖慢/挂住。
+    let timeoutHandle = null;
+    const timeout = new Promise((resolve) => {
+      timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
+      timeoutHandle.unref?.();
+    });
+    try {
+      proc.kill(signal);
+    } catch (err) {
+      clearTimeout(timeoutHandle);
+      this.appProc = null;
+      throw new Error(`terminateApp：发送 ${signal} 失败：${err.message}`);
+    }
+    const result = await Promise.race([exited, timeout]);
+    clearTimeout(timeoutHandle);
+    if (!result) {
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      if (process.platform === 'win32' && proc.pid) {
+        spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      }
+      this.appProc = null;
+      await this.cleanup({ skipMockViolationCheck: true }).catch(() => {});
+      throw new Error(`${label} 超时（${timeoutMs}ms）：\n${this.appLogs.tail(80)}`);
+    }
+    this.appProc = null;
+    return { ...result, logs: this.appLogs.lines.slice(logStart).join('\n') };
   }
 
   /** 手动打印日志尾部（排障用）。 */
@@ -1332,19 +1503,26 @@ const BASE_APP_ENV = {
 
 /**
  * 启动 mock + app 并等待健康检查通过，随后读取首启自动生成的机密文件。
- * @param {{appEnv?: object, mockEnv?: object, dataDir?: string}} [options]
- *   dataDir 传入已有目录时复用（用于重启/二次启动用例），cleanup 不会删除该目录。
+ * @param {{appEnv?: object, mockEnv?: object, dataDir?: string, allowMockViolations?: Array<string|Function>}} [options]
+ *   dataDir 传入已有目录时复用（用于重启/二次启动用例），cleanup 不会删除该目录；
+ *   allowMockViolations 传给 E2E，用于豁免确有必要的 mock 协议违规（默认空 = 不允许任何违规）。
+ *   注意：子进程 env 为白名单构造（buildChildEnv），不再继承宿主 process.env；
+ *   如需覆盖，用 appEnv/mockEnv 或显式 E2E_APP_ENV（JSON）逃生通道。
  * @returns {Promise<E2E>}
  */
-export async function startE2E({ appEnv = {}, mockEnv = {}, dataDir: reuseDataDir = null } = {}) {
+export async function startE2E({
+  appEnv = {},
+  mockEnv = {},
+  dataDir: reuseDataDir = null,
+  allowMockViolations = [],
+} = {}) {
   const ownsDataDir = !reuseDataDir;
   const dataDir = reuseDataDir ?? (await fsp.mkdtemp(path.join(os.tmpdir(), 'clawbridge-e2e-')));
 
   // 1) mock
   const mockProc = spawn(process.execPath, [path.join(REPO_ROOT, 'mock', 'ilink-mock.mjs')], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
+    env: buildChildEnv({
       PORT: '0',
       HOST: '127.0.0.1',
       MOCK_QUIET: '1',
@@ -1355,7 +1533,7 @@ export async function startE2E({ appEnv = {}, mockEnv = {}, dataDir: reuseDataDi
       MOCK_QR_TTL_MS: '300000',
       MOCK_VERIFY_MAX_ATTEMPTS: '3',
       ...mockEnv,
-    },
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -1374,8 +1552,7 @@ export async function startE2E({ appEnv = {}, mockEnv = {}, dataDir: reuseDataDi
   const appPort = await getFreePort();
   const appProc = spawn(process.execPath, [path.join(REPO_ROOT, 'server', 'src', 'index.js')], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
+    env: buildChildEnv({
       ...BASE_APP_ENV,
       ...parseExtraAppEnv(),
       PORT: String(appPort),
@@ -1386,7 +1563,7 @@ export async function startE2E({ appEnv = {}, mockEnv = {}, dataDir: reuseDataDi
       // 后端按 `{ILINK_CDN_BASE_URL}/download?…` 拼 URL，因此 base 需带 /cdn 后缀。
       ILINK_CDN_BASE_URL: `${mockUrl}/cdn`,
       ...appEnv,
-    },
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -1394,7 +1571,17 @@ export async function startE2E({ appEnv = {}, mockEnv = {}, dataDir: reuseDataDi
   const appLogs = createLogCollector(appProc, 'app');
   const appUrl = `http://127.0.0.1:${appPort}`;
 
-  const e2e = new E2E({ appProc, mockProc, appPort, mockPort, dataDir, appLogs, mockLogs, ownsDataDir });
+  const e2e = new E2E({
+    appProc,
+    mockProc,
+    appPort,
+    mockPort,
+    dataDir,
+    appLogs,
+    mockLogs,
+    ownsDataDir,
+    allowMockViolations,
+  });
 
   try {
     await waitFor(
@@ -1446,6 +1633,10 @@ export default {
   startMockApi,
   waitFor,
   waitStable,
+  expectNoChange,
+  waitNextMillis,
+  stableStringify,
+  buildChildEnv,
   sleep,
   getFreePort,
   assertBigMessageId,

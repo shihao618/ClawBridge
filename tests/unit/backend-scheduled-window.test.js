@@ -299,3 +299,52 @@ test('API：间隔任务窗口字段创建/更新/TaskView；nextRunAt 落在窗
   const columns = new Set(getDb().prepare('PRAGMA table_info(scheduled_tasks)').all().map((row) => row.name));
   assert.ok(columns.has('window_start') && columns.has('window_end'));
 });
+
+test('API：PATCH 仅修改 windowStart/windowEnd 时 next_run_at 按新窗口重算（BA-13）', async () => {
+  const user = store.upsertBoundUser({
+    wechatUserId: 'wx_sched_window_patch',
+    displayName: '窗口重算用户',
+    ilinkBotId: 'bot_sched_window_patch@im.bot',
+    botToken: 'sched-window-patch-bot-token',
+    baseUrl: 'https://ilink.example.test',
+  }).user;
+  const pad = (hour) => String(hour).padStart(2, '0');
+  // 选两个都远离「当前时刻」的窗口：初始窗口 = 当前 UTC 小时 +12，目标窗口 = +6。
+  // 注意：校验器用 parseClockTime 的返回值做真值判断，'00:00' 会被当作非法，故统一避开 0 点。
+  const nowHour = new Date().getUTCHours();
+  const safeHour = (hour) => (hour === 0 ? 1 : hour);
+  const startA = safeHour((nowHour + 12) % 24);
+  const startB = safeHour((nowHour + 6) % 24);
+  const windowStartA = `${pad(startA)}:00`;
+  const windowEndA = `${pad(safeHour((startA + 2) % 24))}:00`;
+  const windowStartB = `${pad(startB)}:00`;
+  const windowEndB = `${pad(safeHour((startB + 2) % 24))}:00`;
+
+  const body = {
+    name: '窗口重算任务',
+    enabled: true,
+    schedule: { type: 'interval', intervalMs: 3_600_000, windowStart: windowStartA, windowEnd: windowEndA },
+    targets: { type: 'users', ids: [user.id] },
+    request: { method: 'GET', url: 'http://127.0.0.1:9/x' },
+    response: { type: 'json', path: '', template: 'hi', fallbackText: '' },
+    timeoutMs: 1000,
+  };
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', body);
+  assert.equal(created.status, 201, created.text);
+  const task = created.json.task;
+  const beforeNextRunAt = task.nextRunAt;
+
+  const patched = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${task.id}`, {
+    // 仅窗口字段变化（intervalMs 显式保持原值）
+    schedule: { type: 'interval', intervalMs: 3_600_000, windowStart: windowStartB, windowEnd: windowEndB },
+  });
+  assert.equal(patched.status, 200, patched.text);
+  assert.equal(patched.json.task.schedule.windowStart, windowStartB);
+  assert.equal(patched.json.task.schedule.windowEnd, windowEndB);
+  assert.notEqual(patched.json.task.nextRunAt, beforeNextRunAt, '仅改窗口也应重算 next_run_at');
+  assert.ok(
+    scheduler.isInDailyWindow(patched.json.task.nextRunAt, windowStartB, windowEndB),
+    `重算后的 nextRunAt 应落在新窗口内：${iso(patched.json.task.nextRunAt)}`,
+  );
+  assert.ok(patched.json.task.nextRunAt > Date.now(), 'nextRunAt 应为未来时间');
+});

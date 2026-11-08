@@ -235,9 +235,10 @@ test('新字段校验/映射/restartRequired + logLevel 即时生效', () => {
     binding: { networkErrorLimit: 7, pollGapMs: 500 },
   });
   assert.equal(result.ok, true);
-  assert.ok(result.restartRequired.includes('push.tickMs'));
+  // BA-12：能实时读取的字段不再标 restartRequired（push.tickMs / ilink 组即时生效）
+  assert.equal(result.restartRequired.includes('push.tickMs'), false, 'push.tickMs 每轮实时读取，无需重启');
+  assert.equal(result.restartRequired.includes('ilink.loginBaseUrl'), false, 'ilink 请求时实时读取，无需重启');
   assert.ok(result.restartRequired.includes('server.trustProxy'));
-  assert.ok(result.restartRequired.includes('ilink.loginBaseUrl'));
   assert.ok(result.restartRequired.includes('monitor.maxAccounts'));
   assert.equal(config.publicBaseUrl, 'https://bot.example.com');
   assert.equal(config.ilink.appId, 'my-app');

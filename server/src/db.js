@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_user ON outbox(user_id, created_at DESC);
+-- 后台「消息记录」按 created_at 全局倒序 UNION 排序 / 今日统计
+CREATE INDEX IF NOT EXISTS idx_outbox_created ON outbox(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS inbound_messages (
   id TEXT PRIMARY KEY,
@@ -86,6 +88,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_msgid
   ON inbound_messages(wechat_message_id)
   WHERE wechat_message_id IS NOT NULL AND wechat_message_id <> '';
 CREATE INDEX IF NOT EXISTS idx_inbound_user ON inbound_messages(user_id, created_at DESC);
+-- 对外入站消息 API：WHERE received_at > ? ORDER BY received_at ASC, id ASC（wait 长轮询每 500ms 查询）
+CREATE INDEX IF NOT EXISTS idx_inbound_received ON inbound_messages(received_at, id);
+-- 后台「消息记录」按 created_at 全局倒序 UNION 排序 / 今日统计
+CREATE INDEX IF NOT EXISTS idx_inbound_created ON inbound_messages(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

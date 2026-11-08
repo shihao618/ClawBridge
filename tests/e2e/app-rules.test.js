@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
-import { sleep, startE2E, startMockApi, waitFor } from '../helpers/e2e-env.mjs';
+import { expectNoChange, startE2E, startMockApi, waitFor } from '../helpers/e2e-env.mjs';
 
 let e2e;
 let externalApi;
@@ -326,8 +326,15 @@ test('分组 scope：组内用户命中、非组内用户不触发', async () =>
   // 非组内用户 A 不触发
   externalApi.reset();
   await injectInbound(userA, accountA, '分组查询 天气');
-  await sleep(900);
-  assert.equal(externalApi.requests.length, 0, '非组内用户消息不应调用外部 API');
+  // 负向断言：请求数稳定为 0 并在观察窗口内保持不变（替代固定 sleep）
+  assert.equal(
+    await expectNoChange(() => externalApi.requests.length, {
+      label: '非组内用户消息不调用外部 API',
+      observeMs: 900,
+    }),
+    '0',
+    '非组内用户消息不应调用外部 API',
+  );
   const missLogs = await e2e.getAppRuleLogs({ ruleId: rule.id, userId: userA.id });
   assert.equal(missLogs.status, 200);
   assert.equal(missLogs.json.total, 0, '非组内用户不应产生规则日志');
@@ -360,8 +367,15 @@ test('优先级：同一消息命中多条规则时只执行 priority 最小的�
   externalApi.reset();
   await injectInbound(userA, accountA, '优先级测试 内容');
   await e2e.waitMockSentMessageContaining('LOW-RULE-HIT', { toUserId: userA.wechatUserId });
-  await sleep(700);
-  assert.equal(externalApi.requests.length, 1, '只应执行一条规则（外部 API 只收到 1 次请求）');
+  // 负向断言：只执行一条规则 → 请求数稳定为 1 并保持不变
+  assert.equal(
+    await expectNoChange(() => externalApi.requests.length, {
+      label: '只执行 priority 最小的一条规则',
+      observeMs: 700,
+    }),
+    '1',
+    '只应执行一条规则（外部 API 只收到 1 次请求）',
+  );
   assert.equal(externalApi.requests[0].pathname, '/low', '应执行 priority 更小的规则');
   const highLogs = await e2e.getAppRuleLogs({ ruleId: highRule.id });
   assert.equal(highLogs.status, 200);
@@ -414,10 +428,18 @@ test('失败兜底：外部接口 500 时回复 fallback_text；超时无兜底�
   );
   assert.equal(timeoutLog.status, 'failed');
   assert.ok(String(timeoutLog.error).length > 0, '超时失败日志应包含错误');
-  await sleep(800);
-  const ruleMessagesAfter = (await ruleOutboundMessages(userA.id)).length;
-  assert.equal(ruleMessagesAfter, ruleMessagesBefore, '无 fallback 时失败不应给用户发送消息');
-  assert.equal(externalApi.requests.length, 1, '超时用例外部 API 应收到 1 次请求');
+  // 快照式负向断言：失败后“回复条数 + 外部请求数”稳定不变
+  const timeoutStable = JSON.parse(
+    await expectNoChange(
+      async () => ({
+        replies: (await ruleOutboundMessages(userA.id)).length,
+        requests: externalApi.requests.length,
+      }),
+      { label: '超时失败不发送消息', observeMs: 800 },
+    ),
+  );
+  assert.equal(timeoutStable.replies, ruleMessagesBefore, '无 fallback 时失败不应给用户发送消息');
+  assert.equal(timeoutStable.requests, 1, '超时用例外部 API 应收到 1 次请求');
 
   // 恢复默认响应
   externalApi.setResponse({ json: { ok: true } });
@@ -533,24 +555,36 @@ test('测试运行（dry-run）：返回解析结果但不发送、不写运行�
 
   // dry-run 会真实调用外部接口，但不发送微信消息、不写运行日志
   assert.equal(externalApi.requests.length, 1, 'dry-run 应调用外部 API 一次');
-  await sleep(700);
-  const repliesAfter = await e2e.countMockSentMessagesContaining('上海多云', { toUserId: userA.wechatUserId });
-  assert.equal(repliesAfter, repliesBefore, 'dry-run 不应给用户发送消息');
-  const logsAfter = await e2e.getAppRuleLogs({ ruleId: rule.id });
-  assert.equal(logsAfter.json.total, beforeCount, 'dry-run 不应写运行日志');
+  // 快照式负向断言：dry-run 前后“回复条数 + 运行日志数”稳定不变
+  const dryRunStable = JSON.parse(
+    await expectNoChange(
+      async () => ({
+        replies: await e2e.countMockSentMessagesContaining('上海多云', { toUserId: userA.wechatUserId }),
+        logs: (await e2e.getAppRuleLogs({ ruleId: rule.id })).json.total,
+      }),
+      { label: 'dry-run 不发送、不写日志', observeMs: 700 },
+    ),
+  );
+  assert.equal(dryRunStable.replies, repliesBefore, 'dry-run 不应给用户发送消息');
+  assert.equal(dryRunStable.logs, beforeCount, 'dry-run 不应写运行日志');
 });
 
 test('未命中关键词/无规则的消息不触发外部接口', async () => {
   externalApi.reset();
   const unrelated = uniqueText('无关键词语句');
   await injectInbound(userA, accountA, unrelated);
-  await sleep(900);
-  assert.equal(externalApi.requests.length, 0, '未命中任何规则的消息不应调用外部 API');
-  const logs = await e2e.getAppRuleLogs({ userId: userA.id, limit: 200 });
-  assert.equal(logs.status, 200);
-  assert.equal(
-    (logs.json.items ?? []).some((item) => String(item.paramsPreview || '').includes(unrelated)),
-    false,
-    '未命中消息不应产生对应规则日志',
+  // 快照式负向断言：未命中 → 外部请求数稳定为 0 且不产生对应日志
+  const unmatchedStable = JSON.parse(
+    await expectNoChange(
+      async () => ({
+        requests: externalApi.requests.length,
+        matchedLogs: ((await e2e.getAppRuleLogs({ userId: userA.id, limit: 200 })).json.items ?? []).some(
+          (item) => String(item.paramsPreview || '').includes(unrelated),
+        ),
+      }),
+      { label: '未命中消息不触发外部 API', observeMs: 900 },
+    ),
   );
+  assert.equal(unmatchedStable.requests, 0, '未命中任何规则的消息不应调用外部 API');
+  assert.equal(unmatchedStable.matchedLogs, false, '未命中消息不应产生对应规则日志');
 });

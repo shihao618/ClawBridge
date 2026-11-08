@@ -66,6 +66,7 @@ Resp 200:
     "boundAt": 1760000000000
   },
   "error": "…"                           // status=error 时的错误信息
+  ,"warning": "…"                        // 可选：绑定成功但入站监控启动失败时的提示（见下）
 }
 ```
 
@@ -79,9 +80,13 @@ Resp 200:
 | `refreshing` | 二维码过期，正在自动刷新（最多 3 次） |
 | `verify_blocked` | 配对数字错误次数过多，正在刷新二维码 |
 | `confirmed` | 绑定成功（`user` 字段返回）。此状态之后会话仍可查询，约保留 10–20 分钟（`BINDING_TTL_MS` 到期后由清理任务回收） |
-| `already_bound` | 该微信已绑定过本服务（binded_redirect），`user` 可能返回已有用户；否则提示用户联系管理员 |
+| `already_bound` | 该微信已绑定过本服务（binded_redirect），`user` 可能返回已有用户；否则提示用户联系管理员。若绑定后收不到消息，提示在后台「重连」（`POST /api/admin/users/{id}/reconnect`）或解绑后重新扫码 |
 | `expired` / `timeout` / `cancelled` | 会话结束，需重新创建 |
 | `error` | 协议/网络错误导致失败，`error` 字段给出原因；可重试 |
+
+> **监控启动告警**：`confirmed` 时若入站监控 `monitor.start()` 失败（如达到 `MONITOR_MAX_ACCOUNTS`
+> 上限或用户状态/冷却校验失败），绑定本身仍成功，但响应可能带 `warning` 字段，提示
+> “绑定成功但入站监控未启动，请在后台对该用户点「重连」或解绑后重扫”。前端应展示该告警。
 
 ### 1.3 提交配对数字
 
@@ -103,8 +108,11 @@ Resp 204
 
 ## 2. 管理后台接口（Cookie 会话）
 
-登录后使用 HttpOnly Cookie `cb_session`（SameSite=Lax，12 小时有效）。所有写接口要求
-`X-Requested-With: ClawBridge-Admin` 请求头（防 CSRF）。
+登录后使用 HttpOnly Cookie `cb_session`（SameSite=Lax，12 小时有效）。管理后台的写接口要求
+`X-Requested-With: ClawBridge-Admin` 请求头（防 CSRF；缺失返回 403 FORBIDDEN）。
+**例外：`POST /api/admin/login` 不要求该头**（登录时尚无会话，也无法携带该头）；公开的
+绑定接口（`/api/bind/sessions` 系列）使用绑定会话 token，`/api/v1/messages` 等对外接口使用
+API Key，均不使用该头。
 
 ### 2.1 登录 / 登出 / 当前身份
 
@@ -127,7 +135,7 @@ GET /api/admin/overview
     "activeUsers": 3,             // status='active'
     "pausedUsers": 0,             // token 失效冷却中
     "usersWithContextToken": 2,   // 有 context_token 的用户数（可主动推送）
-    "messagesToday": 25,          // 今日入站+出站消息数
+    "messagesToday": 25,          // 今日入站+出站消息数（“今日”按 SCHEDULER_TIMEZONE，默认 Asia/Shanghai 计算零点）
     "queued": 0, "sending": 0, "sent": 12, "failed": 1,
     "inboundLast24h": 8
   },
@@ -221,6 +229,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
     "status": "sent | failed | queued | sending | received",   // inbound 恒为 received
     "error": "",
     "attempts": 1,                 // 实际发送尝试次数：首次投递成功=1，每次重试递增
+    "source": "admin",             // 出站来源（admin/api/broadcast/group/webhook/keepalive/rule/schedule）；入站为空串
     "serverMessageId": "…",
     "createdAt": 1760000000000
   }]
@@ -239,10 +248,18 @@ GET /api/admin/config
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
-  "apiTokenPreview": "claw…c9f2",      // 仅前 4 + 后 4
-  "dataDir": "/app/data"
+  "apiTokenPreview": "claw…c9f2",      // 仅前 4 + 后 4；pushApiEnabled=false 时为“已禁用”
+  "dataDir": "/app/data",
+  "media": { "maxBytes":26214400, "inboundMaxBytes":104857600,
+             "allowedImage":["image/jpeg","image/png"], "allowedVideo":["video/mp4"],
+             "dir":"/app/data/media" },
+  "keepalive": { "enabled": true, "windowMs": 86400000, "leadMs": 43200000,
+                 "repeatMs": 21600000, "tickMs": 300000, "maxPerTick": 100, "text": "…" }
 }
 ```
+
+> 运行期可改参数的完整列表与生效方式（含 `restartRequired`）以
+> `GET /api/admin/settings` 与 [`docs/SETTINGS.md`](SETTINGS.md) 为准；本接口只返回脱敏摘要。
 
 ## 3. 对外推送 API（API Key）
 
@@ -281,7 +298,13 @@ Resp 202: {
   "queued": [ { "outboxId": "ob_1", "userId": "u_abc", "status": "queued" },
               { "outboxId": "ob_2", "userId": "u_def", "status": "queued" } ]
 }
-未知/未绑定用户返回 404，无效用户列在 `error.details.unknownUserIds`；全部无效时不入队。
+```
+
+- 部分目标不可发送时仍返回 202，并在响应中额外列出 `unknownUserIds`（不存在/未绑定）与
+  `pausedUserIds`（`-14` 冷却中，暂不能接收新消息）；
+- 全部目标都不可发送：冷却中 → `409 CONFLICT`；其余无效 → `404 NOT_FOUND`
+  （`error.details.unknownUserIds` / `error.details.pausedUserIds`）；
+- 冷却判定与后台发送一致（`pause_until > now`），dispatcher 不会把冷却账号的消息继续投递。
 ```
 
 ### 3.2 广播
@@ -291,6 +314,10 @@ POST /api/v1/broadcast
 Body: { "text": "系统维护通知", "onlyBound": true }
 Resp 202: { "accepted": 3, "queued": [...] }
 ```
+
+`onlyBound` 是**兼容字段**，实际语义 = “是否包含 `-14` 冷却中的账号”（unbound 账号始终排除）：
+默认 `true`（只发给未冷却用户）；`onlyBound:false` 时冷却中账号也会入队（由 dispatcher 按现有逻辑失败）。
+Webhook 的 `?broadcast=1&onlyBound=false` 同义。
 
 ### 3.3 查询投递状态
 
@@ -352,8 +379,14 @@ Resp 201:
              "fileName":"a.jpg", "size":12345, "url":"/api/admin/media/att_…" },
   "limits": { "maxBytes":26214400, "inboundMaxBytes":104857600,
               "allowedImage":["image/jpeg","image/png"], "allowedVideo":["video/mp4"] } }
-错误：400（文件名/MIME 非法）、413（超过上限）、401（未登录）。
+错误：400（缺少 X-File-Name 请求头、或请求体为空）、413（超过上限）、401（未登录）。
 ```
+
+> **MIME 行为（v2.0.0 实际实现）**：服务端**不校验 MIME 白名单、也不会因 MIME 非法返回 400**。
+> `Content-Type` 取请求头（缺失或 `application/octet-stream` 时按文件名扩展名/魔数嗅探），
+> 然后按 MIME/扩展名归入 `image` / `video`，**其余一律按 `file` 入库并发送**。
+> `X-File-Name` 只做安全清洗（去目录、控制字符、限长；全空时回退 `file.bin`），
+> 仅当请求头缺失/为空或请求体为空时才返回 400。
 
 ### 5.2 发送带媒体的消息
 
@@ -384,6 +417,9 @@ Header: Content-Type: <MIME>、X-File-Name: <encodeURIComponent(文件名)>
 Body: 原始二进制
 → 201 { "media": {...}, "limits": {...} }
 ```
+
+校验与归类规则同 §5.1（不校验 MIME 白名单；任意 MIME 均可上传，未命中 image/video 按 `file` 归类；
+仅 `X-File-Name` 缺失/为空或请求体为空时返回 400，超过 `MEDIA_MAX_BYTES` 返回 413）。
 
 ### 5.4 读取媒体文件
 
@@ -495,7 +531,7 @@ Query:
 响应 200:
 {
   "items": [{
-    "id":"in_…", "userId":"u_…", "displayName":"杨星雨",
+    "id":"in_…", "userId":"u_…", "displayName":"演示用户A",
     "groups":[{"id":"grp_…","name":"VIP客户","color":"#07C160"}],
     "text":"消息文本；媒体消息为 [图片] 等占位", "itemTypes":"1" | "1,2",
     "createdAt":1760000000000, "receivedAt":1760000000123,
@@ -547,7 +583,8 @@ GET /api/admin/users?...              # UserView 新增 keepaliveEnabled / keepa
 GET /api/admin/config                 # 新增 keepalive 配置（enabled/windowMs/leadMs/repeatMs/tickMs/text/…）
 GET /api/admin/overview               # stats 新增 keepaliveEnabledUsers / keepaliveSent24h
                                       # （keepaliveSent24h = 最近 24h 内**入队**的保活消息数，含 queued/sent）
-GET /api/admin/messages               # 消息项新增 source（admin/api/broadcast/group/keepalive/system）
+GET /api/admin/messages               # 消息项含 source 字段：admin | api | broadcast | group | webhook |
+                                      # keepalive | rule | schedule（`system` 为保留值，当前实现不写入）
 ```
 
 `GET /api/v1/users` 的 items 增加只读 `keepaliveEnabled`。
@@ -609,11 +646,14 @@ POST   /api/admin/app-rules/{id}/test              → 200（dry-run：不发送
 GET    /api/admin/app-rule-logs?ruleId=&status=&userId=&limit=&offset=
   → { total, items:[{id,ruleId,ruleName,userId,status,httpStatus,latencyMs,error,
                       paramsPreview,requestPreview,responsePreview,replyOutboxId,createdAt}] }
+  // status 过滤接受 matched | success | failed | skipped，其中 skipped 为**保留值**：
+  // 当前规则引擎不写入该状态，按 skipped 过滤的结果恒为空（保留字段以避免破坏既有 API 契约）。
 ```
 
 RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,regexPattern}`、
 `extraction{mode,config}`、`request{mode,method,url,headerNames,bodyTemplate}`、
 `response{type,path,template,fallbackText}`、`limits{timeoutMs}`、`stats{lastRunAt,lastStatus,success24h,failed24h,skipped24h}`。
+**`skipped24h` 为保留字段：当前引擎不写入 `skipped` 状态，统计恒为 0**（字段保留以兼容既有消费方）。
 `request.mode`：`http`（默认，调用外部接口）/ `none`（不请求，直接回复默认文本；此时 `url` 为空）。
 **Header 值只写不读**（落库 AES-256-GCM 加密，读取只返回 `requestHeaderNames`）。
 
@@ -632,7 +672,8 @@ RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,re
   可用 `where 字段=值`/`!=` 过滤）；为空时用解析结果；可配置兜底文案。
 - 频率控制：规则自身不再设置冷却/每小时上限；调用频率统一由微信账号默认发送限流控制（默认 7 条 / 5 分钟 / 账号）。
 - 保留保护：入站消息+规则去重、请求超时、响应大小限制。
-- 安全：默认拒绝访问内网/本机（SSRF）；需要访问内网接口时在 `APP_RULES_ALLOWED_HOSTS` 加白名单。
+- 安全：默认拒绝访问内网/本机（SSRF）；需要访问内网接口时在 `APP_RULES_ALLOWED_HOSTS` 加白名单
+  （后台「运行配置 → 接口应用 → allowedHosts」可即时修改，`.env` 仅首次默认值）。
 
 **配置（环境变量）**
 
@@ -642,8 +683,11 @@ RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,re
 | `APP_RULE_TIMEOUT_MS` | `8000` | 单次接口超时上限 |
 | `APP_RULE_MAX_RESPONSE_BYTES` | `1048576` | 响应体大小上限 |
 | `APP_RULES_WORKER_CONCURRENCY` | `2` | 规则执行并发数 |
-| `APP_RULES_ALLOWED_HOSTS` | 空 | 允许访问的内网/本机主机白名单（逗号分隔） |
+| `APP_RULES_ALLOWED_HOSTS` | 空 | 允许访问的内网/本机主机白名单（逗号分隔；后台可改、即时生效，`.env` 仅首次默认值） |
 | `APP_RULE_MAX_QUEUE` | `200` | 内存队列上限 |
+
+> 定时通知（§9.1）有独立白名单 `SCHEDULER_ALLOWED_HOSTS`（空=继承本表 `APP_RULES_ALLOWED_HOSTS`），
+> 因此「接口应用」与「定时通知」可分别放行内网主机。
 
 **curl 示例**
 
@@ -698,7 +742,10 @@ PATCH  /api/admin/scheduled-tasks/{id}               → { task }
 DELETE /api/admin/scheduled-tasks/{id}               → 204
 POST   /api/admin/scheduled-tasks/{id}/test          → 200（dry-run：真实调用接口渲染通知，不发送不写日志）
 POST   /api/admin/scheduled-tasks/{id}/run           → 200（手动执行一次：调用+发送+写日志，不改变 next_run_at）
+  // 停用任务调用 run 返回 400（提示先启用）；test（dry-run）对停用任务仍可用。
 GET    /api/admin/scheduled-task-logs?taskId=&status=&limit=&offset=
+  // status 过滤接受 success | failed | skipped，其中 skipped 为**保留值**：
+  // 调度器当前不写入该状态，按 skipped 过滤的结果恒为空（保留字段以兼容既有消费方）。
 ```
 
 TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEnd,timezone}`、`targets{type,ids,names}`、
@@ -724,6 +771,10 @@ TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEn
 | `SCHEDULER_TIMEZONE` | `Asia/Shanghai` | 每日任务时区（IANA） |
 | `SCHEDULER_MAX_RECIPIENTS` | `200` | 单任务单次最多收件人数 |
 | `SCHEDULER_TIMEOUT_MS` | `8000` | 外部请求超时上限 |
+| `SCHEDULER_MAX_RESPONSE_BYTES` | `0`（继承接口应用） | 定时任务独立响应体上限；`0`=继承 `APP_RULE_MAX_RESPONSE_BYTES` |
+| `SCHEDULER_ALLOWED_HOSTS` | 空（继承接口应用） | 定时任务独立私网白名单（逗号分隔）；空=继承 `APP_RULES_ALLOWED_HOSTS` |
+
+> 以上均为 `.env` **首次启动默认值**；运行期以后台「运行配置 → 定时通知」为准（即时生效）。
 
 **curl 示例**
 

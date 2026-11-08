@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
-import { sleep, startE2E, waitFor } from '../helpers/e2e-env.mjs';
+import { expectNoChange, startE2E, waitFor } from '../helpers/e2e-env.mjs';
 
 let e2e;
 let user1;
@@ -126,8 +126,15 @@ test('关闭保活状态的分组：新成员不会误开保活（false 与默�
   const assigned = await e2e.setUserGroups(user4.id, [closedGroup.id, defaultGroup.id]);
   assert.equal(assigned.status, 200);
   assert.equal(await userKeepaliveFlag(user4.id), false, '加入关闭保活的分组不应开启用户保活');
-  await sleep(200);
-  assert.equal(await userKeepaliveFlag(user4.id), false, '加入关闭保活分组后保持 false');
+  // 负向断言：观察窗口内 keepaliveEnabled 稳定为 false
+  assert.equal(
+    await expectNoChange(() => userKeepaliveFlag(user4.id), {
+      label: '加入关闭保活分组后保持 false',
+      observeMs: 400,
+    }),
+    'false',
+    '加入关闭保活分组后保持 false',
+  );
   // 分组视图保持 false
   assert.equal((await e2e.findGroup(closedGroup.id)).keepaliveEnabled, false);
   assert.equal((await e2e.findGroup(defaultGroup.id)).keepaliveEnabled, false);

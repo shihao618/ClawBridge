@@ -107,8 +107,15 @@ Resp: 200；响应头 x-encrypted-param = <下载参数 encrypt_query_param>
   - 16 字节 → 直接作为 key（图片常见）；
   - 32 字节且为 ASCII hex → 再把 hex 解析成 16 字节 key（文件/语音/视频常见）；
   - 图片若 `image_item.aeskey`（hex）存在则优先。
-- AES-128-ECB + PKCS7 解密。
+- AES-128-ECB + PKCS7 解密（流式：`createDecipheriv` + `pipeline`，不把整个文件读入内存）。
 - 单个文件上限默认 100MB（`INBOUND_MEDIA_MAX_BYTES`），下载超时 60s；失败只记录日志，不影响消息本身入库。
+- **下载 URL 校验（SSRF 纵深，BA-05）**：仅允许 `http/https`、禁止 userinfo；主机白名单 = 配置的 iLink/CDN 主机
+  + `MEDIA_ALLOWED_HOSTS`（可后台配置）+ `*.qq.com`/`*.weixin.qq.com`；dev/test 环境自动放行 localhost 以对接 mock CDN，
+  生产环境默认拒绝本机/私网地址；http 仅白名单主机/本机或显式 `MEDIA_ALLOW_INSECURE_HTTP=true` 时允许。
+  `full_url` 与拼接 URL 同样校验。
+- **重定向**：`redirect: 'manual'`，最多 3 跳，**每跳重新校验主机**；未授权主机直接失败不跟随。
+- **资源上限（BA-02）**：进程级有界并发闸门（默认并发 2、排队 64、排队超时 60s）；超出排队上限或排队超时
+  直接记 `attachments.status='failed'`，不会无限堆积；下载+解密为流式落盘（`.part` 临时文件 → 原子 rename）。
 
 ## 3. 存储与配置
 
@@ -125,6 +132,10 @@ DATA_DIR/
 
 ### 3.2 配置（config.js 新增）
 
+> 下表变量名是 **.env 的首次启动默认值**；除 `MEDIA_DIR` 外均可在后台「运行配置 → 媒体」修改，
+> 后台改过后以 DB 为准（`MEDIA_MAX_BYTES`、`inboundMaxConcurrent`、`inboundMaxQueue` 修改需重启，其余即时生效）。
+> `MEDIA_DIR` 属于文件系统基础设施，仅由 `.env` 管理。
+
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `ILINK_CDN_BASE_URL` | `https://novac2c.cdn.weixin.qq.com/c2c` | 微信 CDN 基址 |
@@ -133,12 +144,26 @@ DATA_DIR/
 | `INBOUND_MEDIA_MAX_BYTES` | `104857600`（100MB） | 入站单文件上限 |
 | `MEDIA_DOWNLOAD_TIMEOUT_MS` | `60000` | 入站下载超时 |
 | `MEDIA_UPLOAD_TIMEOUT_MS` | `60000` | 出站 CDN 上传超时 |
-| `MEDIA_ALLOWED_IMAGE_MIME` / `MEDIA_ALLOWED_VIDEO_MIME` | 常见 image/video 类型 | 逗号分隔，未命中按普通文件发送 |
+| `INBOUND_MEDIA_MAX_CONCURRENT` | `2` | 入站下载并发上限（进程级信号量；修改需重启） |
+| `INBOUND_MEDIA_MAX_QUEUE` | `64` | 入站下载排队上限（0=不排队；修改需重启） |
+| `INBOUND_MEDIA_QUEUE_TIMEOUT_MS` | 同下载超时 | 入站下载排队超时 |
+| `MEDIA_ALLOWED_HOSTS` | 空 | 入站下载额外允许的主机（逗号分隔） |
+| `MEDIA_ALLOW_INSECURE_HTTP` | `false` | 允许入站媒体 http 下载（降低 SSRF 防护强度） |
+| `MEDIA_ALLOWED_IMAGE_MIME` / `MEDIA_ALLOWED_VIDEO_MIME` | `image/jpeg,image/png,image/gif,image/webp,image/bmp` / `video/mp4,video/quicktime,video/webm,video/x-matroska` | 逗号分隔；未命中按普通文件发送 |
 
-`config.media = { dir, outboundMaxBytes, inboundMaxBytes, downloadTimeoutMs, uploadTimeoutMs }`，
-`config.ilink.cdnBaseUrl`。
+`config.media = { dir, outboundMaxBytes, inboundMaxBytes, downloadTimeoutMs, uploadTimeoutMs,
+inboundMaxConcurrent, inboundMaxQueue, inboundQueueTimeoutMs, allowedHosts, allowInsecureHttp,
+allowedImageMime, allowedVideoMime }`，`config.ilink.cdnBaseUrl`。
 
-## 4. 数据库 Schema v2（additive migration，必须保留既有 users/outbox/inbound 数据）
+## 4. 数据库 Schema v2（历史设计记录；现行 schema v10）
+
+> **⚠️ 历史设计记录（已废弃）**：本节关于 “additive migration / 必须保留既有 users/outbox/inbound 数据”
+> 的描述是早期 schema v2 设计阶段的记录。**现行 schema v10 不支持任何旧版本数据库迁移**：
+> `server/src/db.js` 发现 `schema_version !== 10` 会直接抛错拒绝启动
+> （`tests/unit/backend-schema-version.test.js` 断言），升级只能备份 `DATA_DIR` 后用空库重建并重新绑定；
+> 实操（含 Docker 命名卷/fnOS/回滚旧镜像）见 [`docs/UPGRADE.md`](UPGRADE.md)。
+> 下表的 `attachments` 表与 `outbox.media_id/caption_sent_at` 列由 v10 建表 SQL 直接创建，
+> 启动时不再执行 `ALTER TABLE`；DDL 仅作为历史设计对照保留。
 
 ```sql
 -- 新表
@@ -168,12 +193,13 @@ ALTER TABLE outbox ADD COLUMN media_id TEXT;                     -- attachments.
 ALTER TABLE outbox ADD COLUMN caption_sent_at INTEGER NOT NULL DEFAULT 0;
 ```
 
-迁移逻辑（`db.js`，保持幂等）：
+历史迁移逻辑（`db.js`，v2 时点；**已随 schema v10 废弃**）：
 
 1. `CREATE TABLE IF NOT EXISTS attachments(...)`；
 2. 用 `PRAGMA table_info(outbox)` 检查列，缺失才 `ALTER TABLE ... ADD COLUMN`；
 3. `meta.schema_version = 2`；
-4. 启动日志打印迁移结果。**必须用现有真实 v1 数据库副本验证迁移后 users/outbox/inbound 数量不变。**
+4. 启动日志打印迁移结果；当年要求“必须用现有真实 v1 数据库副本验证迁移后 users/outbox/inbound 数量不变”，
+   该流程随 v10 起“旧库直接拒绝”的策略一并失效。
 
 ### 4.1 store.js 新增/调整
 
@@ -287,7 +313,8 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
 `processMessages` 在保存入站消息后，对每个媒体 item：
 
 1. 解析 item → `{kind, media, fileName, mime}`（按 item 类型；图片/文件/视频/语音）；
-2. 下载+解密（§2），超过 `inboundMaxBytes` 或超时 → 记录 `attachments.status='failed', error=…`（不抛错）；
+2. 下载+解密（§2，进程级有界闸门 + 流式落盘），超过 `inboundMaxBytes`、超时、URL 未通过主机校验、
+   排队超限/排队超时 → 记录 `attachments.status='failed', error=…`（不抛错，不影响消息入库）；
 3. 成功 → 保存文件到 `media/inbound/<id><ext>`、`sha256` 记录、`attachments` 行（`direction=inbound`, 关联 `inbound_message_id`、`wechat_message_id`）；
 4. 同一消息多个媒体 item 逐个处理（最多 5 个，防御性上限）；
 5. `raw_json` 脱敏扩展：把 `media.aes_key`、`image_item.aeskey` 也替换为 `[redacted]`（与 context_token 同级处理）；
@@ -338,7 +365,8 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
   - 媒体 crypto：AES-128-ECB 加解密、padded size、aes_key 两种 base64 形态解析、图片 aeskey hex 优先；
   - 上传管线：假 CDN 服务断言 getuploadurl body（md5/filesize/aeskey/media_type/to_user_id）、
     上传密文可被 key 解密、`x-encrypted-param` 写入消息；
-  - DB 迁移 v1→v2：用 v1 schema 构造 DB（含 users/outbox/inbound 数据）→ 初始化后数据保留、新增表/列存在、幂等重跑；
+  - DB（历史已废弃）：v1→v2 迁移测试已随迁移逻辑移除；现行 `tests/unit/backend-schema-version.test.js`
+    断言“非 v10 旧库启动直接拒绝、空库直接建到 v10”；
   - dispatcher：caption 先发后发媒体、caption 失败不重复发（caption_sent_at）、-2 退避后只重试媒体、
     媒体附件缺失直接 failed、限流令牌消耗（2 次 sendmessage）；
   - inbound：假 CDN 下载+解密+落盘+attachment 行；超限/损坏数据记录 failed 不抛；raw_json 中 aes_key 脱敏。
@@ -353,5 +381,11 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
 
 ## 11. 数据与回滚
 
-- 迁移是 additive 的，v1 数据库可直接升级；旧 outbox 行 `media_id=NULL` 走原文本路径。
+- **历史设计（已废弃）**：schema v2 曾设计为 additive 迁移、v1 数据库可直接升级；现行 schema v10 起
+  旧版本库一律拒绝启动（不提供迁移），只能备份 `DATA_DIR` 后用空库重建 / 重新绑定。
+  升级/回滚实操见 [`docs/UPGRADE.md`](UPGRADE.md)。
+- 空库场景下旧 outbox 行 `media_id=NULL` 仍走原文本路径（该行为保留）。
 - 媒体目录位于 `DATA_DIR` 下，随命名卷 `clawbridge-data` 持久化；备份策略与 DB 相同。
+- **媒体/附件 GC（BA-18）**：孤儿媒体文件与失效附件行由 `server/src/maintenance.js` 定期清理
+  （默认启动 1 分钟后首次、之后每天一次；相关 env 见 [`docs/UPGRADE.md`](UPGRADE.md) §8「数据维护」）；
+  `queued/sending` outbox 引用的附件不会被删除，`outbox`/`inbound_messages` 业务数据不自动删。

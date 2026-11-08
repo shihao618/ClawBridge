@@ -21,6 +21,9 @@ monitor 收到入站消息并落库
 
 规则**默认不启用**；全局开关 `APP_RULES_ENABLED=false` 时引擎不启动（后台仍可管理规则）。
 
+> 注：创建规则时未传 `enabled` 则按契约写入 `false`（管理后台新建表单默认不勾选「启用」）；
+> 下表中的 `DEFAULT 1` 仅为 DDL 层兜底默认值，API/管理端创建都会显式写入 `enabled`。
+
 ## 1. 数据库 Schema（当前 v10）
 
 ```sql
@@ -73,6 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 ```
 
 - `SCHEMA_VERSION = 10`；`CREATE TABLE IF NOT EXISTS` 幂等；旧版本 schema 启动直接拒绝，不提供迁移。
+  升级/回滚实操见 [`docs/UPGRADE.md`](UPGRADE.md)。
 - 去重索引保证同一条入站消息对同一规则最多执行一次（getupdates 重放安全）。
 - 测试：全新库 v10 建表/索引/幂等；旧版本库拒绝启动。
 

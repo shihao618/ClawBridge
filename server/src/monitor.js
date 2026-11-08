@@ -113,11 +113,6 @@ export function runningCount() {
   return workers.size;
 }
 
-/** 正在运行的账号 id 列表。 */
-export function listRunning() {
-  return [...workers.keys()];
-}
-
 /**
  * 启动某账号的入站监控（幂等：已在运行返回 false）。
  * 同步返回，循环在后台异步执行（notifyStart 不阻塞调用方）。
@@ -197,26 +192,34 @@ export function sanitizeInboundRawJson(message) {
 
 /**
  * 下载并保存入站媒体（不抛错：失败只记录 status='failed' 的 attachments 行）。
+ * BA-02：每个媒体 item 都在 media 进程级有界闸门内「流式下载+流式解密+落临时文件→原子 rename」，
+ * 队列已满/排队超时直接记 failed，不会无限堆积；因此下面 processMessages 的等待也是有界的
+ * （最坏 ≤ 排队超时 + 下载超时）。
  * @param {{userId:string, inboundMessageId:string, wechatMessageId:string, items:Array<object>}} params
  */
 async function downloadInboundMediaItems({ userId, inboundMessageId, wechatMessageId, items }) {
   for (const item of items) {
+    let staged = null;
     try {
-      const { buffer } = await media.downloadAndDecryptInbound({
-        media: item.media,
-        aesKeyOverride: item.aesKeyOverride,
-        timeoutMs: config.media.downloadTimeoutMs,
-        maxBytes: config.media.inboundMaxBytes,
+      const { saved, mime } = await media.runInboundDownloadWithSlot(async () => {
+        staged = await media.downloadAndDecryptInboundToTemp({
+          media: item.media,
+          aesKeyOverride: item.aesKeyOverride,
+          timeoutMs: config.media.downloadTimeoutMs,
+          maxBytes: config.media.inboundMaxBytes,
+        });
+        if (!staged || staged.size === 0) throw new Error('媒体内容为空');
+        // MIME 修正：图片/视频用魔数嗅探；文件用文件名推断；语音固定 audio/silk
+        let detectedMime = media.normalizeMime(item.mime);
+        if (item.kind === media.MediaKind.IMAGE) {
+          detectedMime = media.sniffMime(staged.head, detectedMime.startsWith('image/') ? detectedMime : 'image/jpeg');
+        } else if (detectedMime === 'application/octet-stream') {
+          detectedMime = media.sniffMime(staged.head, detectedMime);
+        }
+        const committed = await media.commitInboundTempMedia(staged, { mime: detectedMime });
+        staged = null;
+        return { saved: committed, mime: detectedMime };
       });
-      if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('媒体内容为空');
-      // MIME 修正：图片/视频用魔数嗅探；文件用文件名推断；语音固定 audio/silk
-      let mime = media.normalizeMime(item.mime);
-      if (item.kind === media.MediaKind.IMAGE) {
-        mime = media.sniffMime(buffer, mime.startsWith('image/') ? mime : 'image/jpeg');
-      } else if (mime === 'application/octet-stream') {
-        mime = media.sniffMime(buffer, mime);
-      }
-      const saved = await media.saveMediaBuffer({ direction: 'inbound', buffer, mime });
       store.createAttachment({
         id: saved.id,
         direction: 'inbound',
@@ -240,6 +243,7 @@ async function downloadInboundMediaItems({ userId, inboundMessageId, wechatMessa
         mime: saved.mime ?? mime,
       });
     } catch (err) {
+      if (staged) await media.discardInboundTempMedia(staged);
       log.warn('入站媒体下载/解密失败（记录 failed，不影响消息）', {
         userId,
         kind: item.kind,
@@ -269,20 +273,50 @@ async function downloadInboundMediaItems({ userId, inboundMessageId, wechatMessa
 }
 
 /**
+ * SQLite 级“可重试”的落库错误：busy/locked/IO/磁盘满/无法打开等。
+ * 这些错误下同一批消息应保留在服务端游标内重放，不能推进游标（BA-15）。
+ */
+export function isRetryableInboundSaveError(err) {
+  const message = String(err?.message ?? '');
+  if (
+    /SQLITE_(?:BUSY|LOCKED|IOERR|FULL|CANTOPEN|PROTOCOL)|database(?: table)? is locked|disk I\/O error|database or disk is full|unable to open database/i.test(
+      message,
+    )
+  ) {
+    return true;
+  }
+  const errcode = Number(err?.errcode);
+  if (Number.isFinite(errcode)) {
+    // 主错误码取低 8 位（扩展错误码高位携带更多细节）：5=BUSY,6=LOCKED,10=IOERR,13=FULL,14=CANTOPEN
+    if ([5, 6, 10, 13, 14].includes(errcode & 0xff)) return true;
+  }
+  return false;
+}
+
+/**
  * 处理一批入站消息：去重落库、保存 context_token、落库媒体附件、更新时间戳。
  * raw_json 必须先脱敏（context_token / aes_key 只经加密或磁盘保存）。
  * 注：async 以便测试 await 媒体下载完成；runLoop 侧 fire-and-forget 不阻塞轮询。
+ *     媒体任务在 media 有界闸门内执行，队列满/排队超时会立即记 failed，等待不会无限增长。
+ *
+ * BA-15：单条消息落库失败不再静默吞掉——
+ * - 可重试错误（SQLITE_BUSY/LOCKED/IOERR/FULL…）：返回 {retryable:true}，由 runLoop 保留旧游标，
+ *   下一轮 getUpdates 重放同一批消息（已落库的消息由唯一索引去重）；
+ * - 不可重试错误：写 events(type='inbound_save_failed') + error 日志后跳过该条，不影响后续消息与游标推进。
+ * @param {{awaitMedia?: boolean}} [options]
+ * @returns {Promise<{saved:number, failed:number, retryable:boolean}>}
  */
-export async function processMessages(userId, messages) {
+export async function processMessages(userId, messages, { awaitMedia = true } = {}) {
   const now = Date.now();
   const mediaTasks = [];
+  const outcome = { saved: 0, failed: 0, retryable: false };
   for (const message of messages) {
+    let messageId = '';
     try {
       if (!message || typeof message !== 'object') continue;
       const fromUserId = message.from_user_id ? String(message.from_user_id) : '';
       if (!fromUserId) continue; // 只处理用户发出的消息
-      const messageId =
-        message.message_id === null || message.message_id === undefined ? '' : String(message.message_id);
+      messageId = message.message_id === null || message.message_id === undefined ? '' : String(message.message_id);
       const itemTypes = Array.isArray(message.item_list)
         ? message.item_list
             .map((item) => (item && item.type !== undefined ? item.type : null))
@@ -303,6 +337,7 @@ export async function processMessages(userId, messages) {
         receivedAt: now,
       });
       if (!result.inserted) continue; // 唯一索引去重：重复消息忽略
+      outcome.saved += 1;
       if (message.context_token) store.updateContextToken(userId, String(message.context_token), now);
       store.touchInbound(userId, now);
       log.debug('收到入站消息', { userId, messageId, textLength: text.length });
@@ -330,10 +365,36 @@ export async function processMessages(userId, messages) {
         );
       }
     } catch (err) {
-      log.warn('保存入站消息失败（忽略该条）', { userId, message: err?.message });
+      if (isRetryableInboundSaveError(err)) {
+        // 保留旧游标，由 runLoop 下一轮重放；本批剩余消息暂不处理，避免把游标推过失败消息。
+        outcome.retryable = true;
+        log.warn('入站消息保存失败（可重试），本轮不推进游标，下一轮重放该批消息', {
+          userId,
+          messageId,
+          message: err?.message,
+        });
+        break;
+      }
+      outcome.failed += 1;
+      const errorText = String(err?.message ?? err).slice(0, 300);
+      log.error('入站消息保存失败（不可重试），已跳过并写入事件', { userId, messageId, message: errorText });
+      try {
+        store.addEvent({
+          type: 'inbound_save_failed',
+          userId,
+          detail: JSON.stringify({ messageId, error: errorText }),
+        });
+      } catch (eventErr) {
+        log.warn('记录 inbound_save_failed 事件失败（忽略）', { userId, message: eventErr?.message });
+      }
     }
   }
-  if (mediaTasks.length > 0) await Promise.allSettled(mediaTasks);
+  if (mediaTasks.length > 0) {
+    // runLoop 场景不等待媒体（长轮询不被下载阻塞）；测试/直接调用默认等待，便于断言附件落库。
+    const allMedia = Promise.allSettled(mediaTasks);
+    if (awaitMedia) await allMedia;
+  }
+  return outcome;
 }
 
 /** 单个账号的长轮询主循环。 */
@@ -438,6 +499,13 @@ async function runLoop(row, token, controller, worker) {
       return;
     }
 
+    // BA-17：每轮成功拿到 getUpdates 响应后更新 last_poll_at（轻量 UPDATE；失败不影响轮询/退避流程）。
+    try {
+      store.touchPoll(userId);
+    } catch (pollErr) {
+      log.debug('更新 last_poll_at 失败（忽略）', { userId, message: pollErr?.message });
+    }
+
     const ret = Number(resp?.ret ?? 0);
     const errcode = Number(resp?.errcode ?? 0);
     if (ret === -14 || errcode === -14) {
@@ -465,21 +533,39 @@ async function runLoop(row, token, controller, worker) {
     consecutiveFailures = 0;
     const newBuf = typeof resp?.get_updates_buf === 'string' ? resp.get_updates_buf : '';
     const bufChanged = Boolean(newBuf && newBuf !== getUpdatesBuf);
-    if (bufChanged) {
-      getUpdatesBuf = newBuf;
-      cursorDirty = true;
-    }
-    worker.pendingBuf = getUpdatesBuf;
     const serverTimeout = Number(resp?.longpolling_timeout_ms);
     if (Number.isFinite(serverTimeout) && serverTimeout > 0) {
       // 服务端建议值优先，但限制在合理区间
       nextTimeoutMs = Math.min(Math.max(1000, serverTimeout), 120000);
     }
     const messages = Array.isArray(resp?.msgs) ? resp.msgs : [];
+    let inboundOutcome = null;
     if (messages.length > 0) {
       lastMessageAt = Date.now();
-      processMessages(userId, messages);
+      // await 仅覆盖“消息落库”阶段（媒体下载在后台有界执行），以便按落库结果决定是否推进游标。
+      inboundOutcome = await processMessages(userId, messages, { awaitMedia: false });
     }
+    if (inboundOutcome?.retryable) {
+      // BA-15：可重试的落库失败不推进游标，下一轮 getUpdates 用旧 buf 重放同一批消息。
+      consecutiveFailures += 1;
+      const delayMs =
+        consecutiveFailures >= config.monitor.maxConsecutiveFailures
+          ? config.monitor.backoffMs
+          : config.monitor.retryDelayMs;
+      log.warn('入站消息落库失败（可重试），暂不推进游标并重试同一批消息', {
+        userId,
+        failures: consecutiveFailures,
+        delayMs,
+      });
+      await sleep(delayMs, signal);
+      continue;
+    }
+    // 落库处理完成（成功或不可重试失败已记事件）后才推进内存游标
+    if (bufChanged) {
+      getUpdatesBuf = newBuf;
+      cursorDirty = true;
+    }
+    worker.pendingBuf = getUpdatesBuf;
     maybePersistCursor();
     worker.lastPollAt = Date.now();
   }

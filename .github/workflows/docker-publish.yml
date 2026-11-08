@@ -21,9 +21,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 发布门禁：镜像构建前先跑单元 + e2e 测试与 mock 自测，避免把未验证代码发布为 :latest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Coverage gate (unit + e2e + thresholds)
+        run: npm run coverage
+
+      - name: Mock protocol selftest
+        run: node mock/selftest.mjs
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
+      # actions 版本策略（INF-10）：统一使用主版本 tag（@v4/@v3/@v5/@v6），便于自动接收安全修复；
+      # 若需完全可复现的供应链，可改为 commit SHA pin —— .github/dependabot.yml 已配置
+      # github-actions 生态每周检查，改为 SHA 后仍能持续收到更新 PR。
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -54,3 +76,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # 发布可审计性（INF-10）：生成 SBOM 与 build provenance attestation，
+          # 随多架构镜像写入 GHCR manifest（可用 `docker buildx imagetools inspect` 查看）。
+          # 不启用 keyless 签名（需要 id-token 权限），只保留 buildx 默认 attestation 语义。
+          provenance: true
+          sbom: true

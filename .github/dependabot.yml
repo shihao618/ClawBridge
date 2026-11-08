@@ -1,0 +1,50 @@
+# =============================================================================
+# Dependabot 依赖更新配置（INF-13 / INF-21）
+#
+# 检查范围：
+# - npm：package.json / package-lock.json（生产依赖仅 express、qrcode，更新频率低、风险小）；
+# - github-actions：.github/workflows/*.yml 中使用的 actions（主版本 tag 升级；如需可改 pin SHA）；
+# - docker：Dockerfile 的 node:24-alpine（以及 compose 中引用的镜像；若后续 pin digest 会按 digest 更新）。
+#
+# 节奏：每周一凌晨（Asia/Shanghai）各查一次，最多同时开 5 个 PR。
+# 合并前提：CI（.github/workflows/ci.yml）跑单元 + e2e + mock 自测与覆盖率门禁全部通过。
+# 安全漏洞更新由 GitHub Security 告警单独触发（severity 更高，可能不受此节奏限制）。
+# =============================================================================
+version: 2
+
+updates:
+  # Node 依赖：package.json / package-lock.json
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+
+  # GitHub Actions：workflow 中使用的 actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:10"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(actions)"
+
+  # Docker：Dockerfile FROM / compose 镜像 tag（或 digest）
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:20"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"

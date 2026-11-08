@@ -43,6 +43,13 @@ let controller = null;
 let loopPromise = null;
 let processedTotal = 0;
 
+/** 优雅退出 drain：等待在途 processOne 的上限（媒体上传/发送不可中止，超时后不再写 DB）。 */
+const DRAIN_TIMEOUT_MS = 8000;
+/** drain 状态（stop() 执行期间为 true，供测试/观测）。 */
+let draining = false;
+/** drain 超时后由 index 在关库前标记：在途发送完成后跳过 DB 写入（进程即将强制退出）。 */
+let dbClosing = false;
+
 /** 当前限流器（测试/管理端只读用）。 */
 export function getLimiter() {
   return limiter;
@@ -120,18 +127,46 @@ export function start() {
   return true;
 }
 
-/** 停止 worker（幂等，等待当前发送结束）。 */
-export async function stop() {
-  if (!running) return false;
+/**
+ * 停止 worker（幂等）：先停止取新任务，再等待在途 processOne 完成（默认最多 8s）。
+ *
+ * BA-04：旧实现只 `Promise.race` 等 5s，随后 index 立即关 DB，可能造成
+ * “消息已发出但 markOutboxSent 写失败 → 重启后重复投递”。
+ * @returns {Promise<{stopped:boolean, drained:boolean}>} drained=false 表示等待超时（仍有在途发送）
+ */
+export async function stop({ timeoutMs = DRAIN_TIMEOUT_MS } = {}) {
+  if (!running && !loopPromise) return { stopped: false, drained: true };
   running = false;
+  draining = true;
   try {
     controller?.abort();
   } catch {
     /* 忽略 */
   }
-  await Promise.race([loopPromise?.catch(() => {}), sleep(5000)]);
-  log.info('出站队列 worker 已停止', { processedTotal });
-  return true;
+  const loopDone = (loopPromise ?? Promise.resolve()).then(
+    () => true,
+    () => true,
+  );
+  const drained = await Promise.race([loopDone, sleep(Math.max(1, Number(timeoutMs) || DRAIN_TIMEOUT_MS)).then(() => false)]);
+  draining = false;
+  if (!drained) {
+    log.warn('出站队列 drain 超时，仍有在途发送；关闭数据库前后续写库将被跳过', {
+      processedTotal,
+      timeoutMs,
+    });
+  }
+  log.info('出站队列 worker 已停止', { processedTotal, drained });
+  return { stopped: true, drained };
+}
+
+/** drain 超时后由 index 在 closeDb() 前调用：在途发送完成后不再写 DB，避免关库后写失败/重复入队。 */
+export function markDbClosing() {
+  dbClosing = true;
+}
+
+/** 是否处于退出 drain 状态（管理端/测试观测用）。 */
+export function isDraining() {
+  return draining;
 }
 
 /** 主循环：有活就连续处理，无活按 tickMs 休眠。 */
@@ -211,6 +246,10 @@ export async function processOne(now = Date.now()) {
         text: rawText,
         contextToken,
       });
+      if (dbClosing) {
+        log.warn('退出 drain 超时：caption 已发出但跳过写库', { outboxId: candidate.id, userId: user.id });
+        return true;
+      }
       store.markCaptionSent(candidate.id, Date.now());
       log.info('媒体 caption 已发送', { outboxId: candidate.id, userId: user.id });
     }
@@ -245,6 +284,14 @@ export async function processOne(now = Date.now()) {
     }
 
     const serverMessageId = resp?.message_id ?? resp?.msg_id ?? null;
+    if (dbClosing) {
+      log.warn('退出 drain 超时：消息已发出但跳过写库（由重启后 resetSendingToQueued 兜底）', {
+        outboxId: candidate.id,
+        userId: user.id,
+        serverMessageId,
+      });
+      return true;
+    }
     store.markOutboxSent(candidate.id, {
       serverMessageId,
       clientId: resp?.clientId ?? null,
@@ -259,6 +306,10 @@ export async function processOne(now = Date.now()) {
       kind: sentKind || undefined,
     });
   } catch (err) {
+    if (dbClosing) {
+      log.warn('退出 drain 超时：发送失败但跳过写库', { outboxId: candidate.id, userId: user.id, message: err?.message });
+      return true;
+    }
     // 不可重试错误：磁盘文件缺失 / 语音出站等
     if (err?.permanent || err?.code === 'ENOENT') {
       const reason = err?.code === 'ENOENT' ? '媒体文件缺失（磁盘文件不存在），无法发送' : err?.message ?? '媒体发送失败';
@@ -322,6 +373,10 @@ async function sendMediaAttachment({ user, token, attachment, contextToken }) {
 
 /** 发送失败处理：-14 冷却 / -2 退避 / 其他错误退避到上限。 */
 function handleFailure({ candidate, user, err }) {
+  if (dbClosing) {
+    log.warn('退出 drain 超时：跳过失败状态写库', { outboxId: candidate.id, userId: user.id });
+    return;
+  }
   const now = Date.now();
   const attempts = Number(candidate.attempts) + 1;
   const message = err?.message ?? String(err);
@@ -383,6 +438,8 @@ function handleFailure({ candidate, user, err }) {
 export function getState() {
   return {
     running,
+    draining,
+    dbClosing,
     processedTotal,
     rateLimit: { max: config.push.rateLimitMax, windowMs: config.push.rateLimitWindowMs },
   };

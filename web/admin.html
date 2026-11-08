@@ -215,33 +215,35 @@
               <span id="messages-total" class="section-meta">共 0 条</span>
             </div>
             <div id="messages-tabs" class="tab-bar" role="tablist" aria-label="消息方向">
-              <button class="tab-btn is-active" type="button" role="tab" aria-selected="true" data-direction="inbound">入站消息</button>
-              <button class="tab-btn" type="button" role="tab" aria-selected="false" data-direction="outbound">出站消息</button>
+              <button id="messages-tab-inbound" class="tab-btn is-active" type="button" role="tab" aria-selected="true" aria-controls="messages-panel" tabindex="0" data-direction="inbound">入站消息</button>
+              <button id="messages-tab-outbound" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="messages-panel" tabindex="-1" data-direction="outbound">出站消息</button>
             </div>
-            <div class="toolbar toolbar-slim">
-              <select id="messages-group-filter" class="select" aria-label="按分组筛选消息">
-                <option value="">全部分组</option>
-              </select>
-            </div>
-            <div class="table-wrap card card-flush">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th scope="col">时间</th>
-                    <th scope="col">方向</th>
-                    <th scope="col">用户</th>
-                    <th scope="col">内容</th>
-                    <th scope="col">状态</th>
-                    <th scope="col">错误</th>
-                  </tr>
-                </thead>
-                <tbody id="messages-table-body"></tbody>
-              </table>
-            </div>
-            <div id="messages-pagination" class="pagination">
-              <button id="messages-prev" class="btn btn-secondary btn-sm" type="button">上一页</button>
-              <span id="messages-page-info" class="pagination-info">第 1 / 1 页</span>
-              <button id="messages-next" class="btn btn-secondary btn-sm" type="button">下一页</button>
+            <div id="messages-panel" role="tabpanel" aria-labelledby="messages-tab-inbound">
+              <div class="toolbar toolbar-slim">
+                <select id="messages-group-filter" class="select" aria-label="按分组筛选消息">
+                  <option value="">全部分组</option>
+                </select>
+              </div>
+              <div class="table-wrap card card-flush">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">时间</th>
+                      <th scope="col">方向</th>
+                      <th scope="col">用户</th>
+                      <th scope="col">内容</th>
+                      <th scope="col">状态</th>
+                      <th scope="col">错误</th>
+                    </tr>
+                  </thead>
+                  <tbody id="messages-table-body"></tbody>
+                </table>
+              </div>
+              <div id="messages-pagination" class="pagination">
+                <button id="messages-prev" class="btn btn-secondary btn-sm" type="button">上一页</button>
+                <span id="messages-page-info" class="pagination-info">第 1 / 1 页</span>
+                <button id="messages-next" class="btn btn-secondary btn-sm" type="button">下一页</button>
+              </div>
             </div>
           </section>
 
@@ -293,11 +295,11 @@
               定时通知则无需用户先发消息，按时间计划主动调用接口并推送结果。
             </p>
             <div id="rule-tabs" class="tab-bar" role="tablist" aria-label="接口应用视图">
-              <button class="tab-btn is-active" type="button" role="tab" aria-selected="true" data-rule-tab="rules">规则列表</button>
-              <button class="tab-btn" type="button" role="tab" aria-selected="false" data-rule-tab="schedule">定时通知</button>
+              <button id="rule-tab-rules" class="tab-btn is-active" type="button" role="tab" aria-selected="true" aria-controls="rule-rules-panel" tabindex="0" data-rule-tab="rules">规则列表</button>
+              <button id="rule-tab-schedule" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="rule-schedule-panel" tabindex="-1" data-rule-tab="schedule">定时通知</button>
             </div>
 
-            <div id="rule-rules-panel" class="rule-panel">
+            <div id="rule-rules-panel" class="rule-panel" role="tabpanel" aria-labelledby="rule-tab-rules">
               <div class="toolbar toolbar-slim">
                 <select id="rule-status-filter" class="select" aria-label="按启用状态筛选">
                   <option value="all">全部规则</option>
@@ -323,7 +325,7 @@
               </div>
             </div>
 
-            <div id="rule-schedule-panel" class="rule-panel" hidden>
+            <div id="rule-schedule-panel" class="rule-panel" role="tabpanel" aria-labelledby="rule-tab-schedule" hidden>
               <p class="form-hint">
                 定时任务按计划主动调用外部接口并把解析结果推送微信（无需用户先发消息）；
                 默认不启用，建议先用「测试运行」验证接口与文案，再启用或「立即执行」。
@@ -357,7 +359,7 @@
               </div>
             </div>
             <p class="section-desc">
-              可后台修改的参数已持久化到数据库（schema v8 <code class="code-inline">app_settings</code>），保存后尽量即时生效；
+              可后台修改的参数已持久化到数据库（当前 schema v10；<code class="code-inline">app_settings</code> 表自 schema v8 引入），保存后尽量即时生效；
               <code class="code-inline">.env</code> 仅保留 6 项启动必须配置
               （<code class="code-inline">APP_SECRET</code>、<code class="code-inline">DATA_DIR</code>、
               <code class="code-inline">MEDIA_DIR</code>、<code class="code-inline">PORT</code>、

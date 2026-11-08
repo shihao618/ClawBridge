@@ -1,0 +1,48 @@
+name: CI
+
+# PR 质量门禁：单元测试 + e2e + mock 协议自测。
+# 说明：push 到 main / 打 tag 时由 docker-publish.yml 在构建镜像前跑同样的测试，
+# 保证“能发布的镜像一定通过测试”；这里主要覆盖 PR 分支与手动触发。
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.x：engines 下限（node:sqlite 免 flag 的最低大版本）；24.x：Docker 镜像同款
+        node: ['22.x', '24.x']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      # coverage 运行的是同一套 unit + e2e 测试，并强制执行覆盖率阈值（line 90 / branch 70 / funcs 85）
+      - name: Unit + e2e tests (coverage gate)
+        run: npm run coverage
+
+      - name: Mock protocol selftest
+        run: node mock/selftest.mjs

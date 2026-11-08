@@ -116,12 +116,14 @@
         │ 同源 HTTP
         ▼
 ┌────────────────────────── ClawBridge（单容器）──────────────────────────┐
-│ Express 5                                                              │
+│ Express 5（api.js 组合根 → http/** 中间件与校验 → routes/** 路由）      │
 │  ├─ binding.js  绑定会话 + 二维码状态机 ──► 微信 ClawBot API            │
 │  ├─ monitor.js  每账号 getupdates 长轮询（入站消息 / context_token）     │
 │  ├─ dispatcher.js  outbox 队列 + 每账号限流 / 重试 ──► sendmessage       │
+│  ├─ app-rules.js / scheduler.js  规则触发 / 定时通知 → 外部 HTTP 接口    │
+│  ├─ keepalive.js 24h 会话保活；settings.js 运行配置（DB 持久化）         │
 │  ├─ store.js    users / outbox / inbound / events（SQLite WAL，加密凭证）│
-│  └─ web/        绑定页 · 管理后台 · API 文档（静态、零构建）             │
+│  └─ web/        绑定页 · 管理后台 · API 文档（静态、零构建 ES Module）   │
 └────────────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -336,8 +338,9 @@ curl -s "http://127.0.0.1:10380/api/v1/inbound/messages?limit=50&cursor=$NEXT&wa
 ### 消息保活（24h 会话窗口）
 
 微信 ClawBot 主动下发依赖"用户最近一次主动消息"的约 24 小时窗口。对**有长期通知需求**的用户，
-在管理后台用户行打开「保活」（或对分组批量开启）后，系统会在其窗口即将过期前（默认 23h）自动发送
-一条保活提醒；用户回复后窗口重新计时，可继续接收通知。每个 24h 窗口最多发送一次。
+在管理后台用户行打开「保活」（或对分组批量开启）后，系统会在其最后一条**入站消息满 12 小时**后
+首次发送保活提醒，之后**每 6 小时重复提醒**，直到用户回复刷新窗口或窗口过期（后台默认每 5 分钟扫描一次）。
+用户回复后窗口重新计时，可继续接收通知。
 
 ```bash
 # 单用户开启保活（管理端 Cookie+CSRF）；分组批量用 POST /api/admin/groups/{id}/keepalive
@@ -411,7 +414,8 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 注意事项（来自微信 ClawBot 协议约束）：
 
 - 微信服务端约限制 **每个 bot 账号 7 条 / 5 分钟**（所有客户端共享）。ClawBridge 默认按此保守值
-  排队限流，可在 `.env` 调整 `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`，不建议超过服务端限制。
+  排队限流，可在管理后台「运行配置」调整（`RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` 环境变量仅作为
+  首次启动的默认值），不建议超过服务端限制。
 - 绑定后建议让用户先给 bot 发一条消息：入站消息会带来 `context_token`，携带它主动推送成功率更高；
   没有 context_token 的“冷启动推送”仍会尝试发送，但可能受服务端策略限制。
 - 协议**没有服务端解绑接口**：后台「解绑」= 停止轮询 + notifyStop + 清除本地凭证；
@@ -446,12 +450,21 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 | `DATA_DIR` | `data`（容器内 `/app/data`） | SQLite、密钥、媒体等数据目录 |
 | `MEDIA_DIR` | `DATA_DIR/media` | 媒体文件存储路径 |
 | `PORT` / `HOST` | `10380` / `0.0.0.0` | HTTP 监听端口（Docker 内外一致 10380）；一般无需修改 |
-| `NODE_ENV` | `production` | 运行模式（Docker 部署已固定） |
+| `NODE_ENV` | `development` | 运行模式（Docker 部署由镜像/`docker-compose` 设为 `production`） |
 
 > 其余运行参数（限流、会话保活、接口应用、定时通知、媒体、绑定、iLink 地址/超时、日志级别、
 > 会话 TTL 等）均可在后台「运行配置」修改并持久化到数据库；管理密码与 API Token 在「安全」卡片管理
 > （首次启动自动生成到数据卷 `/app/data/admin-password.txt`、`api-token.txt`，之后不再读取 .env）。
 > 详见 [`docs/SETTINGS.md`](docs/SETTINGS.md) §7/§8。
+
+### 数据维护与升级
+
+- **数据维护（默认开启）**：进程内定时任务会清理孤儿媒体文件 / 无文件附件行、超过保留期的未入队上传附件，
+  并按保留天数清理 `events` / 规则日志 / 定时任务日志（不删除 outbox/inbound 业务消息）。
+  参数见 `.env.example` 第十二节 `MAINTENANCE_*`（默认启动 1 分钟后首跑、每天一次、日志保留 90 天）。
+- **升级 / 回滚**：当前 schema **v10 不支持旧库原地升级**，需要备份后空库重建并重新绑定；
+  完整步骤（备份、离线读 schema_version、v10 原地升级、旧镜像回滚、fnOS 固定版本）见
+  [`docs/UPGRADE.md`](docs/UPGRADE.md)。每次启动会幂等补齐查询索引（无需 schema 变更）。
 
 ### 反向代理 / HTTPS
 
@@ -493,10 +506,14 @@ TRUST_PROXY=true
 npm install
 npm start                 # 本地启动（默认 http://127.0.0.1:10380，自动生成 data/ 下的密钥）
 npm test                  # 单元测试 + e2e（需先安装依赖）
-npm run test:unit         # 单元测试（config/crypto/ilink 客户端/store/限流/API 契约）
+npm run test:unit         # 单元测试（config/crypto/ilink 客户端/store/限流/API 契约/生命周期等）
 npm run test:e2e          # 端到端：真实 app 进程 + mock 微信 API，全 HTTP 黑盒
+npm run test:ui           # 浏览器冒烟测试（本机 Edge/Chrome headless + CDP，无浏览器时自动跳过）
+npm run coverage          # 单元 + e2e + 覆盖率报告（排除 web/tests；CI 阈值 line 90 / branch 70 / funcs 85）
+npm run lint              # ESLint 静态检查（含 CI；零告警）
 npm run mock              # 单独启动模拟微信 API（默认 127.0.0.1:3100）
-node mock/selftest.mjs    # mock 自身自测（25 项协议行为断言）
+npm run smoke:mock        # mock 自身自测（26 项协议行为断言）
+node scripts/screenshots.mjs  # 用演示数据重新生成 README 截图（headless Edge/Chrome，可选）
 ```
 
 本地不带 Docker 的演示：
@@ -515,16 +532,22 @@ ILINK_LOGIN_BASE_URL=http://127.0.0.1:3100 ILINK_BASE_URL=http://127.0.0.1:3100 
 目录结构：
 
 ```
-server/src/        # 后端（config/logger/errors/crypto/ilink 协议客户端 + 业务模块 + api/index）
-web/               # 前端静态页面（绑定页 / 管理后台 / API 文档）
-mock/              # 零依赖微信 iLink 模拟器 + 控制面 + 自测
-tests/             # tests/unit 单测、tests/e2e 端到端、tests/helpers 测试环境
+server/src/        # 后端：基础层（config/logger/errors/crypto/db/rate-limiter）+ 协议层（ilink/media）
+                   # + 数据层（store.js façade + data/** 按域模块）+ 共享层（shared/** 模板/HTTP/响应管线）
+                   # + 领域模块（binding/monitor/dispatcher/keepalive/app-rules/scheduler/settings/auth/maintenance）
+                   # + HTTP 层（http/** 中间件与校验、routes/** 路由、api.js 组合根）+ index.js 进程入口
+web/               # 零构建前端（绑定页 / 管理后台 / API 文档）
+web/assets/admin/  # 管理后台 ES Module 模块（core/state/ui/templates/integrations + views/*.js 视图）
+web/assets/lib/    # 前端纯函数模块（可直接 node:test 单测）
+mock/              # 零依赖微信 iLink 模拟器 + 控制面 + 自测（26 项）
+tests/             # tests/unit 单测（含前端静态/模块/纯函数/生命周期测试）、tests/e2e 端到端、tests/helpers 测试环境
 docs/              # PROTOCOL.md 协议参考 / API.md 接口契约 / ARCHITECTURE.md 设计文档 /
                    # MEDIA.md 多媒体 / GROUPS_AND_INBOUND.md 分组与入站消息 API / KEEPALIVE.md 会话保活 /
                    # API_RULES.md 接口应用（关键词触发→外部 HTTP）/ SCHEDULED_TASKS.md 定时通知 /
-                   # SETTINGS.md 运行配置后台可改
-scripts/           # demo.ps1 / demo.sh 一键演示
-Dockerfile · docker-compose*.yml · .env.example
+                   # SETTINGS.md 运行配置后台可改 / UPGRADE.md 升级与回滚 / CODE_REVIEW.md 审查与结构优化报告
+scripts/           # demo.ps1 / demo.sh 一键演示；frontend-smoke.mjs 浏览器冒烟；screenshots.mjs 截图生成
+Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editorconfig
+.github/workflows/ # CI：lint + coverage 门禁；GHCR 多架构发布（构建前同样先跑测试）
 ```
 
 ---
@@ -533,10 +556,15 @@ Dockerfile · docker-compose*.yml · .env.example
 
 | 验证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端/核心单测（config、crypto、iLink 客户端、store、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载、schema 版本校验、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎、定时通知调度与生效时间段、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互、响应式布局） | `npm run test:unit` | 271 项通过 |
-| 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
-| mock 自身协议自测 | `node mock/selftest.mjs` | 25 项通过 |
-| 浏览器真实交互（Edge headless + CDP，绑定页/管理后台菜单路由与移动抽屉/文档页/媒体上传预览/分组/保活/分组保活继承/接口应用/定时通知/运行配置设置（含安全卡片）/重启容器 UI，CSP 与控制台异常检查） | 见交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项通过 |
+| 后端/核心单测（config、crypto、iLink 客户端、store 与拆分后的 data/**、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载与有界并发、入站下载 URL 白名单、schema 版本校验、数据库索引、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎与 SSRF IP 固定、shared 模板/响应管线、定时通知调度与生效时间段、优雅退出 drain、数据维护 GC、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互/焦点陷阱/Tab 语义、响应式布局、前端模块/纯函数/弹窗行为、日志脱敏、错误映射） | `npm run test:unit` | 373 项（371 通过 + 2 项 POSIX-only 在 Windows 跳过） |
+| 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token；子进程 env 白名单、稳定等待断言、mock 违规统一断言） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
+| 全量测试（unit + e2e） | `npm test` | 464 项（462 通过 + 2 项 POSIX-only 跳过，约 35s） |
+| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line 94.02% / branch 77.15% / funcs 93.72% |
+| 静态检查（ESLint flat config，CI `--max-warnings=0`） | `npm run lint` | 0 error / 0 warning |
+| mock 自身协议自测 | `node mock/selftest.mjs` | 26 项通过 |
+| 浏览器人工回归（历史记录，不可复现；可复现基线见下一行） | 见历史交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项累计检查 |
+| 浏览器冒烟测试（可复现的子集：登录、7 个菜单视图、新建/删除分组、规则/任务编辑器、登出、绑定页/文档页加载、Console 异常检查） | `npm run test:ui` | 16 项通过（无 Edge/Chrome 时自动跳过） |
+| 演示数据截图（23 张，与 README 引用同名；自动脱敏、假名演示数据） | `node scripts/screenshots.mjs` | 成功生成 / 可重复运行 |
 
 > 说明：mock 用于本地/CI 验证协议与业务逻辑，真实微信 ClawBot 需在手机微信上扫码绑定后才能端到端体验；
 > 首次启动会生成随机管理密码/API Token 并写入数据卷 `data/`；上线前请备份数据卷与 `APP_SECRET`，建议启用 HTTPS。

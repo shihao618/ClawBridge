@@ -432,3 +432,88 @@ test('deleteUserCascade：删除用户并清理关联数据、定时任务/接�
   assert.equal(deleteEvent.user_id, null);
   assert.equal(store.deleteUserCascade('u_not_exists'), null);
 });
+
+// ---------------------------------------------------------------------------
+// BA-03：共享媒体附件归属 / 级联删除保护
+// ---------------------------------------------------------------------------
+
+function createOutboundAttachmentRow(id, filePath = `outbound/${id}.png`) {
+  return store.createAttachment({
+    id,
+    direction: 'outbound',
+    kind: 'image',
+    mime: 'image/png',
+    fileName: 'a.png',
+    size: 10,
+    path: filePath,
+    sha256: 'hash',
+    status: 'ready',
+    createdAt: Date.now(),
+  });
+}
+
+test('BA-03：同一 mediaId 发给 A/B 时附件归属不被收件人覆盖，删除 A 不丢失 B 的待发媒体', () => {
+  const A = createUser({ displayName: '共享附件A' }).user;
+  const B = createUser({ displayName: '共享附件B' }).user;
+  const attachment = createOutboundAttachmentRow('att_shared_1');
+  assert.equal(attachment.user_id, null, '管理端上传的附件归属应为 NULL');
+
+  const outA = store.enqueueMessage({ userId: A.id, text: 'A 的图', mediaId: attachment.id, source: 'admin' });
+  const outB = store.enqueueMessage({ userId: B.id, text: 'B 的图', mediaId: attachment.id, source: 'admin' });
+
+  const afterLink = store.getAttachment(attachment.id);
+  assert.equal(afterLink.user_id, null, '入队不得把附件 user_id 写成收件人');
+  assert.equal(afterLink.outbox_id, outA.id, 'outbox_id 只记录首次入队引用，不被后续收件人覆盖');
+  // B 的 outbox 视图仍能通过 outbox.media_id 找到共享附件
+  assert.equal(store.getOutbox(outB.id).attachments[0].id, attachment.id);
+
+  // 删除 A：共享附件归属本就是 NULL（不是任何收件人私有），级联删除不得动它
+  const result = store.deleteUserCascade(A.id);
+  assert.equal(result.deleted, true);
+  assert.deepEqual(result.attachmentPaths, [], '共享附件不应交给调用方删除文件');
+  assert.equal(result.keptAttachments, 0, '归属为 NULL 的共享附件无需“保留”动作');
+  assert.equal(result.cleared.attachments, 0);
+
+  const kept = store.getAttachment(attachment.id);
+  assert.ok(kept, '共享附件行必须保留');
+  assert.equal(kept.user_id, null);
+  assert.equal(store.getUserRow(A.id), undefined, 'A 已删除');
+
+  const bOutbox = getDb().prepare('SELECT * FROM outbox WHERE id = ?').get(outB.id);
+  assert.equal(bOutbox.status, 'queued');
+  assert.equal(bOutbox.media_id, attachment.id);
+  assert.equal(store.getOutbox(outB.id).attachments[0].id, attachment.id, 'B 的 outbox 仍能解析到附件');
+  assert.equal(kept.path, attachment.path, '磁盘文件路径保留（由调用方负责不删）');
+});
+
+test('BA-03：旧数据中已被写成收件人归属的共享附件，删除该用户时同样保留', () => {
+  const A = createUser({ displayName: '旧数据A' }).user;
+  const B = createUser({ displayName: '旧数据B' }).user;
+  const attachment = createOutboundAttachmentRow('att_shared_legacy');
+  const outB = store.enqueueMessage({ userId: B.id, text: 'B 待发', mediaId: attachment.id, source: 'admin' });
+  // 模拟修复前的历史数据：附件归属被错误写成第一个收件人 A
+  getDb().prepare('UPDATE attachments SET user_id = ? WHERE id = ?').run(A.id, attachment.id);
+
+  const result = store.deleteUserCascade(A.id);
+  assert.deepEqual(result.attachmentPaths, []);
+  assert.equal(result.keptAttachments, 1);
+  const kept = store.getAttachment(attachment.id);
+  assert.ok(kept, '历史共享附件行必须保留');
+  assert.equal(kept.user_id, null, '保留时解除被删用户归属');
+  assert.equal(store.getOutbox(outB.id).attachments[0].id, attachment.id);
+
+  // dispatcher 投递前预检查所需字段仍齐全（附件 ready 且方向正确）
+  assert.equal(store.getAttachment(outB.mediaId).status, 'ready');
+  assert.equal(store.getAttachment(outB.mediaId).direction, 'outbound');
+});
+
+test('BA-03：无其他用户引用的附件仍按原逻辑删除并返回路径', () => {
+  const A = createUser({ displayName: '独占附件A' }).user;
+  const attachment = createOutboundAttachmentRow('att_owned_1');
+  // 入站归属直接写 user_id（模拟该用户拥有的附件）
+  getDb().prepare('UPDATE attachments SET user_id = ? WHERE id = ?').run(A.id, attachment.id);
+  const result = store.deleteUserCascade(A.id);
+  assert.deepEqual(result.attachmentPaths, [attachment.path]);
+  assert.equal(result.keptAttachments, 0);
+  assert.equal(store.getAttachment(attachment.id), undefined);
+});

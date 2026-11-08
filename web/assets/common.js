@@ -531,7 +531,81 @@ export function toastError(error, fallback = '操作失败，请稍后重试') {
 /* 5. 模态框 / 确认对话框                                               */
 /* ------------------------------------------------------------------ */
 
-let openModalCount = 0;
+/** 活动弹窗集合：openModal 打开时登记、close 时移除；openModalCount 由集合大小派生。 */
+const activeModals = new Set();
+
+/** 模态框内可聚焦元素选择器（每次 Tab 时动态查询，兼容 picker 重渲染等 DOM 变化）。 */
+const MODAL_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'textarea:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
+/**
+ * 弹窗打开期间背景顶层节点的 inert/aria-hidden 备份（node -> 原状态）。
+ * 只在第一个弹窗打开时记录、最后一个弹窗关闭后恢复，支持弹窗叠层。
+ */
+const backgroundInertState = new Map();
+
+/** 是否为弹窗遮罩节点（遮罩不参与背景 inert；旧版/测试 DOM 兼容 className 判断）。 */
+function isModalBackdrop(node) {
+  if (!node) return false;
+  const className = typeof node.className === 'string' ? node.className : '';
+  return className.split(/\s+/).includes('modal-backdrop');
+}
+
+/** 模态框内可聚焦元素（过滤 disabled 与 [hidden] 子树，Tab 循环用）。 */
+function getFocusableInDialog(dialog) {
+  if (!dialog || typeof dialog.querySelectorAll !== 'function') return [];
+  const nodes = Array.from(dialog.querySelectorAll(MODAL_FOCUSABLE_SELECTOR));
+  return nodes.filter((node) => {
+    if (!node || node.disabled) return false;
+    if (node.hidden === true) return false;
+    if (typeof node.closest === 'function' && node.closest('[hidden]')) return false;
+    return true;
+  });
+}
+
+/** 对 body 其余顶层节点设置 inert + aria-hidden（F-06：焦点/读屏不能逃逸到弹窗背后）。 */
+function applyBackgroundInert(currentBackdrop) {
+  const body = document.body;
+  if (!body || !body.children) return;
+  for (const node of Array.from(body.children)) {
+    if (!node || node === currentBackdrop || isModalBackdrop(node)) continue;
+    if (backgroundInertState.has(node)) continue;
+    backgroundInertState.set(node, {
+      inert: node.inert === true,
+      ariaHidden: typeof node.getAttribute === 'function' ? node.getAttribute('aria-hidden') : null,
+    });
+    try {
+      node.inert = true;
+    } catch {
+      /* 旧浏览器不支持 inert：仅退化 aria-hidden */
+    }
+    if (typeof node.setAttribute === 'function') node.setAttribute('aria-hidden', 'true');
+  }
+}
+
+/** 恢复背景顶层节点原有的 inert / aria-hidden 状态。 */
+function restoreBackgroundInert() {
+  for (const [node, previous] of backgroundInertState) {
+    if (!node || typeof node.setAttribute !== 'function') continue;
+    try {
+      node.inert = previous.inert;
+    } catch {
+      /* ignore */
+    }
+    if (previous.ariaHidden === null) {
+      if (typeof node.removeAttribute === 'function') node.removeAttribute('aria-hidden');
+    } else {
+      node.setAttribute('aria-hidden', previous.ariaHidden);
+    }
+  }
+  backgroundInertState.clear();
+}
 
 /**
  * 打开模态框。
@@ -608,8 +682,11 @@ export function openModal(options = {}) {
     closed = true;
     document.removeEventListener('keydown', onKeydown);
     backdrop.classList.remove('modal-visible');
-    openModalCount = Math.max(0, openModalCount - 1);
-    if (openModalCount === 0) document.body.classList.remove('modal-open');
+    activeModals.delete(api);
+    if (activeModals.size === 0) {
+      document.body.classList.remove('modal-open');
+      restoreBackgroundInert();
+    }
     setTimeout(() => backdrop.remove(), 180);
     if (previousFocus && typeof previousFocus.focus === 'function' && previousFocus.isConnected) {
       previousFocus.focus();
@@ -623,10 +700,39 @@ export function openModal(options = {}) {
     }
   }
 
+  /**
+   * Tab 焦点陷阱：仅在当前最上层弹窗内循环焦点（Shift+Tab 反向），
+   * 无可聚焦元素时把焦点留在 dialog 上，避免焦点逃逸到背景内容。
+   */
+  function trapFocus(event) {
+    if ([...activeModals].pop() !== api) return;
+    const focusable = getFocusableInDialog(dialog);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      if (typeof dialog.focus === 'function') dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const contains = typeof dialog.contains === 'function' ? dialog.contains(active) : true;
+    if (event.shiftKey) {
+      if (active === first || !contains) {
+        event.preventDefault();
+        if (typeof last.focus === 'function') last.focus();
+      }
+    } else if (active === last || !contains) {
+      event.preventDefault();
+      if (typeof first.focus === 'function') first.focus();
+    }
+  }
+
   function onKeydown(event) {
     if (event.key === 'Escape' && dismissible && !busy) {
       event.preventDefault();
       close('dismiss');
+    } else if (event.key === 'Tab') {
+      trapFocus(event);
     }
   }
 
@@ -661,7 +767,8 @@ export function openModal(options = {}) {
   }
 
   document.body.append(backdrop);
-  openModalCount += 1;
+  applyBackgroundInert(backdrop);
+  activeModals.add(api);
   document.body.classList.add('modal-open');
   document.addEventListener('keydown', onKeydown);
   requestAnimationFrame(() => backdrop.classList.add('modal-visible'));
@@ -675,6 +782,26 @@ export function openModal(options = {}) {
   }, 30);
 
   return api;
+}
+
+/**
+ * 关闭当前所有模态框（会话过期/退出登录时统一使用）。
+ *
+ * 逐个走各自 close()：保留关闭动画、焦点恢复与 onClose 回调
+ * （confirmDialog 因此会 resolve(false)，不会悬挂 Promise）；
+ * 最后兜底清空集合与 body.modal-open 滚动锁，避免弹窗计数泄漏。
+ */
+export function closeAllModals(reason = 'dismiss') {
+  for (const modal of [...activeModals]) {
+    try {
+      modal.close(reason);
+    } catch {
+      activeModals.delete(modal);
+    }
+  }
+  activeModals.clear();
+  document.body.classList.remove('modal-open');
+  restoreBackgroundInert();
 }
 
 /**

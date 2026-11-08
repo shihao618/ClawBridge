@@ -27,7 +27,7 @@ seedTestAdminSecrets();
 
 test.after(() => {
   // auth 现在会读取 settings 的 DB 密码哈希（import settings 时打开数据库），先关闭再清理临时目录
-  // eslint-disable-next-line global-require
+   
   return import('../../server/src/db.js').then(({ closeDb }) => {
     closeDb();
     fs.rmSync(dataDir, { recursive: true, force: true });

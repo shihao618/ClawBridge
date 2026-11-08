@@ -15,6 +15,12 @@
     "test": "node --test --test-reporter=spec \"tests/**/*.test.js\" \"tests/**/*.test.mjs\"",
     "test:unit": "node --test --test-reporter=spec \"tests/unit/**/*.test.js\" \"tests/unit/**/*.test.mjs\"",
     "test:e2e": "node --test --test-reporter=spec \"tests/e2e/**/*.test.js\" \"tests/e2e/**/*.test.mjs\"",
+    "test:ui": "node scripts/frontend-smoke.mjs",
+    "coverage": "node --test --test-reporter=spec --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=70 --test-coverage-functions=85 --test-coverage-exclude=\"web/**\" --test-coverage-exclude=\"tests/**\" \"tests/**/*.test.js\" \"tests/**/*.test.mjs\"",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "screenshots": "node scripts/screenshots.mjs",
+    "smoke:mock": "node mock/selftest.mjs",
     "docker:build": "docker build -t clawbridge:local .",
     "docker:up": "docker compose up -d --build",
     "docker:demo": "docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d --build",
@@ -23,5 +29,9 @@
   "dependencies": {
     "express": "^5.3.0",
     "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0"
   }
 }

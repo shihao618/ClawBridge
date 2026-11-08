@@ -30,9 +30,11 @@
 | `iLink-App-ClientVersion` | `132106` | 由插件版本 `2.4.10` 编码：`major<<16 | minor<<8 | patch` = `0x02040A` |
 | `channel_version` | `2.4.10` | `base_info.channel_version` |
 | `bot_agent` | `OpenClaw`（默认） | `base_info.bot_agent`，仅观测用途；建议用合法 UA token 格式，如 `ClawBridge/2.0.0` |
-| CDN | `https://novac2c.cdn.weixin.qq.com/c2c` | 媒体上传/下载用；本程序只发文本，暂不需要 |
+| CDN | `https://novac2c.cdn.weixin.qq.com/c2c` | 媒体上传/下载用；本程序**已支持**图片/视频/文件出站与图片/文件/视频/语音入站，CDN 为必需链路（见 [`docs/MEDIA.md`](MEDIA.md)） |
 
-> 所有常量均允许用环境变量覆盖（见 `docs/ARCHITECTURE.md` 的 `ILINK_*`）。
+> 所有常量均可用环境变量覆盖（`ILINK_*` / `BOT_AGENT` / `CHANNEL_VERSION`，见 `.env.example`）；
+> 运行期以数据库（后台「运行配置 → iLink」）为准，`.env` 仅作**首次启动默认值**；后台修改**即时生效**
+> （每次请求实时读取；已建立的绑定会话沿用原 Base URL，新建请求使用新值）。
 
 ## 3. 公共请求头
 
@@ -53,7 +55,8 @@ X-WECHAT-UIN: <base64(十进制随机 uint32 字符串)>
 ```
 
 - `X-WECHAT-UIN` 每次请求随机生成：随机 4 字节 → 无符号整数 → 十进制字符串 → UTF-8 后 base64。
-- 可选 `SKRouteTag` 路由头，本程序默认不发送。
+- 可选 `SKRouteTag` 路由头：由 `ILINK_ROUTE_TAG`（后台「运行配置 → iLink → routeTag」）配置，
+  默认空 = 不发送。
 - `base_info` 是 **body 字段**，不是 HTTP 头；格式：
 
 ```json
@@ -240,7 +243,7 @@ Resp 200:
 - 第三方文档（Dart `weixin_clawbot`）指出服务端限制约 **7 条 / 5 分钟 / 每个 bot 账号**，
   且所有客户端共享。本程序默认按保守值 `7/5min` 做客户端限流 + 队列，可用环境变量调整。
 
-### 5.6 其他端点（本程序按需使用）
+### 5.6 其他端点（协议参考；当前版本未使用）
 
 ```
 POST {baseUrl}/ilink/bot/getconfig    Body: {"ilink_user_id": "...", "context_token": "...", "base_info": {...}}
@@ -248,6 +251,9 @@ POST {baseUrl}/ilink/bot/getconfig    Body: {"ilink_user_id": "...", "context_to
 POST {baseUrl}/ilink/bot/sendtyping   Body: {"ilink_user_id": "...", "typing_ticket": "...", "status": 1|2, "base_info": {...}}
   → {"ret":0, "errmsg": ""}         // 1=正在输入 2=取消
 ```
+
+> ClawBridge 当前不发送「正在输入」状态，也没有使用 `typing_ticket`；以上端点保留为协议参考
+> （mock 已实现，便于将来扩展）。
 
 ### 5.7 媒体消息（图片/视频/文件）
 

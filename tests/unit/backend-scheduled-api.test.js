@@ -181,6 +181,37 @@ test('创建/查看：TaskView 结构、nextRunAt 计算、header 只回 names�
   assert.ok(list.json.items.some((item) => item.id === task.id));
 });
 
+test('创建不传 enabled：默认停用；PATCH 不传 enabled 保持原值', async () => {
+  const user = createUser({ displayName: '默认停用目标用户' });
+  const body = validTaskBody({ name: '默认停用任务', targets: { type: 'users', ids: [user.id] } });
+  delete body.enabled;
+  const created = await adminWrite('POST', '/api/admin/scheduled-tasks', body);
+  assert.equal(created.status, 201, created.text);
+  const task = created.json.task;
+  assert.equal(task.enabled, false, '创建未传 enabled 应默认 false');
+  assert.equal(
+    getDb().prepare('SELECT enabled FROM scheduled_tasks WHERE id = ?').get(task.id).enabled,
+    0,
+    'DB 中 enabled 应为 0',
+  );
+
+  // PATCH 未传 enabled：保持原值
+  const patched = await adminWrite('PATCH', `/api/admin/scheduled-tasks/${encodeURIComponent(task.id)}`, {
+    name: '默认停用任务改名',
+  });
+  assert.equal(patched.status, 200, patched.text);
+  assert.equal(patched.json.task.enabled, false, 'PATCH 不传 enabled 应保持 false');
+
+  // 显式传 enabled=true 仍然生效（只改创建默认值）
+  const enabledCreated = await adminWrite(
+    'POST',
+    '/api/admin/scheduled-tasks',
+    validTaskBody({ name: '显式启用任务', targets: { type: 'users', ids: [user.id] } }),
+  );
+  assert.equal(enabledCreated.status, 201, enabledCreated.text);
+  assert.equal(enabledCreated.json.task.enabled, true);
+});
+
 test('全部用户目标：允许 ids 为空，返回全部用户标记', async () => {
   const created = await adminWrite('POST', '/api/admin/scheduled-tasks', validTaskBody({
     name: '全员通知',

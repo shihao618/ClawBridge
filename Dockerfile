@@ -15,6 +15,16 @@
 # - 依赖层单独缓存：只有 package.json / package-lock.json 变化时才重新 npm ci。
 # - USER node 运行；/app/data 由 compose 命名卷（或 fnOS 项目 data/）挂载并属于 node 用户。
 # - HEALTHCHECK 用内置 fetch 探测 /health（无需 curl/wget）。
+#
+# 可复现性（INF-10）：
+# - `node:24-alpine` 是浮动 tag：同一 Dockerfile 在不同时间构建可能拿到不同基础层。
+#   需要完全可复现/可审计的构建时，把 FROM 改为 `node:24-alpine@sha256:<digest>`；
+#   仓库已配置 Dependabot 的 docker 生态（.github/dependabot.yml）定期检查基础镜像更新，
+#   改为 digest 后仍会收到更新 PR。默认保留 tag 以持续获得上游安全修复。
+# - 依赖确定：npm ci 严格按 package-lock.json（lockfileVersion 3）安装，版本可复现；
+#   当前依赖无需 native 编译，构建过程不依赖网络中的可变内容（npm registry 除外）。
+# - 发布镜像由 GHCR 工作流附加 SBOM 与 build provenance attestation（见
+#   .github/workflows/docker-publish.yml 的 provenance/sbom 参数）。
 # =============================================================================
 FROM node:24-alpine
 

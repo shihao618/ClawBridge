@@ -38,6 +38,37 @@ const fake = http.createServer((req, res) => {
     res.end(file);
     return;
   }
+  if (url.pathname === '/cdn/download-chunked') {
+    // 无 Content-Length（chunked）：验证流式字节计数上限
+    const token = url.searchParams.get('encrypted_query_param') || '';
+    const file = cdnFiles.get(token);
+    if (!file) {
+      res.writeHead(404);
+      res.end('not found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+    res.write(file.subarray(0, 1024));
+    res.end(file.subarray(1024));
+    return;
+  }
+  // BA-05：重定向场景（同源 302 / 未授权主机 302 / 重定向环）
+  if (url.pathname === '/cdn/redirect') {
+    const token = url.searchParams.get('encrypted_query_param') || '';
+    res.writeHead(302, { Location: `/cdn/download?encrypted_query_param=${encodeURIComponent(token)}` });
+    res.end();
+    return;
+  }
+  if (url.pathname === '/cdn/redirect-external') {
+    res.writeHead(302, { Location: 'http://evil.example.invalid/media.bin' });
+    res.end();
+    return;
+  }
+  if (url.pathname === '/cdn/redirect-loop') {
+    res.writeHead(302, { Location: '/cdn/redirect-loop' });
+    res.end();
+    return;
+  }
   res.writeHead(404);
   res.end('not found');
 });
@@ -74,6 +105,7 @@ process.env.MEDIA_DOWNLOAD_TIMEOUT_MS = '5000';
 const monitor = await import('../../server/src/monitor.js');
 const store = await import('../../server/src/store.js');
 const media = await import('../../server/src/media.js');
+const { config } = await import('../../server/src/config.js');
 const { getDb, closeDb } = await import('../../server/src/db.js');
 
 after(() => {
@@ -301,4 +333,326 @@ test('入站媒体：full_url 优先下载（无需拼接 CDN 参数）', async 
   const [attachment] = store.getAttachmentsByInbound([inboundRow.id]).get(inboundRow.id);
   assert.equal(attachment.status, 'ready');
   assert.deepEqual(await media.readMediaFile(attachment.path), Buffer.from('FULL-URL-CONTENT'));
+});
+
+// ---------------------------------------------------------------------------
+// BA-02：进程级有界闸门 / 流式落盘；BA-05：下载 URL 校验 + 手动重定向
+// ---------------------------------------------------------------------------
+
+/** 列出 MEDIA_DIR/inbound 下的流式临时文件（.part），用于断言失败清理。 */
+function listingTempParts() {
+  try {
+    return fs.readdirSync(path.join(dataDir, 'media', 'inbound')).filter((name) => name.includes('.part'));
+  } catch {
+    return [];
+  }
+}
+
+function attachmentByMessageId(messageId) {
+  const inboundRow = getDb().prepare('SELECT id FROM inbound_messages WHERE wechat_message_id = ?').get(messageId);
+  if (!inboundRow) return [];
+  return store.getAttachmentsByInbound([inboundRow.id]).get(inboundRow.id);
+}
+
+test('入站下载 URL 校验（BA-05）：协议/主机白名单/userinfo', async () => {
+  const { assertInboundDownloadUrl } = media;
+  // 默认 CDN / 微信域名后缀：https 放行
+  assert.equal(
+    assertInboundDownloadUrl('https://novac2c.cdn.weixin.qq.com/c2c/download?x=1').hostname,
+    'novac2c.cdn.weixin.qq.com',
+  );
+  assert.equal(assertInboundDownloadUrl('https://wx.qq.com/a.bin').hostname, 'wx.qq.com');
+  // 本机 http（开发/测试环境，mock 形态）放行
+  assert.equal(assertInboundDownloadUrl(`${cdnBase}/download?encrypted_query_param=x`).hostname, '127.0.0.1');
+  // 配置的 CDN 主机（http，demo/mock 形态）放行
+  assert.equal(
+    assertInboundDownloadUrl('http://mock-ilink:3100/cdn/download?x=1', { cdnBaseUrl: 'http://mock-ilink:3100/cdn' })
+      .hostname,
+    'mock-ilink',
+  );
+  // 未授权主机（http 与 https）一律拒绝
+  assert.throws(() => assertInboundDownloadUrl('https://evil.example/x'), /允许列表/);
+  assert.throws(() => assertInboundDownloadUrl('http://evil.example/x'), /允许列表/);
+  // media.allowedHosts / allowInsecureHttp 配置可显式放行
+  const originalAllowedHosts = config.media.allowedHosts;
+  const originalAllowInsecureHttp = config.media.allowInsecureHttp;
+  config.media.allowedHosts = ['media.example.test'];
+  try {
+    assert.equal(assertInboundDownloadUrl('https://media.example.test/a.bin').hostname, 'media.example.test');
+    assert.equal(assertInboundDownloadUrl('http://media.example.test/a.bin').hostname, 'media.example.test');
+  } finally {
+    config.media.allowedHosts = originalAllowedHosts;
+  }
+  // 生产环境默认禁止访问本机（避免 SSRF 打本机端口）；显式 allowInsecureHttp 才放行
+  const originalProduction = config.isProduction;
+  config.isProduction = true;
+  try {
+    assert.throws(() => assertInboundDownloadUrl('http://127.0.0.2:9/cdn/x'), /允许列表/);
+    config.media.allowInsecureHttp = true;
+    assert.equal(assertInboundDownloadUrl('http://127.0.0.2:9/cdn/x').hostname, '127.0.0.2');
+  } finally {
+    config.isProduction = originalProduction;
+    config.media.allowInsecureHttp = originalAllowInsecureHttp;
+  }
+  // 非 http/https 协议
+  assert.throws(() => assertInboundDownloadUrl('ftp://novac2c.cdn.weixin.qq.com/x'), /协议/);
+  assert.throws(() => assertInboundDownloadUrl('file:///etc/passwd'), /协议/);
+  // userinfo
+  assert.throws(
+    () => assertInboundDownloadUrl('https://user:pass@novac2c.cdn.weixin.qq.com/x'),
+    /userinfo/,
+  );
+});
+
+test('入站媒体：302 重定向逐跳校验（同源放行 / 未授权主机拒绝 / 限跳数）', async () => {
+  const user = createUser();
+  // 1) 同源 302 → /cdn/download：放行并落盘
+  const redirectFile = registerCdnFile(Buffer.from('REDIRECT-CONTENT'), 'tok_redirect_1');
+  const redirectMessage = buildMessage({
+    messageId: '9007199254742010',
+    items: [
+      {
+        type: 4,
+        file_item: {
+          media: {
+            full_url: `${cdnBase}/redirect?encrypted_query_param=${encodeURIComponent(redirectFile.token)}`,
+            aes_key: redirectFile.keyBase64,
+            encrypt_type: 1,
+          },
+          file_name: 'redirect.bin',
+        },
+      },
+    ],
+  });
+  await monitor.processMessages(user.id, [redirectMessage]);
+  const [redirected] = attachmentByMessageId('9007199254742010');
+  assert.equal(redirected.status, 'ready', JSON.stringify(redirected));
+  assert.deepEqual(await media.readMediaFile(redirected.path), Buffer.from('REDIRECT-CONTENT'));
+
+  // 2) 302 → 未授权主机：记录 failed 且不跟随
+  const badFile = registerCdnFile(Buffer.from('SHOULD-NOT-DOWNLOAD'), 'tok_redirect_bad_1');
+  const badRedirectMessage = buildMessage({
+    messageId: '9007199254742011',
+    items: [
+      {
+        type: 4,
+        file_item: {
+          media: {
+            full_url: `${cdnBase}/redirect-external`,
+            aes_key: badFile.keyBase64,
+            encrypt_type: 1,
+          },
+          file_name: 'external.bin',
+        },
+      },
+    ],
+  });
+  const requestsBefore = cdnRequests.length;
+  await monitor.processMessages(user.id, [badRedirectMessage]);
+  const [blocked] = attachmentByMessageId('9007199254742011');
+  assert.equal(blocked.status, 'failed');
+  assert.match(blocked.error, /允许列表|主机|重定向/);
+  assert.ok(cdnRequests.length - requestsBefore <= 2, '重定向到未授权主机后不得继续发起请求');
+  assert.ok(!cdnRequests.some((path) => path.includes('evil.example.invalid')));
+
+  // 3) 302 环：达到跳数上限后 failed
+  const loopFile = registerCdnFile(Buffer.from('LOOP'), 'tok_redirect_loop_1');
+  const loopMessage = buildMessage({
+    messageId: '9007199254742012',
+    items: [
+      {
+        type: 4,
+        file_item: {
+          media: { full_url: `${cdnBase}/redirect-loop`, aes_key: loopFile.keyBase64, encrypt_type: 1 },
+          file_name: 'loop.bin',
+        },
+      },
+    ],
+  });
+  await monitor.processMessages(user.id, [loopMessage]);
+  const [looped] = attachmentByMessageId('9007199254742012');
+  assert.equal(looped.status, 'failed');
+  assert.match(looped.error, /重定向次数过多/);
+});
+
+test('入站媒体：流式解密失败/被闸门拒绝时不留 .part 临时文件', async () => {
+  const user = createUser();
+  // 非法密文长度（非 16 字节整数倍）→ decipher 必然失败
+  cdnFiles.set('tok_bad_block_1', Buffer.from('NOT-A-16-BYTE-BLOCK'));
+  const keyHex = crypto.randomBytes(16).toString('hex');
+  const badMessage = buildMessage({
+    messageId: '9007199254742020',
+    items: [
+      {
+        type: 4,
+        file_item: {
+          media: {
+            encrypt_query_param: 'tok_bad_block_1',
+            aes_key: Buffer.from(keyHex, 'utf8').toString('base64'),
+            encrypt_type: 1,
+          },
+          file_name: 'badblock.bin',
+        },
+      },
+    ],
+  });
+  await monitor.processMessages(user.id, [badMessage]);
+  const [bad] = attachmentByMessageId('9007199254742020');
+  assert.equal(bad.status, 'failed');
+  assert.ok(bad.error.length > 0);
+  assert.deepEqual(listingTempParts(), [], '解密失败后不得残留 .part 临时文件');
+});
+
+test('入站媒体有界闸门（BA-02）：并发上限 / 排队上限 / 排队超时 / 计数', async () => {
+  // 并发 1 + 排队 1：第 3 个立即拒绝（队列已满），排队者超时后拒绝
+  const gate = media.createBoundedGate({ maxConcurrent: 1, maxQueue: 1 });
+  const firstRelease = await gate.acquire(1000);
+  assert.equal(gate.stats().active, 1);
+  const queuedPromise = gate.acquire(2000);
+  await assert.rejects(() => gate.acquire(1000), /队列已满/);
+  assert.equal(gate.stats().queued, 1);
+  assert.equal(gate.stats().rejected, 1);
+  firstRelease();
+  const secondRelease = await queuedPromise;
+  assert.equal(gate.stats().active, 1, '释放后排队任务应接管执行槽');
+  assert.equal(gate.stats().queued, 0);
+  secondRelease();
+  assert.equal(gate.stats().active, 0);
+  assert.equal(gate.stats().completed, 2);
+
+  // 排队超时
+  const slowGate = media.createBoundedGate({ maxConcurrent: 1, maxQueue: 1 });
+  const heldRelease = await slowGate.acquire(1000);
+  await assert.rejects(() => slowGate.acquire(25), /排队超时/);
+  assert.equal(slowGate.stats().timedOut, 1);
+  heldRelease();
+  assert.equal(slowGate.stats().active, 0);
+
+  // release 幂等
+  const idempotentGate = media.createBoundedGate({ maxConcurrent: 1, maxQueue: 0 });
+  const release = await idempotentGate.acquire(1000);
+  release();
+  release();
+  assert.equal(idempotentGate.stats().active, 0);
+});
+
+test('入站媒体进程级闸门（BA-02 集成）：队列满直接拒绝，排空后计数归零', async () => {
+  const gateStats = media.getInboundDownloadStats();
+  assert.equal(gateStats.maxConcurrent, config.media.inboundMaxConcurrent);
+  assert.equal(gateStats.maxQueue, config.media.inboundMaxQueue);
+  const limit = gateStats.maxConcurrent;
+  const queueLimit = gateStats.maxQueue;
+  const resolvers = [];
+  const done = [];
+  const tasks = [];
+  for (let index = 0; index < limit + queueLimit; index += 1) {
+    tasks.push(
+      media
+        .runInboundDownloadWithSlot(
+          () =>
+            new Promise((resolve) => {
+              resolvers.push(resolve);
+            }),
+        )
+        .then(() => {
+          done.push(index);
+        }),
+    );
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(() => media.runInboundDownloadWithSlot(async () => {}), /队列已满/);
+  const saturated = media.getInboundDownloadStats();
+  assert.equal(saturated.active, limit);
+  assert.equal(saturated.queued, queueLimit);
+  for (let guard = 0; guard < 200 && done.length < limit + queueLimit; guard += 1) {
+    while (resolvers.length > 0) {
+      for (const resolve of resolvers.splice(0)) resolve();
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await Promise.all(tasks);
+  assert.equal(done.length, limit + queueLimit);
+  const drained = media.getInboundDownloadStats();
+  assert.equal(drained.active, 0);
+  assert.equal(drained.queued, 0);
+  assert.ok(drained.rejected >= 1);
+});
+
+test('入站媒体：chunked 响应（无 Content-Length）超限时流式中止并清理', async () => {
+  const user = createUser();
+  const bigCipher = crypto.randomBytes(8192); // > INBOUND_MEDIA_MAX_BYTES(4096)
+  cdnFiles.set('tok_chunk_big_1', bigCipher);
+  const keyHex = crypto.randomBytes(16).toString('hex');
+  const message = buildMessage({
+    messageId: '9007199254742030',
+    items: [
+      {
+        type: 4,
+        file_item: {
+          media: {
+            full_url: `${cdnBase}/download-chunked?encrypted_query_param=tok_chunk_big_1`,
+            aes_key: Buffer.from(keyHex, 'utf8').toString('base64'),
+            encrypt_type: 1,
+          },
+          file_name: 'chunk-big.bin',
+        },
+      },
+    ],
+  });
+  await monitor.processMessages(user.id, [message]);
+  const [attachment] = attachmentByMessageId('9007199254742030');
+  assert.equal(attachment.status, 'failed');
+  assert.match(attachment.error, /上限|大小/);
+  assert.deepEqual(listingTempParts(), [], '超限中止后不得残留 .part 临时文件');
+});
+
+test('入站媒体：队列饱和时 monitor 立即记录 failed（BA-02，不无限排队）', async () => {
+  const gateStats = media.getInboundDownloadStats();
+  const capacity = gateStats.maxConcurrent + gateStats.maxQueue;
+  const resolvers = [];
+  const saturated = [];
+  for (let index = 0; index < capacity; index += 1) {
+    saturated.push(
+      media.runInboundDownloadWithSlot(
+        () =>
+          new Promise((resolve) => {
+            resolvers.push(resolve);
+          }),
+      ),
+    );
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(media.getInboundDownloadStats().queued, gateStats.maxQueue);
+
+  const user = createUser();
+  const file = registerCdnFile(Buffer.from('QUEUED-CONTENT'), 'tok_queue_full_1');
+  const message = buildMessage({
+    messageId: '9007199254742031',
+    items: [
+      {
+        type: 4,
+        file_item: {
+          media: { encrypt_query_param: file.token, aes_key: file.keyBase64, encrypt_type: 1 },
+          file_name: 'queued.bin',
+        },
+      },
+    ],
+  });
+  const startedAt = Date.now();
+  await monitor.processMessages(user.id, [message]);
+  const elapsedMs = Date.now() - startedAt;
+  const [attachment] = attachmentByMessageId('9007199254742031');
+  assert.equal(attachment.status, 'failed', '队列满时附件应直接记 failed');
+  assert.match(attachment.error, /队列已满/);
+  assert.ok(elapsedMs < 5000, `不应无限等待（实际 ${elapsedMs}ms）`);
+
+  // 排空被占用的槽位，避免影响后续用例
+  for (let guard = 0; guard < 200 && resolvers.length > 0; guard += 1) {
+    for (const resolve of resolvers.splice(0)) resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  for (const task of saturated) await task;
+  const drained = media.getInboundDownloadStats();
+  assert.equal(drained.active, 0);
+  assert.equal(drained.queued, 0);
 });

@@ -463,28 +463,4 @@ export async function notifyStop({ baseUrl, token, timeoutMs = config.ilink.requ
   });
 }
 
-export async function getConfig({ baseUrl, token, ilinkUserId, contextToken, timeoutMs = config.ilink.requestTimeoutMs } = {}) {
-  return requestJson({
-    method: 'POST',
-    baseUrl,
-    endpoint: '/ilink/bot/getconfig',
-    token,
-    body: { ilink_user_id: ilinkUserId, context_token: contextToken, base_info: buildBaseInfo() },
-    timeoutMs,
-    label: 'getconfig',
-  });
-}
-
-export async function sendTyping({ baseUrl, token, ilinkUserId, typingTicket, status = 1, timeoutMs = config.ilink.requestTimeoutMs } = {}) {
-  return requestJson({
-    method: 'POST',
-    baseUrl,
-    endpoint: '/ilink/bot/sendtyping',
-    token,
-    body: { ilink_user_id: ilinkUserId, typing_ticket: typingTicket, status, base_info: buildBaseInfo() },
-    timeoutMs,
-    label: 'sendtyping',
-  });
-}
-
 export { ILinkError };

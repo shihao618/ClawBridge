@@ -15,24 +15,37 @@
   （默认 6h）且窗口未过期时再次提醒，直到用户回复（`last_inbound_at` 更新）或窗口过期。
 - 保活消息走现有 outbox 队列（source=`keepalive`），受每账号限流、`-2/-14` 处理、媒体等完全复用。
 - 内容默认："【消息通道保活】回复任意内容即可继续接收通知。"，支持 `{name}` 占位（用户昵称）；
-  可通过环境变量覆盖。
+  可在后台「运行配置 → 会话保活」修改，`.env` 仅作首次启动默认值。
 - 无入站记录（从未发过消息）的用户不发送（没有可刷新的窗口，冷启动推送由用户自行触发）。
 - 调度为单进程内定时扫描（默认每 5 分钟），与 getupdates/outbox 无锁冲突（扫描/入队用事务）。
 
 ## 1. 数据库 Schema（当前 v10）
 
-`users` 表新增两列：
+> **⚠️ 历史设计记录（已废弃）**：本节下方关于 `ALTER TABLE` 与 “v1→v2→v3→v4 逐级迁移”的内容
+> 是早期 v4 设计阶段的记录，**现行 schema v10 不支持任何旧版本数据库迁移**：
+> `server/src/db.js` 在打开数据库时发现 `schema_version !== SCHEMA_VERSION` 会直接抛错拒绝启动
+> （`tests/unit/backend-schema-version.test.js` 断言该行为）。旧版本库的唯一处置方式是：
+> ① 备份 `DATA_DIR`（SQLite + media 文件）→ ② 用**空库重建** → ③ 重新扫码绑定用户。
+> 完整升级/回滚步骤（含 Docker 命名卷、fnOS、回滚旧镜像）见 [`docs/UPGRADE.md`](UPGRADE.md)。
+> 当前 `users.keepalive_enabled` / `keepalive_last_sent_at` 两列由 v10 建表 SQL 直接创建，
+> 启动时不再执行下面的 `ALTER TABLE`；SQL 块仅作为历史设计对照保留。
+
+`users` 表包含两列（历史设计中的增量 DDL，仅供追溯）：
 
 ```sql
 ALTER TABLE users ADD COLUMN keepalive_enabled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN keepalive_last_sent_at INTEGER NOT NULL DEFAULT 0;
 ```
 
-- `SCHEMA_VERSION = 10`；用 `PRAGMA table_info(users)` 检查后 `ALTER TABLE`，幂等；
-- v1→v2→v3→v4 逐级迁移，保留全部既有数据（users/outbox/inbound/attachments/events/groups）；
-- 测试要求：构造 v3 数据库（含用户/消息/分组）→ 升级到 v4 数据不丢、列默认值正确、重复打开幂等。
+- 历史设计（v4 时点）：`SCHEMA_VERSION` 当时为 4；用 `PRAGMA table_info(users)` 检查后 `ALTER TABLE`，幂等；
+- 历史设计（v4 时点）：v1→v2→v3→v4 逐级迁移，保留既有数据（users/outbox/inbound/attachments/events/groups）；
+- 历史测试要求（v4 时点）：构造 v3 数据库（含用户/消息/分组）→ 升级到 v4 数据不丢、列默认值正确、重复打开幂等；
+  **该测试已随迁移逻辑一起移除**，现行测试只断言“旧版本库启动直接拒绝”。
 
 ## 2. 配置（config.js：`config.keepalive`）
+
+> 下表变量名是**.env 的首次启动默认值**；运行期以数据库（后台「运行配置 → 会话保活」）为准，
+> 后台改过后以 DB 覆盖值为准，`.env` 不再生效。
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
@@ -123,7 +136,8 @@ GET /api/admin/overview                       # stats 增加：
 ## 6. 测试要求
 
 **单元（backend-dev）**
-- db v3→v4 迁移（数据保留/列默认值/幂等/全新库 v4）；
+- db（历史已废弃）：v3→v4 迁移测试已随迁移逻辑移除；现行断言见 `tests/unit/backend-schema-version.test.js`
+  （旧版本库启动直接拒绝、空库直接建到 v10）；
 - store：`setKeepaliveEnabled`（用户/分组批量）、`setKeepaliveLastSentAt`、
   `getKeepaliveCandidates(now, {windowMs, leadMs, repeatMs, limit})`（触发/重复/排序/limit 条件）；
 - scheduler（`keepalive.js`）：fake clock 直接调用 `scan(now)`——首次触发、未回复按 repeatMs 重复、
@@ -142,13 +156,16 @@ GET /api/admin/overview                       # stats 增加：
 
 **QA**
 - 独立跑测试矩阵；Docker 黑盒（压缩时间参数）验证保活端到端；
-- 真实 v3→v4 迁移副本验证（2 users/13 outbox/6 inbound/6 attachments/9 events… 计数与样本保留、幂等）；
+- 真实数据副本验证：确认旧版本备份仍可留档，但**不再做升级迁移验证**——schema v10 起旧库启动即拒绝，
+  升级只能备份后空库重建并重新绑定（见 §1 历史设计说明）；
 - 安全/代码审查：调度不重复/不阻塞、限流不越界、opt-in 生效、文本 XSS、日志无敏感信息；
 - 文档一致性（README/API/ARCHITECTURE 与实现一致）。
 
 ## 7. 真实环境上线
 
-- v3→v4 additive migration（默认 schema_version 3→4），保留 2 个真实用户及历史数据；
+- **现行升级路径（schema v10）**：旧版本数据库（如 v3/v4/v9）不提供任何原地迁移，启动会直接拒绝；
+  上线/升级须先备份 `DATA_DIR`，再用空库重建并重新扫码绑定（保活 opt-in 需重新开启）。历史设计（已废弃）：
+  v3→v4 additive migration（默认 schema_version 3→4）并保留真实用户及历史数据；
 - 保活默认**不开启**（`keepalive_enabled=0`），由管理员在后台对需要的用户/分组开启；
 - 上线后在后台把需要保活的用户打开，可在"运行配置"看到保活参数；用户回复后窗口自动刷新。
 

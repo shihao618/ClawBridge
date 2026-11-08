@@ -21,7 +21,7 @@ MOCK_AUTO_CONFIRM_MS=3000 node mock/ilink-mock.mjs
 # e2e 模式：随机端口（实际端口见 stdout 的 {"event":"listening","port":...}）
 PORT=0 node mock/ilink-mock.mjs
 
-# 自测（启动子进程走完整协议面 + 控制面 + 媒体 CDN，25 项断言）
+# 自测（启动子进程走完整协议面 + 控制面 + 媒体 CDN，26 项断言）
 node mock/selftest.mjs
 ```
 
@@ -31,7 +31,7 @@ node mock/selftest.mjs
 
 | 方法 | 路径 | 行为 |
 | --- | --- | --- |
-| POST | `/ilink/bot/get_bot_qrcode?bot_type=3` | 返回 `{qrcode, qrcode_img_content}`；`local_token_list` 会被记录用于 `binded_redirect` 判定 |
+| POST | `/ilink/bot/get_bot_qrcode?bot_type=3` | 返回 `{qrcode, qrcode_img_content}`；`qrcode_img_content` 指向本 mock 的 `/mock-bind?qrcode=…` 占位说明页（见下），`local_token_list` 会被记录用于 `binded_redirect` 判定 |
 | GET | `/ilink/bot/get_qrcode_status?qrcode=…[&verify_code=…]` | 长轮询（默认挂起 ≤1s，仅 `wait` 状态）；状态机 `wait/scaned/need_verifycode/verify_code_blocked/expired/scaned_but_redirect/binded_redirect/confirmed`；`confirmed` 返回 `bot_token/ilink_bot_id/baseurl/ilink_user_id`，`baseurl` 默认由请求 Host 推导（`MOCK_PUBLIC_BASE_URL` 可覆盖） |
 | POST | `/ilink/bot/getupdates` | 长轮询（默认挂起 ≤2s）；返回 `msgs/get_updates_buf/longpolling_timeout_ms`；消息 `message_id` 为 **>2^53 的 JSON number 字面量**（验证客户端无损解析）；`stale-token` 时返回 `ret=-14, errcode=-14` |
 | POST | `/ilink/bot/sendmessage` | 校验 `Authorization: Bearer` / `AuthorizationType: ilink_bot_token` / `body.msg` 结构；记录 `to_user_id/text/context_token/client_id/headers`；返回 >2^53 的 `message_id`（number 字面量）；可注入 `-2/-14` 失败 |
@@ -39,6 +39,17 @@ node mock/selftest.mjs
 | POST | `/ilink/bot/getconfig` | 返回 `{ret:0, typing_ticket}` |
 | POST | `/ilink/bot/sendtyping` | 记录最近一次 `status`，返回 `{ret:0}` |
 | POST | `/ilink/bot/getuploadurl` | 出站媒体申请上传地址（docs/MEDIA.md §1）：校验鉴权与 body（filekey/media_type/to_user_id/rawsize/rawfilemd5/filesize/aeskey/no_need_thumb），返回 `{ret:0, upload_param, thumb_upload_param:"", upload_full_url}`；`upload_full_url` 指向本 mock 的 `/cdn/upload`（`MOCK_PUBLIC_BASE_URL` 或请求 Host 拼出，保证 app 可达），并记录到 `state.uploads[]` |
+
+### 绑定占位页 `/mock-bind`（本地演示用，非真实协议）
+
+`get_bot_qrcode` 返回的 `qrcode_img_content` 在真实环境是微信返回的扫码内容，本 mock 把它构造为
+`<mock baseUrl>/mock-bind?qrcode=<qrcode>`。该地址**返回一个简单 HTML 占位页**（不再 404）：
+
+- 展示 `qrcode` 参数与当前 mock 中的二维码状态（未知/已 reset 时给出提示）；
+- 明确说明“这是本地模拟器，不是真实微信绑定页、不能真的扫码”；
+- 提示用控制面 `POST /__mock/qr/{qrcode}/scan` → `/confirm` 模拟手机操作。
+
+仅支持 `GET`（其它方法 405）；该页面不参与协议校验，也不计协议轮询次数。
 
 ### CDN 面（出站上传 / 下载，mock 契约见 docs/MEDIA.md §9）
 
@@ -135,6 +146,7 @@ base64 decode → 32 hex chars → hex decode 得 16 字节 key）、`encrypt_ty
 curl -s -X POST 'http://127.0.0.1:3100/ilink/bot/get_bot_qrcode?bot_type=3' \
   -H 'Content-Type: application/json' -d '{"local_token_list":[]}'
 # → {"qrcode":"qr_...","qrcode_img_content":"http://127.0.0.1:3100/mock-bind?qrcode=qr_..."}
+#    浏览器打开 qrcode_img_content 即 /mock-bind 占位说明页（本地模拟器页面，非真实扫码页）
 
 # 2) 控制面：扫码 + 确认（模拟手机微信操作）
 curl -s -X POST 'http://127.0.0.1:3100/__mock/qr/<qrcode>/scan'

@@ -20,6 +20,8 @@ process.env.APP_RULES_ALLOWED_HOSTS = '127.0.0.1';
 const scheduler = await import('../../server/src/scheduler.js');
 const store = await import('../../server/src/store.js');
 const { getDb, closeDb } = await import('../../server/src/db.js');
+const { config } = await import('../../server/src/config.js');
+const { defaultHttpRequest } = await import('../../server/src/shared/http-client.js');
 
 let server;
 let port = 0;
@@ -37,6 +39,14 @@ test.before(async () => {
       res.end('纯文本通知');
       return;
     }
+    if (url.pathname === '/slow') {
+      // 延迟响应，用于验证 stop() 等待在途 tick（BA-04）
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: { answer: 'SLOW' } }));
+      }, 150);
+      return;
+    }
     if (url.pathname === '/boom') {
       res.destroy();
       return;
@@ -49,7 +59,7 @@ test.before(async () => {
 });
 
 test.after(async () => {
-  scheduler.stop();
+  await scheduler.stop();
   scheduler.resetDependencies();
   closeDb();
   if (server) await new Promise((resolve) => server.close(resolve));
@@ -133,11 +143,10 @@ test('立即执行成功：真实调用→解析→逐目标入队→写日志�
 test('同一任务并发执行：第二个请求 409，不会重复调用外部接口/发消息', async () => {
   const user = createUser();
   const task = createTask({ name: '并发任务', targetIds: [user.id] });
-  const realFetch = globalThis.fetch;
   scheduler.configureDependencies({
-    fetch: async (...args) => {
+    httpRequest: async (options) => {
       await new Promise((resolve) => setTimeout(resolve, 120));
-      return realFetch(...args);
+      return defaultHttpRequest(options);
     },
   });
   try {
@@ -246,16 +255,15 @@ test('tick：只执行到期任务、顺序执行、写日志并推进 next_run_
   assert.equal(await scheduler.tick(now), 0);
 });
 
-test('tick：单任务异常不影响其他任务（fetch 抛错任务失败但后续任务仍执行）', async () => {
+test('tick：单任务异常不影响其他任务（httpRequest 抛错任务失败但后续任务仍执行）', async () => {
   const user = createUser();
   const now = Date.now();
   const boom = createTask({ name: '异常任务', targetIds: [user.id], nextRunAt: now - 1000, requestUrl: `http://127.0.0.1:${port}/boom` });
   const ok = createTask({ name: '正常任务', targetIds: [user.id], nextRunAt: now - 500 });
-  const realFetch = (...args) => globalThis.fetch(...args);
   scheduler.configureDependencies({
-    fetch: async (...args) => {
-      if (String(args[0]).includes('/boom')) throw new Error('网络异常（注入）');
-      return realFetch(...args);
+    httpRequest: async (options) => {
+      if (String(options.url).includes('/boom')) throw new Error('网络异常（注入）');
+      return defaultHttpRequest(options);
     },
   });
   try {
@@ -268,16 +276,81 @@ test('tick：单任务异常不影响其他任务（fetch 抛错任务失败但�
   }
 });
 
-test('start/stop 幂等；未启动时 runScheduledTaskNow 仍可执行（API 手动触发）', () => {
+test('网络防护配置：scheduler.maxResponseBytes/allowedHosts 缺省继承 appRules，显式配置覆盖（BA-09）', async () => {
+  const user = createUser();
+  const task = createTask({ name: '配置来源任务', targetIds: [user.id] });
+  const prevSchedHosts = config.scheduler.allowedHosts;
+  const prevSchedBytes = config.scheduler.maxResponseBytes;
+  try {
+    // 缺省（0/[]）→ 继承 appRules 白名单与大小上限，历史行为不变（可访问环境变量放行的 127.0.0.1）
+    config.scheduler.maxResponseBytes = 0;
+    config.scheduler.allowedHosts = [];
+    assert.deepEqual(scheduler.getHttpLimits(), {
+      maxResponseBytes: config.appRules.maxResponseBytes,
+      allowedHosts: config.appRules.allowedHosts,
+    });
+    const ok = await scheduler.runScheduledTaskNow(task.id, { dryRun: true });
+    assert.equal(ok.status, 'success');
+
+    // 显式覆盖白名单（不含 127.0.0.1）→ SSRF 拒绝
+    config.scheduler.allowedHosts = ['not-allowed.example'];
+    assert.deepEqual(scheduler.getHttpLimits().allowedHosts, ['not-allowed.example']);
+    const denied = await scheduler.runScheduledTaskNow(task.id, { dryRun: true });
+    assert.equal(denied.status, 'failed');
+    assert.match(String(denied.error), /SSRF|私网|内网/);
+
+    // 显式覆盖大小上限（极小值）→ 响应体超限失败
+    config.scheduler.allowedHosts = [];
+    config.scheduler.maxResponseBytes = 32;
+    const tooBig = await scheduler.runScheduledTaskNow(task.id, { dryRun: true });
+    assert.equal(tooBig.status, 'failed');
+    assert.match(String(tooBig.error), /大小上限/);
+  } finally {
+    config.scheduler.allowedHosts = prevSchedHosts;
+    config.scheduler.maxResponseBytes = prevSchedBytes;
+  }
+});
+
+test('start/stop 幂等（stop 为异步，等待在途任务）；未启动时 runScheduledTaskNow 仍可执行（API 手动触发）', async () => {
   assert.equal(scheduler.start(), true);
   assert.equal(scheduler.isRunning(), true);
   assert.equal(scheduler.start(), false);
-  assert.equal(scheduler.stop(), true);
+  assert.equal(await scheduler.stop(), true);
   assert.equal(scheduler.isRunning(), false);
-  assert.equal(scheduler.stop(), false);
+  assert.equal(await scheduler.stop(), false);
   assert.equal(scheduler.start(), true);
-  assert.equal(scheduler.stop(), true);
+  assert.equal(await scheduler.stop(), true);
 
   const missing = scheduler.runScheduledTaskNow('task_missing', { dryRun: true });
   assert.ok(missing instanceof Promise);
+});
+
+test('stop 等待在途 tick settle 后才返回，在途任务的日志/next_run_at 已落库（BA-04）', async () => {
+  const user = createUser();
+  const now = Date.now();
+  const task = createTask({
+    name: '退出在途任务',
+    targetIds: [user.id],
+    nextRunAt: now - 1000,
+    requestUrl: `http://127.0.0.1:${port}/slow`,
+  });
+  const tickPromise = scheduler.tick(now);
+  // 留出时间让 tick 进入在途 HTTP 请求（/slow 固定延迟 150ms）
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const startedAt = Date.now();
+  await scheduler.stop();
+  const elapsed = Date.now() - startedAt;
+  await tickPromise;
+  assert.ok(elapsed >= 100, `stop 应等待在途 tick（实际等待 ${elapsed}ms）`);
+  assert.equal(logsFor(task.id).length, 1, '在途 tick 的运行日志应在 stop 返回前写入');
+  assert.equal(store.getScheduledTaskRow(task.id).last_status, 'success');
+  assert.ok(Number(store.getScheduledTaskRow(task.id).next_run_at) > now, 'next_run_at 应已推进');
+});
+
+test('restart 先等待在途 tick，再按配置重新启动（BA-04）', async () => {
+  assert.equal(scheduler.start(), true);
+  const restarted = await scheduler.restart();
+  assert.equal(restarted, true);
+  assert.equal(scheduler.isRunning(), true);
+  assert.equal(await scheduler.stop(), true);
 });

@@ -1,114 +1,61 @@
 /**
  * 接口应用（docs/API_RULES.md）：关键词触发 → 调外部 HTTP 接口 → 解析并回复微信用户。
  *
- * 模块构成：
- *  - 纯函数：matchRule / extractParams / 模板渲染 / 响应解析 / 回复渲染 / 路径取值；
- *  - SSRF 防护：协议/userinfo 校验、DNS 解析后私网拒绝、APP_RULES_ALLOWED_HOSTS 白名单、
- *    重定向逐跳复验、超时/响应大小限制、仅接受文本响应；
- *  - RuleEngine：内存队列 + 并发 worker（不阻塞 getupdates）、去重/冷却/小时配额、
- *    成功/失败均写 app_rule_logs、失败按 fallback 回复；
- *  - testRule：管理端 dry-run（不发送、不写运行日志）。
+ * BA-09 架构拆分后本文件只保留「规则领域」部分：
+ *  - 规则解析/匹配/参数提取（parseRuleRow / match* / extractParams / buildBuiltinVars）；
+ *  - 单次执行（executeRuleHttp，复用 shared/http-execute 通用管线）与 dry-run（testRule）；
+ *  - RuleEngine：内存队列 + 并发 worker、去重、运行日志、失败 fallback；
+ *  - 日志脱敏工具（redactForLog / redactUrlForLog）。
+ *
+ * 通用能力已下沉到 shared/：
+ *  - shared/http-client.js：SSRF 校验 + 连接层固定 IP + 重定向逐跳复验 + 超时/大小限制；
+ *  - shared/template.js：请求/回复模板引擎（含 BA-22 输出长度上限）；
+ *  - shared/response.js：响应解析与模板离线预览；
+ *  - shared/http-execute.js：渲染请求 → HTTP → 解析 → 渲染回复的通用管线（scheduler 共用）。
+ *
+ * 为保持既有测试/调用方零改动，这里 re-export 拆分前的导出名（validateTargetUrl /
+ * renderReplyTemplate / parseResponse / previewReplyTemplate / truncate 等）。
  */
-import { promises as dnsPromises } from 'node:dns';
-import net from 'node:net';
-
 import { config } from './config.js';
 import { decryptSecretOrNull } from './crypto.js';
-import { logger } from './logger.js';
+import { logger, redactUrlQueryForLog } from './logger.js';
+import {
+  configureDependencies as configureSharedDependencies,
+  describeFetchError,
+  pickDiagnosticHeaders,
+  resetDependencies as resetSharedDependencies,
+} from './shared/http-client.js';
+import { executeHttpRequest, renderHttpRequest } from './shared/http-execute.js';
+import { getByPath, maxReplyLength, renderReplyTemplate, safeJsonParse, truncate } from './shared/template.js';
 import * as store from './store.js';
 
 const log = logger.child({ mod: 'app-rules' });
 
 const REDACT_KEY_RE = /(token|secret|password|api[-_]?key|authorization)/i;
-const MAX_REPLY_LENGTH = () => config.push.maxTextLength;
 
 // ---------------------------------------------------------------------------
-// 可注入依赖（测试用；默认真实 fetch/dns/now）
+// 兼容旧测试注入锚点（实际 HTTP/DNS 传输注入在 shared/http-client.js）
 // ---------------------------------------------------------------------------
-const defaultDeps = {
-  fetch: (...args) => globalThis.fetch(...args),
-  dnsLookup: (hostname, options) => dnsPromises.lookup(hostname, options),
-  now: () => Date.now(),
-};
-let deps = { ...defaultDeps };
+let deps = { now: () => Date.now() };
 
-/** 注入测试依赖（fetch/dnsLookup/now），未传字段保持不变。 */
+/** 注入测试依赖（httpRequest/dnsLookup 转发到 shared/http-client，now 用于规则时间戳）。 */
 export function configureDependencies(overrides = {}) {
-  deps = { ...deps, ...overrides };
+  if (typeof overrides?.now === 'function') deps.now = overrides.now;
+  configureSharedDependencies(overrides);
 }
 
 /** 恢复默认真实依赖。 */
 export function resetDependencies() {
-  deps = { ...defaultDeps };
+  deps = { now: () => Date.now() };
+  resetSharedDependencies();
 }
 
 // ---------------------------------------------------------------------------
-// 基础工具
+// 兼容 re-export（拆分前 app-rules.js 的既有导出名，测试/调用方零改动）
 // ---------------------------------------------------------------------------
-
-/** 截断文本（超长直接截断并加省略号）。 */
-export function truncate(value, max = 1000) {
-  const text = String(value ?? '');
-  if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(0, max - 1))}…`;
-}
-
-function safeJsonParse(text) {
-  try {
-    return { ok: true, value: JSON.parse(text) };
-  } catch {
-    return { ok: false, value: null };
-  }
-}
-
-/** 按点路径取值（支持 a.b.0.c / 数组下标）。未取到返回 undefined。 */
-export function getByPath(value, path) {
-  if (!path) return value;
-  const parts = String(path)
-    .split('.')
-    .map((part) => part.trim())
-    .filter((part) => part !== '');
-  let current = value;
-  for (const part of parts) {
-    if (current === null || current === undefined) return undefined;
-    if (Array.isArray(current)) {
-      const index = Number(part);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) return undefined;
-      current = current[index];
-      continue;
-    }
-    if (typeof current !== 'object') return undefined;
-    if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined;
-    current = current[part];
-  }
-  return current;
-}
-
-/** 值转展示文本：字符串原样，对象/数组 JSON.stringify，null/undefined → ''。 */
-function valueToText(value) {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-/** 日志脱敏：包含 token/secret/password/api-key/authorization 的键替换为 [redacted]。 */
-export function redactForLog(value, depth = 0) {
-  if (depth > 4) return '[object]';
-  if (Array.isArray(value)) return value.map((item) => redactForLog(item, depth + 1));
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [key, val] of Object.entries(value)) {
-      out[key] = REDACT_KEY_RE.test(key) ? '[redacted]' : redactForLog(val, depth + 1);
-    }
-    return out;
-  }
-  return value;
-}
+export { getByPath, renderReplyTemplate, renderRequestTemplate, truncate } from './shared/template.js';
+export { parseResponse, previewReplyTemplate } from './shared/response.js';
+export { describeFetchError, isPrivateIp, requestExternal, validateTargetUrl } from './shared/http-client.js';
 
 // ---------------------------------------------------------------------------
 // 规则解析 / 匹配 / 参数提取
@@ -330,765 +277,7 @@ export function buildBuiltinVars({ text = '', userId = '', displayName = '', now
 }
 
 // ---------------------------------------------------------------------------
-// 模板渲染
-// ---------------------------------------------------------------------------
-
-/** 单变量替换：`{key}`（仅字母数字下划线）；urlEncode=true 时对值做 URL 编码。 */
-export function renderRequestTemplate(template, vars = {}, { urlEncode = false } = {}) {
-  return String(template ?? '').replace(/\{([A-Za-z0-9_]+)\}/g, (match, key) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, key)) return match;
-    const value = String(vars[key] ?? '');
-    return urlEncode ? encodeURIComponent(value) : value;
-  });
-}
-
-/** 统计数组/对象长度（用于模板 `{{count path}}`）。 */
-function countValue(value) {
-  if (Array.isArray(value)) return value.length;
-  if (value && typeof value === 'object') return Object.keys(value).length;
-  if (value === undefined || value === null || value === '') return 0;
-  return 1;
-}
-
-/**
- * 解析列表规格：`path` 或 `path where 字段=值` / `path where 字段!=值`。
- * path 可为 `.`（当前上下文）或空（当前上下文），支持 `../parent.field` / `@root.path`。
- */
-function parseListSpec(rawSpec) {
-  const spec = String(rawSpec ?? '').trim();
-  const whereMatch = spec.match(/^(\S*)\s+where\s+([A-Za-z0-9_.@-]+)\s*(!=|=)\s*(.+)$/i);
-  if (!whereMatch) return { path: spec, filter: null };
-  let value = whereMatch[4].trim();
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    value = value.slice(1, -1);
-  }
-  return { path: whereMatch[1], filter: { field: whereMatch[2], op: whereMatch[3], value } };
-}
-
-/** 按 where 条件过滤数组（字段相对当前项；比较字符串化后的值）。 */
-function filterList(list, filter) {
-  if (!Array.isArray(list)) return [];
-  if (!filter) return list;
-  return list.filter((item) => {
-    const raw = item && typeof item === 'object' ? getByPath(item, filter.field) : undefined;
-    const left = raw === undefined || raw === null ? '' : String(raw);
-    return filter.op === '=' ? left === filter.value : left !== filter.value;
-  });
-}
-
-/**
- * 模板路径解析（相对当前上下文，失败时依次向上找父级/模板根）。
- * 支持：`.`/空=当前、`../字段` 上级、`@root.字段` 模板根、`@responseRoot.字段` 完整响应根。
- */
-function resolveTemplatePath(rawPath, contextStack, responseRoot) {
-  const pathText = String(rawPath ?? '').trim();
-  let current = contextStack[contextStack.length - 1];
-  if (!pathText || pathText === '.' || pathText === 'this' || pathText === '@this') return current;
-
-  const fullRoot = responseRoot !== undefined ? responseRoot : contextStack[0];
-  if (pathText === '@responseRoot') return fullRoot;
-  if (pathText.startsWith('@responseRoot.')) return getByPath(fullRoot, pathText.slice('@responseRoot.'.length));
-  if (pathText === '@root') return contextStack[0];
-  if (pathText.startsWith('@root.')) return getByPath(contextStack[0], pathText.slice(6));
-
-  if (pathText.startsWith('../')) {
-    let levels = 0;
-    let rest = pathText;
-    while (rest.startsWith('../')) {
-      levels += 1;
-      rest = rest.slice(3);
-    }
-    const targetIndex = Math.max(0, contextStack.length - 1 - levels);
-    current = contextStack[targetIndex];
-    if (!rest || rest === '.' || rest === 'this') return current;
-    return getByPath(current, rest);
-  }
-
-  for (let index = contextStack.length - 1; index >= 0; index -= 1) {
-    const value = getByPath(contextStack[index], pathText);
-    if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
-/** 计算 `count path [where ...]` 的值（支持相对当前循环项/父级）。 */
-function resolveCountValue(rawSpec, contextStack, responseRoot) {
-  const parsed = parseListSpec(rawSpec);
-  const value = resolveTemplatePath(parsed.path, contextStack, responseRoot);
-  if (parsed.filter) return filterList(value, parsed.filter).length;
-  return countValue(value);
-}
-
-/** 模板 token 化：文本 / 变量 / each、if、unless 块 / else if / else / 闭合。 */
-function tokenizeTemplate(template) {
-  const tokens = [];
-  const pattern =
-    /\{\{\s*#(each|if|unless)(?:\s+([^{}]*?))?\s*\}\}|\{\{\s*\/(each|if|unless)\s*\}\}|\{\{\s*else\s+if\s+([^{}]*?)\}\}|\{\{\s*else\s*\}\}|\{\{([^{}]+?)\}\}/gi;
-  let lastIndex = 0;
-  let match;
-  while ((match = pattern.exec(template)) !== null) {
-    if (match.index > lastIndex) tokens.push({ type: 'text', value: template.slice(lastIndex, match.index) });
-    if (match[1]) {
-      tokens.push({ type: 'block', name: match[1].toLowerCase(), spec: String(match[2] ?? '').trim() });
-    } else if (match[3]) {
-      tokens.push({ type: 'close', name: match[3].toLowerCase() });
-    } else if (match[4] !== undefined) {
-      tokens.push({ type: 'elseif', expr: String(match[4] ?? '').trim() });
-    } else if (/^\{\{\s*else\s*\}\}$/i.test(match[0])) {
-      tokens.push({ type: 'else' });
-    } else {
-      tokens.push({ type: 'var', expr: String(match[5] ?? '').trim() });
-    }
-    lastIndex = pattern.lastIndex;
-  }
-  if (lastIndex < template.length) tokens.push({ type: 'text', value: template.slice(lastIndex) });
-  return tokens;
-}
-
-function unquoteTemplateLiteral(raw) {
-  const text = String(raw ?? '').trim();
-  if (
-    (text.startsWith('"') && text.endsWith('"')) ||
-    (text.startsWith("'") && text.endsWith("'"))
-  ) {
-    return text.slice(1, -1);
-  }
-  return text;
-}
-
-/** 模板判断的真值：空串/0/false/null/undefined/空数组/空对象为假。 */
-function isTruthyTemplateValue(value) {
-  if (value === undefined || value === null || value === false) return false;
-  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
-  if (typeof value === 'string') return value.trim() !== '';
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === 'object') return Object.keys(value).length > 0;
-  return true;
-}
-
-/** default 视为空的值：undefined/null/空串/空数组；0/false 保留。 */
-function isEmptyTemplateValue(value) {
-  return (
-    value === undefined ||
-    value === null ||
-    value === '' ||
-    (Array.isArray(value) && value.length === 0)
-  );
-}
-
-/** 解析判断表达式左侧：支持路径、count、数字/带引号字面量。 */
-function resolveConditionLeft(raw, contextStack, responseRoot) {
-  const text = String(raw ?? '').trim();
-  if (!text) return '';
-  if (/^count\s+/i.test(text)) return resolveCountValue(text.slice(6).trim(), contextStack, responseRoot);
-  if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) return Number(text);
-  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
-    return unquoteTemplateLiteral(text);
-  }
-  return resolveTemplatePath(text, contextStack, responseRoot);
-}
-
-/** 判断右侧按字面量处理；数字转为 number，带引号去引号，其余为字符串。 */
-function resolveConditionRight(raw) {
-  const text = String(raw ?? '').trim();
-  if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) return Number(text);
-  return unquoteTemplateLiteral(text);
-}
-
-/** 在引号外按 and / or 拆分条件，支持多条件组合。 */
-function splitLogicalCondition(text, keyword) {
-  const needle = ' ' + keyword + ' ';
-  const lower = text.toLowerCase();
-  const parts = [];
-  let last = 0;
-  let quote = '';
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (quote) {
-      if (char === quote) quote = '';
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (lower.startsWith(needle, index)) {
-      parts.push(text.slice(last, index).trim());
-      last = index + needle.length;
-      index += needle.length - 1;
-    }
-  }
-  if (parts.length === 0) return null;
-  parts.push(text.slice(last).trim());
-  return parts;
-}
-
-/**
- * 执行 if/unless 判断。
- * 支持真值判断、not/and/or、= / == / != / > / >= / < / <= 比较，左侧可为 path 或 count。
- */
-function evaluateTemplateCondition(raw, contextStack, responseRoot) {
-  const text = String(raw ?? '').trim();
-  if (!text) return false;
-  const orParts = splitLogicalCondition(text, 'or');
-  if (orParts) return orParts.some((part) => evaluateTemplateCondition(part, contextStack, responseRoot));
-  const andParts = splitLogicalCondition(text, 'and');
-  if (andParts) return andParts.every((part) => evaluateTemplateCondition(part, contextStack, responseRoot));
-  if (/^not\s+/i.test(text)) return !evaluateTemplateCondition(text.slice(4).trim(), contextStack, responseRoot);
-
-  const match = text.match(/^(.+?)\s*(==|!=|>=|<=|=|>|<)\s*(.+)$/);
-  if (!match) return isTruthyTemplateValue(resolveConditionLeft(text, contextStack, responseRoot));
-
-  const left = resolveConditionLeft(match[1], contextStack, responseRoot);
-  const op = match[2];
-  const right = resolveConditionRight(match[3]);
-  if (op === '=' || op === '==') {
-    if (typeof left === 'number' && typeof right === 'number') return left === right;
-    return (left === undefined || left === null ? '' : String(left)) === String(right);
-  }
-  if (op === '!=') {
-    if (typeof left === 'number' && typeof right === 'number') return left !== right;
-    return (left === undefined || left === null ? '' : String(left)) !== String(right);
-  }
-  const leftNumber = Number(left);
-  const rightNumber = Number(right);
-  if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) return false;
-  if (op === '>') return leftNumber > rightNumber;
-  if (op === '>=') return leftNumber >= rightNumber;
-  if (op === '<') return leftNumber < rightNumber;
-  return leftNumber <= rightNumber;
-}
-
-/** default path "兜底文案"：值空时使用兜底文案。 */
-function resolveDefaultVariable(raw, contextStack, responseRoot) {
-  const match = String(raw ?? '').trim().match(/^default\s+(\S+)(?:\s+([\s\S]+))?$/i);
-  if (!match) return '';
-  const value = resolveTemplatePath(match[1], contextStack, responseRoot);
-  if (!isEmptyTemplateValue(value)) return valueToText(value);
-  return unquoteTemplateLiteral(match[2] ?? '');
-}
-
-function resolveTemplateVariable(expr, contextStack, metaStack, options) {
-  const text = String(expr ?? '').trim();
-  if (text === 'response') return options.responseText ?? '';
-  if (text === 'raw') return options.rawText ?? '';
-  if (/^default\s+/i.test(text)) {
-    return resolveDefaultVariable(text, contextStack, options.responseRoot);
-  }
-
-  const parentIndexMatch = text.match(/^((?:\.\.\/)+)@(index|number)$/);
-  if (parentIndexMatch) {
-    const levels = (parentIndexMatch[1].match(/\.\.\//g) ?? []).length;
-    const meta = metaStack[metaStack.length - 1 - levels];
-    return meta ? String(meta[parentIndexMatch[2]]) : '';
-  }
-  if (text === '@index' || text === '@number') {
-    const meta = metaStack[metaStack.length - 1];
-    return meta ? String(meta[text.slice(1)]) : '';
-  }
-
-  if (text.startsWith('count ')) {
-    return valueToText(resolveCountValue(text.slice(6).trim(), contextStack, options.responseRoot));
-  }
-  return valueToText(resolveTemplatePath(text, contextStack, options.responseRoot));
-}
-
-const MAX_TEMPLATE_DEPTH = 32;
-const TEMPLATE_CACHE_MAX = 200;
-const templateAstCache = new Map();
-
-/** 把 token 编译为 AST；解析失败/未闭合时保持宽容（渲染到末尾），由调用方决定展示。 */
-function compileTemplateAst(tokens) {
-  let index = 0;
-  const parseNodes = (stops) => {
-    const nodes = [];
-    while (index < tokens.length) {
-      const token = tokens[index];
-      if (token.type === 'text' || token.type === 'var') {
-        nodes.push(token);
-        index += 1;
-        continue;
-      }
-      if (token.type === 'close' || token.type === 'elseif' || token.type === 'else') {
-        if (stops.has(token.type)) return { nodes, stop: token };
-        index += 1;
-        continue;
-      }
-      if (token.type === 'block') {
-        const name = token.name;
-        index += 1;
-        if (name === 'each') {
-          const first = parseNodes(new Set(['close', 'else']));
-          let elseBody = [];
-          if (first.stop?.type === 'else') {
-            index += 1;
-            const alt = parseNodes(new Set(['close']));
-            elseBody = alt.nodes;
-            if (alt.stop?.type === 'close') index += 1;
-          } else if (first.stop?.type === 'close') {
-            index += 1;
-          }
-          nodes.push({ type: 'each', spec: token.spec, body: first.nodes, elseBody });
-          continue;
-        }
-        const branches = [];
-        let expr = token.spec;
-        while (true) {
-          const parsed = parseNodes(new Set(['elseif', 'else', 'close']));
-          branches.push({ expr, nodes: parsed.nodes });
-          if (!parsed.stop) break;
-          if (parsed.stop.type === 'elseif') {
-            expr = parsed.stop.expr;
-            index += 1;
-            continue;
-          }
-          if (parsed.stop.type === 'else') {
-            index += 1;
-            const alt = parseNodes(new Set(['close']));
-            branches.push({ expr: null, nodes: alt.nodes });
-            if (alt.stop?.type === 'close') index += 1;
-            break;
-          }
-          if (parsed.stop.type === 'close') {
-            index += 1;
-            break;
-          }
-        }
-        nodes.push({ type: name, branches });
-        continue;
-      }
-      index += 1;
-    }
-    return { nodes, stop: null };
-  };
-  return parseNodes(new Set()).nodes;
-}
-
-/** 模板 AST 缓存（按模板文本 LRU），同一模板在规则/定时反复执行时不再重复编译。 */
-function getCompiledTemplate(template) {
-  const cached = templateAstCache.get(template);
-  if (cached) {
-    templateAstCache.delete(template);
-    templateAstCache.set(template, cached);
-    return cached;
-  }
-  const ast = compileTemplateAst(tokenizeTemplate(template));
-  if (templateAstCache.size >= TEMPLATE_CACHE_MAX) {
-    const oldest = templateAstCache.keys().next().value;
-    if (oldest !== undefined) templateAstCache.delete(oldest);
-  }
-  templateAstCache.set(template, ast);
-  return ast;
-}
-
-/** 递归渲染 AST；contextStack[0] 为模板根，后续为当前/父级循环项。 */
-function renderTemplateAst(nodes, contextStack, metaStack, options, depth = 0) {
-  if (depth > MAX_TEMPLATE_DEPTH) return '';
-  let output = '';
-  for (const node of nodes || []) {
-    if (node.type === 'text') {
-      output += node.value;
-      continue;
-    }
-    if (node.type === 'var') {
-      output += resolveTemplateVariable(node.expr, contextStack, metaStack, options);
-      continue;
-    }
-    if (node.type === 'each') {
-      const parsed = parseListSpec(node.spec);
-      const value = resolveTemplatePath(parsed.path, contextStack, options.responseRoot);
-      const list = filterList(value, parsed.filter);
-      if (list.length === 0) {
-        if (node.elseBody?.length) output += renderTemplateAst(node.elseBody, contextStack, metaStack, options, depth + 1);
-        continue;
-      }
-      for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
-        output += renderTemplateAst(
-          node.body,
-          [...contextStack, list[itemIndex]],
-          [...metaStack, { index: itemIndex, number: itemIndex + 1 }],
-          options,
-          depth + 1,
-        );
-      }
-      continue;
-    }
-    if (node.type === 'if' || node.type === 'unless') {
-      for (let branchIndex = 0; branchIndex < node.branches.length; branchIndex += 1) {
-        const branch = node.branches[branchIndex];
-        const matched =
-          branch.expr === null
-            ? true
-            : node.type === 'unless' && branchIndex === 0
-              ? !evaluateTemplateCondition(branch.expr, contextStack, options.responseRoot)
-              : evaluateTemplateCondition(branch.expr, contextStack, options.responseRoot);
-        if (matched) {
-          output += renderTemplateAst(branch.nodes, contextStack, metaStack, options, depth + 1);
-          break;
-        }
-      }
-    }
-  }
-  return output;
-}
-
-/**
- * 回复/通知模板：`{{path}}` 从模板根取值；内置 `{{response}}` / `{{raw}}`；
- * 支持 `{{count path [where 字段=值]}}` 与多层嵌套 `{{#each path [where ...]}}...{{/each}}`。
- * 循环内：当前项字段直接写 `{{字段}}`；父级 `{{../字段}}`；根 `{{@root.字段}}`；
- * `{{@index}}`/`{{@number}}` 为当前循环下标/序号，`{{../@index}}` 取父循环。
- * 支持 @root（模板根）与 @responseRoot（完整响应根）两种特殊根引用。
- */
-export function renderReplyTemplate(template, { root, responseText = '', rawText = '', responseRoot } = {}) {
-  const tpl = String(template ?? '');
-  if (tpl.trim() === '') return truncate(responseText, MAX_REPLY_LENGTH());
-  const rendered = renderTemplateAst(getCompiledTemplate(tpl), [root], [], {
-    responseText,
-    rawText,
-    responseRoot,
-  });
-  return truncate(rendered, MAX_REPLY_LENGTH());
-}
-
-/**
- * 用示例响应离线预览模板（不访问外部接口），复用真实响应解析与模板引擎。
- * @returns {{responseText:string, replyText:string, usedFallback:boolean}}
- */
-export function previewReplyTemplate({
-  responseType = 'json',
-  responsePath = '',
-  template = '',
-  fallbackText = '',
-  rawText = '',
-} = {}) {
-  const parsed = parseResponse({ responseType, responsePath, rawText });
-  const rendered = renderReplyTemplate(template, {
-    root: parsed.templateRoot,
-    responseText: parsed.responseText,
-    rawText: parsed.rawText,
-    responseRoot: parsed.root,
-  });
-  const usedFallback = rendered.trim() === '';
-  return {
-    responseText: parsed.responseText,
-    replyText: usedFallback ? String(fallbackText ?? '') : rendered,
-    usedFallback,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// 响应解析
-// ---------------------------------------------------------------------------
-
-const DIAGNOSTIC_RESPONSE_HEADERS = [
-  'content-type',
-  'x-ratelimit-type',
-  'x-ratelimit-limit',
-  'x-ratelimit-remaining',
-  'ratelimit',
-  'x-error-code',
-  'retry-after',
-  'x-request-id',
-];
-
-/** 从外部响应头中挑选诊断字段（不含 Set-Cookie 等敏感头），供测试运行展示。 */
-function pickDiagnosticHeaders(headers) {
-  const source = headers && typeof headers === 'object' ? headers : {};
-  const picked = {};
-  for (const key of DIAGNOSTIC_RESPONSE_HEADERS) {
-    const value = source[key];
-    if (value !== undefined && value !== null && String(value) !== '') {
-      picked[key] = truncate(String(value), 200);
-    }
-  }
-  return picked;
-}
-
-/**
- * 解析外部响应（docs/API_RULES.md §5）。
- * @returns {{root:any, value:any, responseText:string, rawText:string}}
- */
-export function parseResponse({ responseType = 'json', responsePath = '', rawText = '' } = {}) {
-  const raw = String(rawText ?? '');
-  if (responseType === 'text') {
-    const responseText = truncate(raw.trim(), MAX_REPLY_LENGTH());
-    return { root: responseText, value: responseText, responseText, rawText: raw, templateRoot: responseText };
-  }
-  const parsed = safeJsonParse(raw);
-  if (!parsed.ok) throw new Error('响应不是合法 JSON');
-  const root = parsed.value;
-  const hasPath = String(responsePath).trim() !== '';
-  let value;
-  if (!hasPath) {
-    if (root && typeof root === 'object' && !Array.isArray(root) && typeof root.reply === 'string' && root.reply.trim() !== '') {
-      value = root.reply;
-    } else {
-      value = JSON.stringify(root);
-    }
-  } else {
-    value = getByPath(root, responsePath);
-  }
-  const responseText = truncate(valueToText(value), MAX_REPLY_LENGTH());
-  // JSON 路径命中时，模板根=选中节点（模板可直接相对引用）；空路径/路径无效时保持完整响应根。
-  const templateRoot = hasPath && value !== undefined ? value : root;
-  return { root, value, responseText, rawText: raw, templateRoot };
-}
-
-// ---------------------------------------------------------------------------
-// SSRF 防护
-// ---------------------------------------------------------------------------
-
-/** 判断 IP 是否属于私网/环回/链路本地/组播/保留地址。 */
-export function isPrivateIp(ip) {
-  const value = String(ip ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '');
-  const version = net.isIP(value);
-  if (version === 4) return isPrivateIpv4(value);
-  if (version === 6) return isPrivateIpv6(value);
-  return true; // 非法地址一律视为不可访问
-}
-
-function isPrivateIpv4(ip) {
-  const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b, c] = parts;
-  if (a === 10) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 127) return true;
-  if (a === 0) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
-  if (a === 198 && (b === 18 || b === 19)) return true;
-  if (a === 198 && b === 51 && c === 100) return true;
-  if (a === 203 && b === 0 && c === 113) return true;
-  if (a >= 224) return true;
-  return false;
-}
-
-function isPrivateIpv6(ip) {
-  const value = ip.toLowerCase();
-  if (value === '::' || value === '::1') return true;
-  if (value.startsWith('::ffff:')) {
-    const mapped = value.slice('::ffff:'.length);
-    if (net.isIP(mapped) === 4) return isPrivateIpv4(mapped);
-    return true;
-  }
-  if (value.startsWith('fc') || value.startsWith('fd')) return true; // fc00::/7
-  if (/^fe[89ab]/.test(value)) return true; // fe80::/10
-  if (value.startsWith('ff')) return true; // ff00::/8
-  if (value.startsWith('64:ff9b')) return true; // NAT64 保留
-  if (value.startsWith('2001:db8')) return true; // 文档保留
-  return false;
-}
-
-/** URL 解析 + SSRF 校验（DNS 解析所有地址；白名单主机允许私网）。 */
-export async function validateTargetUrl(rawUrl, { allowedHosts = config.appRules.allowedHosts, dnsLookup = deps.dnsLookup } = {}) {
-  let url;
-  try {
-    url = new URL(String(rawUrl));
-  } catch {
-    throw new Error('URL 格式非法');
-  }
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('仅允许 http/https 协议');
-  if (url.username || url.password) throw new Error('URL 不允许包含 userinfo（user:pass@）');
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (!hostname) throw new Error('URL 缺少主机名');
-  const allowed = (allowedHosts ?? []).map((host) => String(host).toLowerCase()).includes(hostname);
-  const literalVersion = net.isIP(hostname);
-  let addresses;
-  if (literalVersion !== 0) {
-    addresses = [hostname];
-  } else {
-    try {
-      addresses = await dnsLookup(hostname, { all: true });
-    } catch (err) {
-      throw new Error(`域名解析失败：${err?.message ?? 'unknown'}`);
-    }
-  }
-  const list = Array.isArray(addresses) ? addresses : [addresses];
-  for (const entry of list) {
-    const ip = typeof entry === 'string' ? entry : entry?.address;
-    if (!ip) continue;
-    if (isPrivateIp(ip) && !allowed) {
-      throw new Error(`目标地址位于私网/保留网段，已拒绝（SSRF）：${hostname} → ${ip}`);
-    }
-  }
-  return { url, hostname };
-}
-
-/** 是否为 JSON 形态的请求 body（对象/数组文本）；用于自动补 Content-Type。 */
-function looksLikeJsonBody(body) {
-  const text = String(body ?? '').trim();
-  return text.startsWith('{') || text.startsWith('[');
-}
-
-/** POST + JSON body 且未显式设置 Content-Type 时，自动补 application/json。 */
-function withDefaultJsonContentType(method, body, headers) {
-  const next = { ...(headers ?? {}) };
-  if (String(method).toUpperCase() !== 'POST' || !String(body ?? '').trim()) return next;
-  const hasContentType = Object.keys(next).some((key) => key.toLowerCase() === 'content-type');
-  if (!hasContentType && looksLikeJsonBody(body)) next['Content-Type'] = 'application/json';
-  return next;
-}
-
-/**
- * 把底层网络错误转成可读诊断：保留 fetch failed 原因码（ECONNREFUSED/ENOTFOUND/超时等），
- * 避免界面只显示 “fetch failed”。
- */
-export function describeFetchError(err) {
-  if (err?.name === 'AbortError' || /aborted|abort/i.test(String(err?.message ?? ''))) {
-    return '请求超时：目标接口未在限定时间内响应';
-  }
-  const base = String(err?.message ?? err ?? '请求失败');
-  const cause = err && typeof err === 'object' ? err.cause : null;
-  const code = cause && typeof cause === 'object' ? cause.code || cause.errno || '' : '';
-  const causeMessage = cause && typeof cause === 'object' ? String(cause.message ?? '') : '';
-  const details = [];
-  if (code && !base.includes(String(code))) details.push(String(code));
-  if (causeMessage && !base.includes(causeMessage)) details.push(causeMessage);
-  let text = base;
-  if (details.length > 0) text += `（${details.join('：')}）`;
-  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ECONNRESET|UND_ERR/i.test(text)) {
-    text += '；请检查目标服务是否已启动、URL 端口是否正确，以及 Docker 容器内是否可达该地址';
-  }
-  return text;
-}
-
-/**
- * 读取外部响应体并强制大小上限。
- * 不能直接 arrayBuffer()：chunked / 无 Content-Length 响应会在内存中无限增长；
- * 这里按流累计，超过上限立即取消读取并抛错。
- */
-async function readResponseBodyLimited(response, maxBytes) {
-  const limit = Math.max(1, Number(maxBytes) || config.appRules.maxResponseBytes);
-  const declaredSize = Number(response.headers.get('content-length') ?? 0);
-  if (declaredSize > limit) throw new Error('响应体超过大小上限');
-
-  if (!response.body || typeof response.body.getReader !== 'function') {
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > limit) throw new Error('响应体超过大小上限');
-    return buffer;
-  }
-
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > limit) {
-        try {
-          await reader.cancel();
-        } catch {
-          /* 已超限，取消失败不影响错误返回 */
-        }
-        throw new Error('响应体超过大小上限');
-      }
-      chunks.push(Buffer.from(value));
-    }
-  } finally {
-    try {
-      reader.releaseLock?.();
-    } catch {
-      /* 忽略 */
-    }
-  }
-  return Buffer.concat(chunks, total);
-}
-
-/**
- * 调用外部接口（SSRF 校验 + 重定向逐跳复验 + 超时 + 响应大小限制 + 仅文本）。
- * @returns {Promise<{status:number, text:string, headers:object, finalUrl:string, latencyMs:number}>}
- */
-export async function requestExternal({
-  url,
-  method = 'GET',
-  headers = {},
-  body = '',
-  timeoutMs = config.appRules.timeoutMs,
-  maxResponseBytes = config.appRules.maxResponseBytes,
-  allowedHosts = config.appRules.allowedHosts,
-  redirectLimit = 3,
-  dnsLookup = deps.dnsLookup,
-  fetchImpl = deps.fetch,
-} = {}) {
-  const startedAt = deps.now();
-  let currentUrl = String(url);
-  let currentMethod = String(method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET';
-  let currentBody = currentMethod === 'GET' ? '' : String(body ?? '');
-  const requestHeaders = { ...(headers ?? {}) };
-
-  for (let redirect = 0; redirect <= redirectLimit; redirect += 1) {
-    await validateTargetUrl(currentUrl, { allowedHosts, dnsLookup });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || config.appRules.timeoutMs));
-    try {
-      const response = await fetchImpl(currentUrl, {
-        method: currentMethod,
-        headers: withDefaultJsonContentType(currentMethod, currentBody, requestHeaders),
-        body: currentMethod === 'GET' ? undefined : currentBody,
-        redirect: 'manual',
-        signal: controller.signal,
-      });
-
-      if ([301, 302, 303, 307, 308].includes(Number(response.status))) {
-        if (redirect === redirectLimit) throw new Error('重定向次数过多');
-        const location = response.headers.get('location');
-        if (!location) throw new Error('重定向响应缺少 Location');
-        const nextUrl = new URL(location, currentUrl);
-        const fromUrl = new URL(currentUrl);
-        const sameHost = nextUrl.hostname.toLowerCase() === fromUrl.hostname.toLowerCase();
-        const secureUpgrade = fromUrl.protocol === 'http:' && nextUrl.protocol === 'https:';
-        if (!sameHost || (!secureUpgrade && nextUrl.origin !== fromUrl.origin)) {
-          throw new Error('拒绝跨源重定向，避免自定义请求头/凭据被转发到其他主机');
-        }
-        currentUrl = nextUrl.toString();
-        if (Number(response.status) === 303) {
-          currentMethod = 'GET';
-          currentBody = '';
-        }
-        try {
-          await response.body?.cancel?.();
-        } catch {
-          /* 重定向响应体不需要读取 */
-        }
-        continue;
-      }
-
-      const contentType = String(response.headers.get('content-type') ?? '').toLowerCase();
-      if (
-        contentType &&
-        !/^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded))/i.test(contentType)
-      ) {
-        throw new Error(`不支持的响应类型（仅接受文本/JSON）：${contentType}`);
-      }
-      const buffer = await readResponseBodyLimited(response, maxResponseBytes);
-      const text = buffer.toString('utf8');
-      const responseHeaders = {};
-      for (const [key, value] of response.headers.entries()) responseHeaders[key] = value;
-      return {
-        status: Number(response.status),
-        text,
-        headers: responseHeaders,
-        finalUrl: currentUrl,
-        latencyMs: Math.max(0, deps.now() - startedAt),
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw new Error('重定向次数过多');
-}
-
-// ---------------------------------------------------------------------------
-// 单次执行（引擎与 dry-run 共用）
+// 单次执行（引擎与 dry-run 共用；复用 shared/http-execute 管线）
 // ---------------------------------------------------------------------------
 
 /**
@@ -1135,51 +324,25 @@ export async function executeRuleHttp(rule, { text = '', userId = '', displayNam
     return result;
   }
 
-  const vars = extraction.vars;
-  let url = '';
   try {
-    url = renderRequestTemplate(rule.request?.url ?? '', vars, { urlEncode: true });
-    const headers = {};
-    for (const [key, value] of Object.entries(rule.request?.headers ?? {})) {
-      headers[key] = truncate(renderRequestTemplate(value, vars), 2000);
-    }
-    const bodyTemplate = rule.request?.bodyTemplate ?? '';
-    const requestBody = rule.request?.method === 'POST' ? renderRequestTemplate(bodyTemplate, vars) : '';
-    result.requestUrl = url;
-    result.bodyPreview = truncate(requestBody, 500);
-    const response = await requestExternal({
-      url,
-      method: rule.request?.method ?? 'GET',
-      headers,
-      body: requestBody,
+    const prepared = renderHttpRequest(rule.request ?? {}, extraction.vars);
+    result.requestUrl = prepared.url;
+    result.bodyPreview = prepared.bodyPreview;
+    const outcome = await executeHttpRequest({
+      request: prepared,
+      response: rule.response ?? {},
       timeoutMs: Math.min(rule.limits?.timeoutMs ?? config.appRules.timeoutMs, config.appRules.timeoutMs),
       maxResponseBytes: config.appRules.maxResponseBytes,
+      allowedHosts: config.appRules.allowedHosts,
     });
-    result.httpStatus = response.status;
-    result.latencyMs = response.latencyMs;
-    result.responsePreview = truncate(response.text, 1000);
+    result.httpStatus = outcome.status;
+    result.latencyMs = outcome.latencyMs;
+    result.responsePreview = truncate(outcome.text, 1000);
     // 仅保留诊断相关响应头（限流/请求 ID 等），供「测试运行」排查；不进入运行日志
-    result.responseHeaders = pickDiagnosticHeaders(response.headers);
-    if (response.status < 200 || response.status >= 300) {
-      result.error = `HTTP ${response.status}`;
-      result.replyText = rule.response?.fallbackText ?? '';
-      return result;
-    }
-    const parsed = parseResponse({
-      responseType: rule.response?.type ?? 'json',
-      responsePath: rule.response?.path ?? '',
-      rawText: response.text,
-    });
-    result.parsed = parsed;
-    const template = rule.response?.template ?? '';
-    const rendered = renderReplyTemplate(template, {
-      root: parsed.templateRoot,
-      responseRoot: parsed.root,
-      responseText: parsed.responseText,
-      rawText: parsed.rawText,
-    });
-    result.replyText = rendered.trim() === '' ? rule.response?.fallbackText ?? '' : rendered;
-    if (result.replyText.trim() === '') result.error = 'empty reply';
+    result.responseHeaders = pickDiagnosticHeaders(outcome.headers);
+    result.parsed = outcome.parsed;
+    result.replyText = outcome.replyText;
+    result.error = outcome.error;
     return result;
   } catch (err) {
     result.error = truncate(describeFetchError(err), 500);
@@ -1240,26 +403,25 @@ export async function testRule({ ruleRow, message = '', userId = '' } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// 引擎：内存队列 + 并发 worker
+// 日志脱敏
 // ---------------------------------------------------------------------------
 
-const engineState = {
-  running: false,
-  /** @type {Array<object>} */
-  queue: [],
-  active: 0,
-  idleWaiters: [],
-};
-
-function notifyIdleIfNeeded() {
-  if (engineState.active === 0 && engineState.queue.length === 0) {
-    const waiters = engineState.idleWaiters.splice(0);
-    for (const resolve of waiters) resolve();
+/** 日志脱敏：包含 token/secret/password/api-key/authorization 的键替换为 [redacted]。 */
+export function redactForLog(value, depth = 0) {
+  if (depth > 4) return '[object]';
+  if (Array.isArray(value)) return value.map((item) => redactForLog(item, depth + 1));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, val] of Object.entries(value)) {
+      out[key] = REDACT_KEY_RE.test(key) ? '[redacted]' : redactForLog(val, depth + 1);
+    }
+    return out;
   }
+  return value;
 }
 
-/** 脱敏日志中的 URL：去掉 userinfo（user:pass@）等凭据。 */
-function redactUrlForLog(rawUrl) {
+/** 脱敏日志中的 URL：去掉 userinfo（user:pass@）凭据，并把敏感 query 参数值替换为 [redacted]。 */
+export function redactUrlForLog(rawUrl) {
   const raw = String(rawUrl ?? '');
   if (raw === '') return '';
   try {
@@ -1268,9 +430,10 @@ function redactUrlForLog(rawUrl) {
       url.username = '[redacted]';
       url.password = '[redacted]';
     }
-    return url.toString();
+    return redactUrlQueryForLog(url.toString());
   } catch {
-    return raw;
+    // 无法按绝对 URL 解析（如相对路径）：至少完成 query 脱敏
+    return redactUrlQueryForLog(raw);
   }
 }
 
@@ -1291,10 +454,29 @@ function makePreviews({ params, requestUrl, method, responsePreview }) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 引擎：内存队列 + 并发 worker
+// ---------------------------------------------------------------------------
+
+const engineState = {
+  running: false,
+  /** @type {Array<object>} */
+  queue: [],
+  active: 0,
+  idleWaiters: [],
+};
+
+function notifyIdleIfNeeded() {
+  if (engineState.active === 0 && engineState.queue.length === 0) {
+    const waiters = engineState.idleWaiters.splice(0);
+    for (const resolve of waiters) resolve();
+  }
+}
+
 /** 发送回复（入队 outbox source='rule'）。 */
 function enqueueReply(userId, text) {
   if (!text || String(text).trim() === '') return null;
-  const outbox = store.enqueueMessage({ userId, text: truncate(text, MAX_REPLY_LENGTH()), source: 'rule' });
+  const outbox = store.enqueueMessage({ userId, text: truncate(text, maxReplyLength()), source: 'rule' });
   return outbox?.id ?? null;
 }
 

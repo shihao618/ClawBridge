@@ -184,6 +184,40 @@ test('创建/查看：RuleView 结构、headers 只回 names、DB 内为密文',
   assert.ok(all.json.items.every((item) => Array.isArray(item.request.headerNames) && !item.request.headers));
 });
 
+test('创建不传 enabled：默认停用（文档「默认不启用」）；PATCH 不传 enabled 保持原值', async () => {
+  const body = validRuleBody({ name: '默认停用规则' });
+  delete body.enabled;
+  const created = await adminWrite('POST', '/api/admin/app-rules', body);
+  assert.equal(created.status, 201, created.text);
+  const rule = created.json.rule;
+  assert.equal(rule.enabled, false, '创建未传 enabled 应默认 false');
+  assert.equal(
+    getDb().prepare('SELECT enabled FROM app_rules WHERE id = ?').get(rule.id).enabled,
+    0,
+    'DB 中 enabled 应为 0',
+  );
+
+  // 默认列表只含启用规则：新建的停用规则不应出现；includeDisabled=1 可见
+  const enabledOnly = await adminGet('/api/admin/app-rules');
+  assert.ok(!enabledOnly.json.items.some((item) => item.id === rule.id));
+  const all = await adminGet('/api/admin/app-rules?includeDisabled=1');
+  assert.ok(all.json.items.some((item) => item.id === rule.id && item.enabled === false));
+
+  // PATCH 未传 enabled：保持原值（不因局部更新被重新启用）
+  const patched = await adminWrite('PATCH', `/api/admin/app-rules/${encodeURIComponent(rule.id)}`, { name: '默认停用规则改名' });
+  assert.equal(patched.status, 200, patched.text);
+  assert.equal(patched.json.rule.enabled, false, 'PATCH 不传 enabled 应保持 false');
+
+  // 显式传 enabled=true 仍然生效（只改创建默认值）
+  const enabledCreated = await adminWrite(
+    'POST',
+    '/api/admin/app-rules',
+    validRuleBody({ name: '显式启用规则', enabled: true }),
+  );
+  assert.equal(enabledCreated.status, 201, enabledCreated.text);
+  assert.equal(enabledCreated.json.rule.enabled, true);
+});
+
 test('不请求规则：关键词命中直接回复默认文本，不调用外部接口', async () => {
   const created = await adminWrite(
     'POST',

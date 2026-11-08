@@ -166,6 +166,8 @@ process.env.BINDING_MAX_ACTIVE = '10';
 
 const binding = await import('../../server/src/binding.js');
 const monitor = await import('../../server/src/monitor.js');
+const store = await import('../../server/src/store.js');
+const { config } = await import('../../server/src/config.js');
 const { closeDb } = await import('../../server/src/db.js');
 
 after(async () => {
@@ -303,4 +305,57 @@ test('会话状态中的二维码内容/刷新计数字段保持契约', async (
     () => binding.getSession({ sessionId: created.sessionId, token: 'wrong-token' }),
     (err) => err.status === 401,
   );
+});
+
+// ---------------------------------------------------------------------------
+// BA-12 / BA-19
+// ---------------------------------------------------------------------------
+test('BA-12: 绑定 TTL 实时生效（二维码有效期/终态保留期不再冻结）', async () => {
+  const originalTtl = config.binding.ttlMs;
+  try {
+    config.binding.ttlMs = 60_000;
+    const created = await binding.createSession({ displayName: 'TTL 用户一' });
+    const snapshot = binding.getSession({ sessionId: created.sessionId, token: created.token });
+    assert.equal(snapshot.qr.expiresAt - created.createdAt, 60_000, '二维码有效期应跟随实时 ttl（<5min 时取 ttl）');
+
+    binding.cancelSession({ sessionId: created.sessionId, token: created.token });
+    // 保留期实时 = ttl(60s)：now + 120s 后清理应立即回收该终态会话
+    const removed = binding.cleanupSessions(Date.now() + 60_000 + 60_000 + 1000);
+    assert.ok(removed >= 1, '终态会话保留期应按实时 ttl 计算并可被清理');
+
+    config.binding.ttlMs = 10 * 60_000;
+    const createdLong = await binding.createSession({ displayName: 'TTL 用户二' });
+    const snapshotLong = binding.getSession({ sessionId: createdLong.sessionId, token: createdLong.token });
+    assert.equal(
+      snapshotLong.qr.expiresAt - createdLong.createdAt,
+      5 * 60_000,
+      '二维码有效期上限仍为 5 分钟（不随 ttl 增大）',
+    );
+  } finally {
+    config.binding.ttlMs = originalTtl;
+  }
+});
+
+test('BA-19: 绑定成功但 monitor.start 失败 → session 带告警字段并记录 bind_monitor_failed 事件', async () => {
+  const originalMaxAccounts = config.monitor.maxAccounts;
+  config.monitor.maxAccounts = 0; // 强制 monitor.start 因数量上限返回 false
+  try {
+    const created = await binding.createSession({ displayName: '监控失败用户' });
+    const qr = state.qrs.get(qrcodeOf(created));
+    const session = () => binding.getSession({ sessionId: created.sessionId, token: created.token });
+    await waitFor(() => qr?.holdStarted === true);
+    binding.submitVerifyCode({ sessionId: created.sessionId, token: created.token, code: CORRECT_CODE });
+    state.releaseHolds();
+    const confirmed = await waitFor(() => {
+      const snapshot = session();
+      return snapshot.status === 'confirmed' ? snapshot : null;
+    });
+    assert.match(String(confirmed.warning || ''), /入站监控未能启动/, 'confirmed 会话应带 warning 字段');
+    const events = store
+      .listEvents(100)
+      .filter((event) => event.type === 'bind_monitor_failed' && event.user_id === confirmed.user?.id);
+    assert.equal(events.length, 1, '应记录 bind_monitor_failed 事件');
+  } finally {
+    config.monitor.maxAccounts = originalMaxAccounts;
+  }
 });

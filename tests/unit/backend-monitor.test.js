@@ -24,6 +24,8 @@ const fakeState = {
   scriptedUpdates: [],
   holds: [],
   updateCalls: [],
+  /** BA-15：记录每次 getupdates 请求体（含 get_updates_buf），用于断言游标推进时机。 */
+  updateBodies: [],
   notifyStarts: [],
   notifyStops: [],
 };
@@ -41,8 +43,9 @@ function queueUpdates(entry) {
 
 const fake = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
-  for await (const _chunk of req) {
-    /* drain body */
+  let rawBody = '';
+  for await (const chunk of req) {
+    rawBody += chunk;
   }
   const authorization = String(req.headers.authorization || '');
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
@@ -59,6 +62,11 @@ const fake = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/ilink/bot/getupdates') {
     fakeState.updateCalls.push({ token, at: Date.now() });
+    try {
+      fakeState.updateBodies.push(rawBody ? JSON.parse(rawBody) : {});
+    } catch {
+      fakeState.updateBodies.push({});
+    }
     const entry = fakeState.scriptedUpdates.shift() || {};
     if (entry.hold) {
       await new Promise((resolve) => {
@@ -70,7 +78,7 @@ const fake = http.createServer(async (req, res) => {
     }
     sendJson(
       res,
-      200,
+      entry.status ?? 200,
       entry.resp ?? { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: '', longpolling_timeout_ms: 1000 },
     );
     return;
@@ -95,6 +103,7 @@ process.env.ILINK_BASE_URL = fakeBase;
 
 const monitor = await import('../../server/src/monitor.js');
 const store = await import('../../server/src/store.js');
+const { config } = await import('../../server/src/config.js');
 const { getDb, closeDb } = await import('../../server/src/db.js');
 const { decryptSecret } = await import('../../server/src/crypto.js');
 
@@ -128,6 +137,11 @@ after(async () => {
 });
 
 async function waitFor(fn, timeoutMs = 12000, intervalMs = 20) {
+  // 兼容两种调用：waitFor(fn, timeoutMs, intervalMs) 与 waitFor(fn, { timeoutMs, intervalMs })。
+  if (timeoutMs && typeof timeoutMs === 'object') {
+    intervalMs = timeoutMs.intervalMs ?? intervalMs;
+    timeoutMs = timeoutMs.timeoutMs ?? 12000;
+  }
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {
@@ -280,4 +294,201 @@ test('M2: redactInboundMessage 深度脱敏（嵌套字段也不泄漏）', () =
   assert.ok(!raw.includes('secret-raw'));
   assert.equal(JSON.parse(raw).a, 1);
   assert.equal(JSON.parse(raw).context_token, '[redacted]');
+});
+
+// ---------------------------------------------------------------------------
+// 补充分支覆盖（INF-06）：业务错误退避重试 / HTTP 401 stale-token /
+// start-stop 幂等 / 退出时游标持久化 / extractMessageText 表驱动
+// ---------------------------------------------------------------------------
+test('退避分支：getupdates 业务错误（ret!=0）按 retryDelayMs 重试，成功后恢复轮询', async () => {
+  const token = 'token-monitor-retry-business';
+  const user = createUser({ wechatUserId: 'wx_monitor_retry_business', token });
+  queueUpdates({ resp: { ret: 1, errcode: 1, errmsg: 'server busy' } });
+  queueUpdates({ resp: { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: 'retry-ok-buf', longpolling_timeout_ms: 1000 } });
+
+  assert.equal(monitor.start(user.id), true);
+  // 第一次失败 → consecutiveFailures=1 → sleep(retryDelayMs=2000) → 第二次成功
+  await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= 2, {
+    timeoutMs: 10000,
+    intervalMs: 50,
+  });
+  assert.equal(monitor.isRunning(user.id), true, '退避重试成功后监控应仍在运行');
+  assert.equal(await monitor.stop(user.id), true);
+  assert.equal(monitor.isRunning(user.id), false);
+});
+
+test('stale-token 分支：HTTP 401（body 不带 ret）按 token 失效冷却并停止循环', async () => {
+  const token = 'token-monitor-http-401';
+  const user = createUser({ wechatUserId: 'wx_monitor_http_401', token });
+  queueUpdates({ status: 401, resp: { ret: -14, errcode: -14, errmsg: 'token expired' } });
+
+  assert.equal(monitor.start(user.id), true);
+  await waitFor(() => monitor.isRunning(user.id) === false, { timeoutMs: 8000 });
+  const row = store.getUserRow(user.id);
+  assert.ok(Number(row.pause_until) > Date.now(), 'HTTP 401 应把账号置为冷却（pause_until > now）');
+  assert.ok(String(row.last_error).includes('失效'), `last_error 应说明 token 失效：${row.last_error}`);
+  const staleEvents = store.listEvents(50).filter((event) => event.user_id === user.id && event.type === 'stale_token');
+  assert.equal(staleEvents.length, 1, '应写入 stale_token 事件');
+});
+
+test('start/stop 幂等：重复 start/stop 返回 false，runningCount 复位', async () => {
+  const token = 'token-monitor-idempotent';
+  const user = createUser({ wechatUserId: 'wx_monitor_idempotent', token });
+  const runningBefore = monitor.runningCount();
+  const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
+
+  assert.equal(monitor.start(user.id), true);
+  assert.equal(monitor.start(user.id), false, '重复 start 应返回 false');
+  await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length > callsBefore, {
+    timeoutMs: 8000,
+    intervalMs: 20,
+  });
+  assert.equal(monitor.runningCount(), runningBefore + 1);
+
+  assert.equal(await monitor.stop(user.id), true);
+  assert.equal(await monitor.stop(user.id), false, '重复 stop 应返回 false');
+  assert.equal(monitor.isRunning(user.id), false);
+  assert.equal(monitor.runningCount(), runningBefore);
+});
+
+test('PersistCursor 分支：stop(reason=shutdown) 才把内存游标持久化到 DB', async () => {
+  const token = 'token-monitor-cursor';
+  const user = createUser({ wechatUserId: 'wx_monitor_cursor_shutdown', token });
+  queueUpdates({
+    resp: { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: 'shutdown-cursor-buf', longpolling_timeout_ms: 1000 },
+  });
+
+  assert.equal(monitor.start(user.id), true);
+  // 等第二轮 getupdates 请求，说明第一轮响应已处理、worker.pendingBuf 已更新
+  await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= 2, {
+    timeoutMs: 8000,
+    intervalMs: 20,
+  });
+  assert.equal(store.getUserRow(user.id).get_updates_buf, '', '日常运行不立即落盘游标');
+  await monitor.stop(user.id, { notify: false, reason: 'shutdown' });
+  assert.equal(store.getUserRow(user.id).get_updates_buf, 'shutdown-cursor-buf', '优雅退出时应持久化内存游标');
+});
+
+test('extractMessageText：文本优先、语音转写、媒体占位与空消息', () => {
+  const text = (itemList) => monitor.extractMessageText({ item_list: itemList });
+  assert.equal(text([{ type: 1, text_item: { text: '你好' } }]), '你好');
+  assert.equal(text([{ type: 2, image_item: {} }, { type: 1, text_item: { text: '图文' } }]), '图文', '文本优先于媒体占位');
+  assert.equal(text([{ type: 3, voice_item: { text: '语音转写内容' } }]), '语音转写内容');
+  assert.equal(text([{ type: 2, image_item: {} }]), '[图片]');
+  assert.equal(text([{ type: 3, voice_item: { text: '   ' } }]), '[语音]', '空语音转写回退占位');
+  assert.equal(text([{ type: 4, file_item: { file_name: 'a.pdf' } }]), '[文件] a.pdf');
+  assert.equal(text([{ type: 4, file_item: {} }]), '[文件]');
+  assert.equal(text([{ type: 5, video_item: {} }]), '[视频]');
+  assert.equal(text([{ type: 11 }]), '[工具调用]');
+  assert.equal(text([{ type: 12 }]), '[工具调用]');
+  assert.equal(text([{ type: 99 }]), '[消息]');
+  assert.equal(text([]), '');
+  assert.equal(monitor.extractMessageText({}), '');
+});
+
+// ---------------------------------------------------------------------------
+// BA-10 / BA-15 / BA-17
+// ---------------------------------------------------------------------------
+test('BA-10: 未使用的 listRunning 导出已移除（监控状态查询保留 isRunning/runningCount）', () => {
+  assert.equal('listRunning' in monitor, false);
+  assert.equal(typeof monitor.isRunning, 'function');
+  assert.equal(typeof monitor.runningCount, 'function');
+});
+
+test('BA-15: 落库错误分类：busy/locked/IO 可重试，普通错误不可重试', () => {
+  assert.equal(monitor.isRetryableInboundSaveError({ message: 'database is locked' }), true);
+  assert.equal(monitor.isRetryableInboundSaveError({ message: 'SQLITE_BUSY: database is locked' }), true);
+  assert.equal(monitor.isRetryableInboundSaveError({ message: 'disk I/O error' }), true);
+  assert.equal(monitor.isRetryableInboundSaveError({ message: 'database or disk is full' }), true);
+  assert.equal(monitor.isRetryableInboundSaveError({ errcode: 5, message: 'x' }), true);
+  assert.equal(monitor.isRetryableInboundSaveError({ errcode: 13, message: 'x' }), true);
+  assert.equal(monitor.isRetryableInboundSaveError(new Error('UNIQUE constraint failed')), false);
+  assert.equal(monitor.isRetryableInboundSaveError(null), false);
+});
+
+test('BA-15: 不可重试落库失败 → 写 inbound_save_failed 事件且同批后续消息继续处理', async () => {
+  const user = createUser({ wechatUserId: 'wx_ba15_fatal', token: 'token-ba15-fatal' });
+  const trigger = 'ba15_fatal_inbound';
+  getDb().exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  getDb().exec(
+    `CREATE TRIGGER ${trigger} BEFORE INSERT ON inbound_messages
+       WHEN NEW.user_id = '${user.id}' AND NEW.wechat_message_id = 'ba15_msg_fatal_1'
+       BEGIN SELECT RAISE(ABORT, 'forced inbound failure'); END;`,
+  );
+  try {
+    const outcome = await monitor.processMessages(user.id, [
+      { message_id: 'ba15_msg_fatal_1', from_user_id: 'wx_ba15_fatal', item_list: [{ type: 1, text_item: { text: 'fatal' } }] },
+      { message_id: 'ba15_msg_ok_2', from_user_id: 'wx_ba15_fatal', item_list: [{ type: 1, text_item: { text: 'ok' } }] },
+    ]);
+    assert.equal(outcome.retryable, false);
+    assert.equal(outcome.failed, 1);
+    assert.equal(outcome.saved, 1);
+  } finally {
+    getDb().exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  }
+  const events = store.listEvents(100).filter((event) => event.user_id === user.id && event.type === 'inbound_save_failed');
+  assert.equal(events.length, 1, '不可重试失败应写 inbound_save_failed 事件');
+  assert.match(events[0].detail, /ba15_msg_fatal_1/);
+  assert.equal(store.listInbound({ userId: user.id }).total, 1, '同批后续消息应正常落库');
+});
+
+test('BA-15: 可重试落库失败不推进游标，恢复后重放同一批消息并推进', async () => {
+  const user = createUser({ wechatUserId: 'wx_ba15_retry', token: 'token-ba15-retry' });
+  const message = {
+    seq: 1,
+    message_id: 'ba15_msg_retry_1',
+    from_user_id: 'wx_ba15_retry',
+    create_time_ms: Date.now(),
+    message_type: 1,
+    item_list: [{ type: 1, text_item: { text: 'BA15 重试消息' } }],
+  };
+  const trigger = 'ba15_busy_inbound';
+  const prevRetryDelay = config.monitor.retryDelayMs;
+  config.monitor.retryDelayMs = 20;
+  getDb().exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+  getDb().exec(
+    `CREATE TRIGGER ${trigger} BEFORE INSERT ON inbound_messages
+       WHEN NEW.user_id = '${user.id}'
+       BEGIN SELECT RAISE(ABORT, 'database is locked'); END;`,
+  );
+  const bodyBase = fakeState.updateBodies.length;
+  try {
+    queueUpdates({ resp: { ret: 0, errcode: 0, msgs: [message], get_updates_buf: 'ba15-buf-1', longpolling_timeout_ms: 500 } });
+    queueUpdates({ hold: true, resp: { ret: 0, errcode: 0, msgs: [message], get_updates_buf: 'ba15-buf-1', longpolling_timeout_ms: 500 } });
+    assert.equal(monitor.start(user.id), true);
+    // 第 1 轮失败 → 第 2 轮重试：请求仍携带旧游标（空串）
+    await waitFor(() => fakeState.updateBodies.length >= bodyBase + 2);
+    assert.equal(fakeState.updateBodies[bodyBase].get_updates_buf, '');
+    assert.equal(fakeState.updateBodies[bodyBase + 1].get_updates_buf, '', '可重试失败时不得推进游标');
+
+    // 第 2 轮响应在途（被假服务挂起）期间恢复 DB，再放行 → 同一批消息重放成功
+    getDb().exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+    const held = fakeState.holds[fakeState.holds.length - 1];
+    assert.ok(held?.release, '第二次 getupdates 应处于挂起状态');
+    held.release();
+    await waitFor(() => fakeState.updateBodies.length >= bodyBase + 3);
+    assert.equal(fakeState.updateBodies[bodyBase + 2].get_updates_buf, 'ba15-buf-1', '落库恢复后应推进到新游标');
+    await waitFor(() => store.listInbound({ userId: user.id }).total === 1);
+    const events = store.listEvents(100).filter((event) => event.user_id === user.id && event.type === 'inbound_save_failed');
+    assert.equal(events.length, 0, '可重试失败不应写不可重试事件');
+  } finally {
+    try {
+      getDb().exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+    } catch {
+      /* ignore */
+    }
+    config.monitor.retryDelayMs = prevRetryDelay;
+    await monitor.stop(user.id, { notify: false }).catch(() => {});
+  }
+});
+
+test('BA-17: 每轮 getupdates 成功后更新 last_poll_at', async () => {
+  const user = createUser({ wechatUserId: 'wx_touch_poll', token: 'token-touch-poll' });
+  queueUpdates({ resp: { ret: 0, errcode: 0, msgs: [], get_updates_buf: '', longpolling_timeout_ms: 500 } });
+  assert.equal(monitor.start(user.id), true);
+  try {
+    await waitFor(() => Number(store.getUserRow(user.id).last_poll_at) > 0);
+  } finally {
+    await monitor.stop(user.id, { notify: false }).catch(() => {});
+  }
 });

@@ -405,6 +405,141 @@ test('契约对齐：admin/v1 入队项包含 userId；outbox 首次成功 attem
   assert.equal(v1Status.json.attempts, 1);
 });
 
+test('BA-14：PATCH request.mode=none 合并 DB 现有模板/兜底值校验', async () => {
+  const cookie = await loginCookie();
+  const headers = { 'x-requested-with': 'ClawBridge-Admin' };
+  const created = await request('POST', '/api/admin/app-rules', {
+    body: {
+      name: 'BA14 规则',
+      enabled: true,
+      priority: 100,
+      scope: { type: 'all' },
+      matchMode: 'contains',
+      keywords: ['ba14'],
+      extraction: { mode: 'none' },
+      request: { method: 'GET', url: 'http://127.0.0.1:9/ba14' },
+      response: { type: 'json', path: '', template: '', fallbackText: '' },
+    },
+    cookie,
+    headers,
+  });
+  assert.equal(created.status, 201, created.text);
+  const ruleId = created.json.rule.id;
+
+  // 仅 PATCH request.mode=none：DB 现有模板/兜底均为空 → 400（修复前会落库成命中即 empty reply 的规则）
+  const invalid = await request('PATCH', `/api/admin/app-rules/${encodeURIComponent(ruleId)}`, {
+    body: { request: { mode: 'none' } },
+    cookie,
+    headers,
+  });
+  assertErrorShape(invalid, 400, 'BAD_REQUEST');
+
+  // 先写入回复模板，再只 PATCH request.mode=none → 合并现有值通过
+  const withTemplate = await request('PATCH', `/api/admin/app-rules/${encodeURIComponent(ruleId)}`, {
+    body: { response: { type: 'text', path: '', template: '固定回复 {{raw}}', fallbackText: '' } },
+    cookie,
+    headers,
+  });
+  assert.equal(withTemplate.status, 200, withTemplate.text);
+  const ok = await request('PATCH', `/api/admin/app-rules/${encodeURIComponent(ruleId)}`, {
+    body: { request: { mode: 'none' } },
+    cookie,
+    headers,
+  });
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(ok.json.rule.request.mode, 'none');
+  assert.equal(ok.json.rule.response.template, '固定回复 {{raw}}');
+  await request('DELETE', `/api/admin/app-rules/${encodeURIComponent(ruleId)}`, { cookie, headers });
+});
+
+test('BA-20：v1 发送对 -14 冷却用户与后台语义一致（409 / pausedUserIds 标注）', async () => {
+  const keyHeaders = { 'x-api-key': 'api-test-token-123456' };
+  const paused = store.upsertBoundUser({
+    wechatUserId: 'wx_ba20_paused',
+    displayName: '冷却用户',
+    ilinkBotId: 'bot_ba20_paused@im.bot',
+    botToken: 'ba20-paused-token',
+    baseUrl: 'https://ilink.example.test',
+  }).user;
+  store.setUserPaused(paused.id, Date.now() + 3600_000, 'stale token');
+
+  const onlyPaused = await request('POST', '/api/v1/messages', {
+    body: { to: [paused.id], text: 'hi' },
+    headers: keyHeaders,
+  });
+  assert.equal(onlyPaused.status, 409, onlyPaused.text);
+  assert.equal(onlyPaused.json.error.code, 'CONFLICT');
+
+  const active = store.upsertBoundUser({
+    wechatUserId: 'wx_ba20_active',
+    displayName: '正常用户',
+    ilinkBotId: 'bot_ba20_active@im.bot',
+    botToken: 'ba20-active-token',
+    baseUrl: 'https://ilink.example.test',
+  }).user;
+  const mixed = await request('POST', '/api/v1/messages', {
+    body: { to: [active.id, paused.id], text: 'hi' },
+    headers: keyHeaders,
+  });
+  assert.equal(mixed.status, 202, mixed.text);
+  assert.equal(mixed.json.accepted, 1);
+  assert.deepEqual(mixed.json.pausedUserIds, [paused.id], '部分冷却时应在响应中标注 pausedUserIds');
+
+  // onlyBound 兼容字段实际语义 = 是否包含冷却账号（unbound 始终排除）
+  const boundOnly = await request('POST', '/api/v1/broadcast', {
+    body: { text: 'BA20 广播', onlyBound: true },
+    headers: keyHeaders,
+  });
+  const includePaused = await request('POST', '/api/v1/broadcast', {
+    body: { text: 'BA20 广播', onlyBound: false },
+    headers: keyHeaders,
+  });
+  assert.ok(includePaused.json.accepted >= boundOnly.json.accepted);
+  assert.ok(
+    includePaused.json.queued.some((item) => item.userId === paused.id),
+    'onlyBound=false 时广播应包含冷却账号',
+  );
+  assert.ok(
+    !boundOnly.json.queued.some((item) => item.userId === paused.id),
+    'onlyBound=true 时广播不应包含冷却账号',
+  );
+});
+
+test('BA-22：入站长轮询在客户端断开后停止查询', async () => {
+  const { waitForInboundResult } = await import('../../server/src/routes/v1.js');
+  let calls = 0;
+  let fakeNow = 0;
+  const result = await waitForInboundResult({
+    queryOnce: () => {
+      calls += 1;
+      return { items: [], hasMore: false, nextCursor: null };
+    },
+    waitSeconds: 30,
+    startedAt: 0,
+    now: () => fakeNow,
+    sleepFn: async (ms) => {
+      fakeNow += ms;
+    },
+    pollMs: 500,
+    isClosed: () => calls >= 2,
+  });
+  assert.deepEqual(result.items, []);
+  assert.equal(calls, 2, '连接断开后不应继续 queryOnce');
+
+  // 真实 HTTP：客户端 abort 后服务端不崩溃，其它接口仍可用
+  const controller = new AbortController();
+  const abortedRequest = fetch(`${base}/api/v1/inbound/messages?wait=5`, {
+    headers: { 'x-api-key': 'api-test-token-123456' },
+    signal: controller.signal,
+  }).catch((err) => err);
+  setTimeout(() => controller.abort(), 120);
+  const aborted = await abortedRequest;
+  assert.ok(aborted instanceof Error, '客户端 abort 应得到 AbortError');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const health = await request('GET', '/health');
+  assert.equal(health.status, 200, '断开长轮询不应影响服务');
+});
+
 test('DELETE /api/admin/users/:id：鉴权/CSRF/404 + 彻底删除', async () => {
   const cookie = await loginCookie();
   const csrf = { 'x-requested-with': 'ClawBridge-Admin' };

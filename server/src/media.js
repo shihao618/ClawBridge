@@ -7,8 +7,11 @@
  * 详细契约见 docs/MEDIA.md。本模块只做协议/IO/存储，不访问数据库。
  */
 import crypto from 'node:crypto';
+import { createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { config } from './config.js';
 import { getUploadUrl, UploadMediaType } from './ilink.js';
@@ -20,6 +23,17 @@ export const MediaKind = Object.freeze({ IMAGE: 'image', VIDEO: 'video', FILE: '
 /** 入站单条消息最多处理的媒体 item 数（防御性上限）。 */
 export const MAX_MEDIA_ITEMS_PER_MESSAGE = 5;
 const CDN_UPLOAD_MAX_RETRIES = 3;
+
+// BA-05：入站下载 URL 校验与重定向限制。
+const INBOUND_MAX_REDIRECTS = 3;
+const INBOUND_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+/** 默认信任的 iLink / 微信 CDN 域名后缀（仅 https 默认放行；http 需显式配置或本机）。 */
+const TRUSTED_MEDIA_HOST_SUFFIXES = ['.qq.com', '.weixin.qq.com'];
+const LOOPBACK_HOSTS = new Set(['localhost', '::1', '0:0:0:0:0:0:0:1']);
+
+// BA-02：入站媒体下载进程级有界并发闸门（默认并发 2 / 排队 64，超出直接失败）。
+const INBOUND_GATE_DEFAULT_MAX_CONCURRENT = 2;
+const INBOUND_GATE_DEFAULT_MAX_QUEUE = 64;
 
 // ---------------------------------------------------------------------------
 // MIME / 文件名
@@ -198,8 +212,132 @@ export function buildCdnUploadUrl(uploadParam, filekey, cdnBaseUrl = config.ilin
 }
 
 // ---------------------------------------------------------------------------
-// HTTP 下载（带超时与大小限制）
+// 入站下载 URL 校验（BA-05：协议/主机白名单 + 手动重定向）
 // ---------------------------------------------------------------------------
+
+/** 规范化主机名：小写、去掉 IPv6 方括号与结尾点。 */
+function normalizeHostname(hostname) {
+  return String(hostname ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .replace(/\.$/, '');
+}
+
+function hostnameOfUrl(raw) {
+  try {
+    return normalizeHostname(new URL(String(raw)).hostname);
+  } catch {
+    return '';
+  }
+}
+
+function isLoopbackHostname(hostname) {
+  if (!hostname) return false;
+  if (LOOPBACK_HOSTS.has(hostname)) return true;
+  if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return true;
+  return hostname === '::1';
+}
+
+/** 显式信任主机：iLink/CDN 配置主机、调用方传入的 cdnBaseUrl 主机、media.allowedHosts。 */
+function explicitTrustedHosts(cdnBaseUrl) {
+  const hosts = new Set();
+  for (const raw of [config.ilink.cdnBaseUrl, config.ilink.defaultBaseUrl, config.ilink.loginBaseUrl, cdnBaseUrl]) {
+    const host = hostnameOfUrl(raw);
+    if (host) hosts.add(host);
+  }
+  for (const raw of Array.isArray(config.media.allowedHosts) ? config.media.allowedHosts : []) {
+    const host = normalizeHostname(raw);
+    if (host) hosts.add(host);
+  }
+  return hosts;
+}
+
+function isSuffixTrustedHostname(hostname) {
+  return TRUSTED_MEDIA_HOST_SUFFIXES.some((suffix) => hostname === suffix.slice(1) || hostname.endsWith(suffix));
+}
+
+/**
+ * 校验入站媒体下载 URL（BA-05）：
+ * - 仅允许 http/https，禁止 userinfo；
+ * - 主机必须在白名单：iLink/CDN 配置主机、media.allowedHosts、微信 CDN 域名后缀、本机（非生产）；
+ * - http 只允许指向显式白名单主机/本机，或显式开启 media.allowInsecureHttp。
+ * @param {string|URL} rawUrl
+ * @param {{cdnBaseUrl?:string}} [options]
+ * @returns {URL}
+ */
+export function assertInboundDownloadUrl(rawUrl, { cdnBaseUrl = config.ilink.cdnBaseUrl } = {}) {
+  let url;
+  try {
+    url = rawUrl instanceof URL ? new URL(rawUrl.toString()) : new URL(String(rawUrl));
+  } catch {
+    throw new Error(`媒体下载 URL 非法：${String(rawUrl).slice(0, 200)}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`媒体下载 URL 协议不支持（仅允许 http/https）：${url.protocol}`);
+  }
+  if (url.username || url.password) throw new Error('媒体下载 URL 不允许包含 userinfo（user:pass@）');
+  const hostname = normalizeHostname(url.hostname);
+  const explicit = explicitTrustedHosts(cdnBaseUrl).has(hostname);
+  const loopback = isLoopbackHostname(hostname);
+  const suffixTrusted = isSuffixTrustedHostname(hostname);
+  const allowInsecureHttp = config.media.allowInsecureHttp === true;
+  // 生产环境默认不允许访问本机；开发/测试环境放行（mock/demo 场景），也可由 allowInsecureHttp 显式开启。
+  const loopbackAllowed = loopback && (config.isProduction ? allowInsecureHttp : true);
+  if (!explicit && !suffixTrusted && !loopbackAllowed) {
+    throw new Error(`媒体下载 URL 主机不在允许列表：${hostname || '(空)'}`);
+  }
+  if (url.protocol === 'http:' && !explicit && !loopbackAllowed && !allowInsecureHttp) {
+    throw new Error(`媒体下载 URL 仅允许 https：${hostname}`);
+  }
+  return url;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP 下载（带超时、大小限制、手动重定向与 URL 校验）
+// ---------------------------------------------------------------------------
+
+function toTimeoutError(err, timeoutMs) {
+  if (err && (err.name === 'AbortError' || err.code === 'ABORT_ERR')) {
+    return new Error(`媒体下载超时（>${timeoutMs}ms）`);
+  }
+  return err;
+}
+
+/**
+ * 发起入站下载请求（BA-05：redirect:'manual' + 每跳 URL 校验 + 最多 3 跳）。
+ * 返回最终 2xx 响应与 clearTimer；调用方必须 clearTimer 并消费/取消 response body。
+ */
+async function fetchInboundResponse(rawUrl, { timeoutMs = config.media.downloadTimeoutMs, headers, cdnBaseUrl } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  timer.unref?.();
+  const clearTimer = () => clearTimeout(timer);
+  try {
+    let current = assertInboundDownloadUrl(rawUrl, { cdnBaseUrl });
+    for (let hop = 0; ; hop += 1) {
+      const res = await fetch(current, { headers, signal: controller.signal, redirect: 'manual' });
+      if (INBOUND_REDIRECT_STATUSES.has(res.status)) {
+        const location = res.headers.get('location');
+        try {
+          await res.body?.cancel();
+        } catch {
+          /* 释放连接失败可忽略 */
+        }
+        if (!location) throw new Error(`媒体下载失败：重定向缺少 Location（HTTP ${res.status}）`);
+        if (hop >= INBOUND_MAX_REDIRECTS) throw new Error(`媒体下载重定向次数过多（>${INBOUND_MAX_REDIRECTS} 次）`);
+        current = assertInboundDownloadUrl(new URL(location, current), { cdnBaseUrl });
+        continue;
+      }
+      if (!res.ok) throw new Error(`媒体下载失败 HTTP ${res.status} ${res.statusText}`);
+      return { res, clearTimer };
+    }
+  } catch (err) {
+    clearTimer();
+    throw toTimeoutError(err, timeoutMs);
+  }
+}
 
 /**
  * 下载 URL 到 Buffer，带超时与最大字节数保护。
@@ -207,16 +345,15 @@ export function buildCdnUploadUrl(uploadParam, filekey, cdnBaseUrl = config.ilin
  * @param {{timeoutMs?:number, maxBytes?:number, headers?:Record<string,string>}} [options]
  */
 export async function fetchBuffer(url, { timeoutMs = config.media.downloadTimeoutMs, maxBytes = config.media.inboundMaxBytes, headers } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
-  timer.unref?.();
+  const { res, clearTimer } = await fetchInboundResponse(url, { timeoutMs, headers });
   try {
-    const res = await fetch(url, { headers, signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`媒体下载失败 HTTP ${res.status} ${res.statusText}`);
-    }
     const declared = Number(res.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > maxBytes) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* 忽略 */
+      }
       throw new Error(`媒体超过大小上限（${declared} > ${maxBytes} 字节）`);
     }
     const chunks = [];
@@ -233,21 +370,151 @@ export async function fetchBuffer(url, { timeoutMs = config.media.downloadTimeou
       return buf;
     }
     return Buffer.concat(chunks);
+  } catch (err) {
+    throw toTimeoutError(err, timeoutMs);
   } finally {
-    clearTimeout(timer);
+    clearTimer();
+  }
+}
+
+/** 临时文件路径（MEDIA_DIR/inbound，隐藏 .part 文件，提交前可安全删除）。 */
+async function createInboundTempPath(id) {
+  await ensureMediaDirs();
+  return path.join(config.media.dir, 'inbound', `.tmp-${id}-${crypto.randomBytes(4).toString('hex')}.part`);
+}
+
+/**
+ * 流式下载 + 流式解密 + 写临时文件（BA-02：整文件不进内存，仅保留 16 字节头部用于 MIME 嗅探）。
+ * @returns {Promise<{id:string,tempPath:string,size:number,sha256:string,encrypted:boolean,head:Buffer}>}
+ */
+async function streamDownloadToTemp({ url, key, id, timeoutMs, maxBytes, cdnBaseUrl }) {
+  const tempPath = await createInboundTempPath(id);
+  const { res, clearTimer } = await fetchInboundResponse(url, { timeoutMs, cdnBaseUrl });
+  let committed = false;
+  try {
+    const declared = Number(res.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* 忽略 */
+      }
+      throw new Error(`媒体超过大小上限（${declared} > ${maxBytes} 字节）`);
+    }
+    if (!res.body) {
+      await fs.writeFile(tempPath, Buffer.alloc(0), { mode: 0o600 });
+      committed = true;
+      return {
+        id,
+        tempPath,
+        size: 0,
+        sha256: crypto.createHash('sha256').digest('hex'),
+        encrypted: Boolean(key),
+        head: Buffer.alloc(0),
+      };
+    }
+    let cipherBytes = 0;
+    const sizeGuard = new Transform({
+      transform(chunk, _encoding, callback) {
+        cipherBytes += chunk.length;
+        if (cipherBytes > maxBytes) {
+          callback(new Error(`媒体超过大小上限（>${maxBytes} 字节）`));
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
+    const hash = crypto.createHash('sha256');
+    let plainSize = 0;
+    let head = Buffer.alloc(0);
+    const plaintextTracker = new Transform({
+      transform(chunk, _encoding, callback) {
+        hash.update(chunk);
+        plainSize += chunk.length;
+        if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16 - head.length)]);
+        callback(null, chunk);
+      },
+    });
+    const stages = [Readable.fromWeb(res.body), sizeGuard];
+    if (key) stages.push(crypto.createDecipheriv('aes-128-ecb', key, null));
+    stages.push(plaintextTracker, createWriteStream(tempPath, { mode: 0o600, flags: 'wx' }));
+    await pipeline(...stages);
+    committed = true;
+    return { id, tempPath, size: plainSize, sha256: hash.digest('hex'), encrypted: Boolean(key), head };
+  } catch (err) {
+    throw toTimeoutError(err, timeoutMs);
+  } finally {
+    clearTimer();
+    if (!committed) await fs.unlink(tempPath).catch(() => {});
   }
 }
 
 /**
- * 下载并解密一条入站媒体。
+ * 流式下载并解密一条入站媒体到临时文件（BA-02；BA-05 URL 校验）。
+ * 成功后需调用 commitInboundTempMedia 落到正式路径；失败/放弃时调用 discardInboundTempMedia。
  * @param {{cdnBaseUrl?:string, media:{encrypt_query_param?:string, aes_key?:string, full_url?:string}, aesKeyOverride?:string, timeoutMs?:number, maxBytes?:number}} params
+ * @returns {Promise<{id:string,tempPath:string,size:number,sha256:string,encrypted:boolean,head:Buffer}>}
  */
-export async function downloadAndDecryptInbound({ cdnBaseUrl = config.ilink.cdnBaseUrl, media, aesKeyOverride, timeoutMs, maxBytes } = {}) {
+export async function downloadAndDecryptInboundToTemp({
+  cdnBaseUrl = config.ilink.cdnBaseUrl,
+  media,
+  aesKeyOverride,
+  timeoutMs = config.media.downloadTimeoutMs,
+  maxBytes = config.media.inboundMaxBytes,
+} = {}) {
   const aesKeyBase64 = aesKeyOverride || media?.aes_key;
   const encryptedParam = media?.encrypt_query_param;
   const fullUrl = media?.full_url;
   if (!encryptedParam && !fullUrl) throw new Error('媒体缺少下载参数');
   const url = fullUrl || buildCdnDownloadUrl(encryptedParam, cdnBaseUrl);
+  const key = aesKeyBase64 ? parseAesKey(aesKeyBase64) : null;
+  const id = generateAttachmentId();
+  return streamDownloadToTemp({ url, key, id, timeoutMs, maxBytes, cdnBaseUrl });
+}
+
+/** 把 staged 临时文件原子 rename 到正式 inbound 路径（0600），返回与 saveMediaBuffer 一致的元数据。 */
+export async function commitInboundTempMedia(staged, { mime } = {}) {
+  if (!staged?.tempPath) throw new Error('媒体临时文件不存在或已提交');
+  await ensureMediaDirs();
+  const normalizedMime = normalizeMime(mime);
+  const ext = getExtensionFromMime(normalizedMime);
+  const relativePath = path.posix.join('inbound', `${staged.id}${ext}`);
+  const absolutePath = path.join(config.media.dir, relativePath);
+  await fs.rename(staged.tempPath, absolutePath);
+  staged.tempPath = '';
+  try {
+    await fs.chmod(absolutePath, 0o600);
+  } catch {
+    /* Windows/受限环境忽略 */
+  }
+  return { id: staged.id, path: relativePath, size: staged.size, sha256: staged.sha256, mime: normalizedMime, ext };
+}
+
+/** 丢弃 staged 临时文件（幂等：目录里不留 .part 残留）。 */
+export async function discardInboundTempMedia(staged) {
+  const tempPath = staged?.tempPath;
+  if (!tempPath) return;
+  staged.tempPath = '';
+  await fs.unlink(tempPath).catch(() => {});
+}
+
+/**
+ * 下载并解密一条入站媒体（Buffer 版，保留给工具/测试；monitor 走 streaming 版）。
+ * @param {{cdnBaseUrl?:string, media:{encrypt_query_param?:string, aes_key?:string, full_url?:string}, aesKeyOverride?:string, timeoutMs?:number, maxBytes?:number}} params
+ */
+export async function downloadAndDecryptInbound({
+  cdnBaseUrl = config.ilink.cdnBaseUrl,
+  media,
+  aesKeyOverride,
+  timeoutMs = config.media.downloadTimeoutMs,
+  maxBytes = config.media.inboundMaxBytes,
+} = {}) {
+  const aesKeyBase64 = aesKeyOverride || media?.aes_key;
+  const encryptedParam = media?.encrypt_query_param;
+  const fullUrl = media?.full_url;
+  if (!encryptedParam && !fullUrl) throw new Error('媒体缺少下载参数');
+  const url = fullUrl || buildCdnDownloadUrl(encryptedParam, cdnBaseUrl);
+  assertInboundDownloadUrl(url, { cdnBaseUrl });
   const ciphertext = await fetchBuffer(url, { timeoutMs, maxBytes });
   if (!aesKeyBase64) {
     // 无密钥时返回原始字节（极少数明文媒体）
@@ -255,6 +522,138 @@ export async function downloadAndDecryptInbound({ cdnBaseUrl = config.ilink.cdnB
   }
   const key = parseAesKey(aesKeyBase64);
   return { buffer: aesEcbDecrypt(ciphertext, key), encrypted: true };
+}
+
+// ---------------------------------------------------------------------------
+// 入站下载进程级有界闸门（BA-02）
+// ---------------------------------------------------------------------------
+
+/**
+ * 有界并发闸门（纯工具，便于单测）：最多 maxConcurrent 个任务执行，其余进入 FIFO 等待队列
+ * （最多 maxQueue 个）；排队超时或队列已满时直接拒绝（由调用方按失败附件处理）。
+ * @param {{maxConcurrent?:number, maxQueue?:number}} [options]
+ */
+export function createBoundedGate({
+  maxConcurrent = INBOUND_GATE_DEFAULT_MAX_CONCURRENT,
+  maxQueue = INBOUND_GATE_DEFAULT_MAX_QUEUE,
+} = {}) {
+  const limit = Math.max(1, Math.floor(Number(maxConcurrent) || 0));
+  const queueLimit = Math.max(0, Math.floor(Number(maxQueue) || 0));
+  const counters = { active: 0, accepted: 0, completed: 0, rejected: 0, timedOut: 0 };
+  const waiting = [];
+
+  const makeRelease = () => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      counters.completed += 1;
+      const next = waiting.shift();
+      if (next) {
+        clearTimeout(next.timer);
+        // 执行槽直接转交给排队者：active 数量不变
+        next.resolve(makeRelease());
+      } else {
+        counters.active -= 1;
+      }
+    };
+  };
+
+  return {
+    stats: () => ({
+      maxConcurrent: limit,
+      maxQueue: queueLimit,
+      active: counters.active,
+      queued: waiting.length,
+      accepted: counters.accepted,
+      completed: counters.completed,
+      rejected: counters.rejected,
+      timedOut: counters.timedOut,
+    }),
+    /** 获取执行槽；返回幂等 release 函数。队列满/排队超时 → rejected Promise。 */
+    acquire(timeoutMs = config.media.inboundQueueTimeoutMs) {
+      counters.accepted += 1;
+      if (counters.active < limit) {
+        counters.active += 1;
+        return Promise.resolve(makeRelease());
+      }
+      if (waiting.length >= queueLimit) {
+        counters.rejected += 1;
+        return Promise.reject(
+          new Error(`媒体下载队列已满（并发 ${counters.active}/${limit}，排队 ${waiting.length}/${queueLimit}）`),
+        );
+      }
+      return new Promise((resolve, reject) => {
+        const waiter = { resolve, reject, timer: null };
+        const waitMs = Math.max(1, Number(timeoutMs) || 1);
+        waiter.timer = setTimeout(() => {
+          const index = waiting.indexOf(waiter);
+          if (index >= 0) waiting.splice(index, 1);
+          counters.timedOut += 1;
+          reject(new Error(`媒体下载排队超时（>${waitMs}ms，并发 ${counters.active}/${limit}）`));
+        }, waitMs);
+        waiter.timer.unref?.();
+        waiting.push(waiter);
+      });
+    },
+  };
+}
+
+/**
+ * 进程级单例闸门：首次使用时按当前运行配置创建。
+ * 配置来自 config.media.inboundMaxConcurrent/inboundMaxQueue（settings 覆盖在 loadOverrides 后生效，
+ * 因此后台修改并发/排队上限需重启进程）。
+ */
+let inboundDownloadGate = null;
+export function getInboundDownloadGate() {
+  if (!inboundDownloadGate) {
+    inboundDownloadGate = createBoundedGate({
+      maxConcurrent: config.media.inboundMaxConcurrent,
+      maxQueue: config.media.inboundMaxQueue,
+    });
+  }
+  return inboundDownloadGate;
+}
+
+/** 当前入站下载闸门统计（诊断/测试）。 */
+export function getInboundDownloadStats() {
+  if (!inboundDownloadGate) {
+    return {
+      maxConcurrent: config.media.inboundMaxConcurrent,
+      maxQueue: config.media.inboundMaxQueue,
+      active: 0,
+      queued: 0,
+      accepted: 0,
+      completed: 0,
+      rejected: 0,
+      timedOut: 0,
+    };
+  }
+  return inboundDownloadGate.stats();
+}
+
+/**
+ * 在闸门内执行一个入站媒体下载任务（monitor 使用）。
+ * 队列已满/排队超时 → 立即抛错（调用方把该附件记为 failed，避免无限堆积）。
+ * @template T
+ * @param {() => Promise<T>} task
+ * @param {{timeoutMs?:number}} [options]
+ * @returns {Promise<T>}
+ */
+export async function runInboundDownloadWithSlot(task, { timeoutMs = config.media.inboundQueueTimeoutMs } = {}) {
+  const gate = getInboundDownloadGate();
+  let release;
+  try {
+    release = await gate.acquire(timeoutMs);
+  } catch (err) {
+    log.warn('入站媒体下载被闸门拒绝（队列已满或排队超时）', { message: err?.message, stats: gate.stats() });
+    throw err;
+  }
+  try {
+    return await task();
+  } finally {
+    release();
+  }
 }
 
 /**

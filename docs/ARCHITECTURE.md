@@ -9,21 +9,43 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
   入站长轮询 + 出站队列；SQLite 落盘到 `/app/data`（Docker volume）。
 - 协议依据：`docs/PROTOCOL.md`；HTTP API 契约：`docs/API.md`。
 
-## 1. 目录结构与负责范围（写作用域）
+## 1. 目录结构与职责（2026-11 模块化重构后）
 
-| 路径 | 内容 | Owner |
-| --- | --- | --- |
-| `server/src/config.js` | 环境变量/默认值/secret 加载 | lead（已就绪，勿改） |
-| `server/src/logger.js` | 结构化日志 + 脱敏 | lead（已就绪，勿改） |
-| `server/src/errors.js` | AppError / ILinkError / 错误码 | lead（已就绪，勿改） |
-| `server/src/crypto.js` | AES-GCM 加解密、会话签名、token 哈希 | lead（已就绪，勿改） |
-| `server/src/ilink.js` | 微信 ClawBot 协议客户端 | lead（已就绪，勿改） |
-| `server/src/db.js` `store.js` `auth.js` `rate-limiter.js` `binding.js` `dispatcher.js` `monitor.js` `api.js` `index.js` | 后端业务 | backend-dev |
-| `web/**` | 前端页面（公开绑定页 / 管理后台 / API 文档页） | frontend-dev |
-| `mock/**` `tests/**` `Dockerfile` `docker-compose*.yml` `.env.example` `.dockerignore` `scripts/**` | 模拟微信 API、e2e 测试、Docker、演示脚本 | infra-dev |
-| `docs/**` `README.md` `package.json` | 文档、依赖清单 | lead |
+> 2026-11 重构：`server/src/api.js` 由 1895 行拆为 87 行组合根 + `http/**`/`routes/**` 模块；
+> `server/src/store.js` 由 2126 行拆为 23 行 façade + `data/**` 按域模块；`server/src/app-rules.js`
+> 由 ~1744 行拆为 656 行 + `shared/**` 模板/HTTP/响应管线；`web/assets/admin.js` 由 5895 行拆为 198 行入口 +
+> `admin/**`/`lib/**` 模块。行为与对外契约不变，详见 `docs/CODE_REVIEW.md`。
 
-**禁止修改他人范围文件**；需要调整已就绪模块的接口时，先联系 Lead。
+| 路径 | 内容 |
+| --- | --- |
+| `server/src/config.js` / `logger.js` / `errors.js` / `crypto.js` / `db.js` / `rate-limiter.js` / `index.js` | 基础层：环境变量与默认值、结构化日志与脱敏、错误类型与错误码、AES-GCM/会话签名、SQLite 初始化与 schema 校验、限流器、进程入口与生命周期（含优雅退出/维护任务接线） |
+| `server/src/ilink.js` / `media.js` | 协议层：微信 ClawBot 协议客户端；媒体加解密、MIME、CDN 上下行（出站上传/入站有界并发+流式下载解密） |
+| `server/src/store.js` | 数据层 façade：`export *` 重导出 `data/**`，保持既有导出名与调用方零改动 |
+| `server/src/data/` | 数据层按域实现：`users.js`、`groups.js`、`keepalive.js`、`rules.js`、`scheduled.js`、`attachments.js`、`outbox.js`、`inbound.js`、`messages.js`、`events.js`、`stats.js` + `mappers.js`/`helpers.js` |
+| `server/src/shared/` | 领域共享层：`http-client.js`（SSRF/传输/钉 IP/响应读取）、`template.js`（模板引擎）、`response.js`（响应解析）、`http-execute.js`（渲染→HTTP→解析→渲染回复管线） |
+| `server/src/binding.js` / `monitor.js` / `dispatcher.js` / `keepalive.js` / `app-rules.js` / `scheduler.js` / `settings.js` / `auth.js` / `maintenance.js` | 领域层：扫码绑定状态机、入站长轮询、出站队列 drain、会话保活、接口应用规则引擎（656 行，依赖 `shared/**`）、定时通知（依赖 `shared/**`，独立 HTTP 限制配置）、运行配置与机密管理、认证与限流、数据生命周期维护（孤儿附件/日志保留 GC） |
+| `server/src/http/` | HTTP 支撑层：`middleware.js`（安全头/body 解析/404/统一错误处理）、`helpers.js`、`views.js`、`validators.js`、`app-rule-validators.js`、`scheduled-validators.js`、`media-handlers.js`、`queue-service.js` |
+| `server/src/routes/` | 路由层：`public.js`（健康检查/扫码绑定）、`admin-auth.js`、`admin-users.js`、`admin-groups.js`、`admin-rules.js`、`admin-scheduled.js`、`admin-settings.js`、`admin-messages.js`、`v1.js`、`webhook.js`、`pages.js` |
+| `server/src/api.js` | Express 组合根：仅装配中间件顺序与挂载路由（`createApp()`） |
+| `web/*.html` + `web/assets/style.css` | 零构建前端页面（绑定页 / 管理后台 / API 文档页）与全站样式（WCAG AA 对比度 token、统一断点） |
+| `web/assets/common.js` / `bind.js` / `docs.js` | 公共能力（fetch/上传/DOM/格式化/toast/modal 焦点陷阱/轮询/抽屉）与两个页面入口 |
+| `web/assets/admin.js` | 管理后台入口：事件绑定、视图加载器注册、末尾唯一 `init()` |
+| `web/assets/admin/` | 管理后台模块：`constants.js`、`state.js`、`core.js`（认证/hash 路由/刷新/注册表）、`ui.js`（公共 UI 构建器）、`templates.js`（模板语法/Markdown 预览）、`views/*.js`（8 个菜单视图 + 发送消息弹窗）、`integrations/**`（规则/定时编辑器共享片段） |
+| `web/assets/lib/` | 前端纯函数模块（parse/settings/summary/media），可被 `node:test` 直接单测 |
+| `mock/**` | 零依赖微信 iLink 模拟器 + 控制面 + 自测（26 项，含 `/mock-bind` 占位页） |
+| `tests/unit/**` | 进程内单测 + 前端静态/模块/纯函数测试 + 生命周期/错误/维护等针对性测试 |
+| `tests/e2e/**` | 真实 app + mock 双进程、随机端口、临时 DATA_DIR 的全 HTTP 黑盒测试（子进程 env 白名单、稳定等待断言、mock 违规统一断言） |
+| `tests/helpers/e2e-env.mjs` | e2e 环境管理、断言助手、外部 HTTP mock、媒体工具、优雅退出/清理 |
+| `scripts/**` | `demo.ps1`/`demo.sh` 一键演示；`frontend-smoke.mjs` 浏览器冒烟（`npm run test:ui`）；`screenshots.mjs` 演示数据截图生成 |
+| `docs/**` | 协议与设计契约（PROTOCOL / API / ARCHITECTURE / MEDIA / GROUPS_AND_INBOUND / KEEPALIVE / API_RULES / SCHEDULED_TASKS / SETTINGS / UPGRADE / CODE_REVIEW） |
+| `Dockerfile` / `docker-compose*.yml` / `.github/workflows/**` | 构建、部署与 CI（PR：lint + coverage 门禁；main 发布前同样先跑测试，镜像带 provenance/SBOM） |
+| `eslint.config.js` / `.editorconfig` / `.gitattributes` | 静态检查与跨平台编辑器/换行约定 |
+
+**依赖方向（后端）**：基础层 → 协议层 → 数据层 → 领域层 → 组合根（`api.js`）→ 进程入口（`index.js`）；
+`http/**` 与 `routes/**` 只依赖上游，不反向依赖 `api.js`。
+**依赖方向（前端）**：`admin.js`（entry）→ `admin/views/**` → `{core, ui, state, templates, lib, common}`；
+`core.js` 不 import views（由 entry 调用 `registerViewLoaders/registerDataLoader` 注册），`lib/**` 为零依赖纯函数；
+`tests/unit/frontend-modules.test.js` 静态强制该约束（import 路径存在、无环、入口可达、entry ≤ 600 行）。
 
 ## 2. 运行时模块与数据流
 
@@ -31,7 +53,7 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
 浏览器（公开绑定页/管理后台）
    │  HTTP（同源）
    ▼
-Express (api.js) ── 静态页面(web/) + /health + /api/...
+Express（api.js 组合根：http/middleware 中间件 → routes/* 路由）── 静态页面(web/) + /health + /api/...
    │
    ├─ binding.js ── iLink.getBotQrcode / getQrcodeStatus ──► 微信 ClawBot (ilinkai.weixin.qq.com)
    │      └─ confirmed → store.upsertUser()（按 wechat_user_id，旧凭证清理）+ monitor.start(user)
@@ -136,6 +158,10 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   `crypto.decryptSecretOrNull()` 读取；任何 API/日志不得返回明文 token。
 - 时间统一为毫秒整数。
 - 开启 WAL；`db.js` 内设置 `busy_timeout`（如 5000）。单进程写，无需连接池。
+- 高频查询索引：`inbound_messages(received_at, id)`（对外入站 API 游标/长轮询）、
+  `inbound_messages(created_at DESC)` 与 `outbox(created_at DESC)`（后台消息记录 UNION 排序/今日统计）
+  通过 `CREATE INDEX IF NOT EXISTS` 在每次启动**幂等创建/补齐**——无需 schema 版本变更，
+  既有 v10 数据卷升级后自动生效（首次启动会多一次建索引耗时，数据量大时属正常）。
 - schema：`meta` 表存 `schema_version`，当前版本 10；**不再支持旧版本迁移**。启动时若发现非当前
   版本（且非全新库）直接失败，要求备份后使用新版空库；当前 schema 使用 `CREATE TABLE IF NOT EXISTS` 建表。
 
@@ -214,6 +240,11 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
       - 更新 last_inbound_at/last_poll_at。
   stop(userId, {notify})：abort 循环（AbortController）→ best-effort notifyStop → 从 Map 移除
   ```
+- **入站媒体（BA-02/BA-05，2026-11）**：`processMessages` 对每条消息的媒体 item 走进程级有界闸门
+  （默认并发 2、排队 64、排队超时 60s；超限/超时记 `attachments.status='failed'` 而不是无限堆积）；
+  下载+解密为**流式落盘**（`.part` 临时文件 → 原子 rename，内存 O(chunk)）；下载 URL 做协议/主机白名单
+  校验（iLink/CDN + `MEDIA_ALLOWED_HOSTS`，生产默认拒绝本机/私网），`redirect:'manual'` 每跳复验，最多 3 跳。
+  详见 `docs/MEDIA.md` §2/§7。
 - 启动恢复：`index.js` 对每个 active 用户 `monitor.start()`；监控数上限 `config.monitor.maxAccounts`。
 - `stop` 必须可重复调用（幂等）；测试可通过管理端 unbind 验证 notifyStop 被调用。
 
@@ -244,6 +275,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 | `MEDIA_DIR` | `{DATA_DIR}/media` | 媒体文件目录 |
 | `MEDIA_MAX_BYTES` / `INBOUND_MEDIA_MAX_BYTES` | 25MB / 100MB | 出站/入站单文件上限 |
 | `MEDIA_DOWNLOAD_TIMEOUT_MS` / `MEDIA_UPLOAD_TIMEOUT_MS` | 60000 / 60000 | 媒体传输超时 |
+| `INBOUND_MEDIA_MAX_CONCURRENT` / `INBOUND_MEDIA_MAX_QUEUE` / `INBOUND_MEDIA_QUEUE_TIMEOUT_MS` | 2 / 64 / 60000 | 入站下载有界并发与排队（防 OOM） |
+| `MEDIA_ALLOWED_HOSTS` / `MEDIA_ALLOW_INSECURE_HTTP` | 空 / false | 入站媒体下载主机白名单与 http 放行（SSRF 纵深） |
 
 ## 8. 安全约定
 
@@ -252,17 +285,38 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 - 推送 API：`Authorization: Bearer <API_TOKEN>` 或 `X-Api-Key`；按 token 限流 60 次/分钟。
   Webhook 兼容入口额外允许 `?token=`（便于不能自定义 Header 的服务；URL 可能进入代理日志，优先 Header）。
 - 绑定页：公开；按 IP 限制创建会话频率；会话 secret 只返回一次，服务端只存哈希。
-- 不返回任何 token 明文；日志经 `logger` 自动脱敏。
+- 不返回任何 token 明文；日志经 `logger` 自动脱敏（键名脱敏 + URL query 中的 `token/api_key/authorization` 等
+  值替换为 `[redacted]`，覆盖错误日志与接口应用运行日志预览）。
+- **SSRF（2026-11 加固）**：
+  - 外部 HTTP 调用（接口应用/定时通知）：先 DNS 解析并校验私网/环回/链路本地/保留段；随后**把校验通过的 IP
+    固定到连接层**（`node:http/https.request` 的 `lookup` 选项；Node 不暴露 undici Agent），Host 头与 TLS
+    `servername` 使用原域名；重定向 `manual`、最多 3 跳、跨源拒绝、每跳重新校验并重新钉 IP（BA-01）。
+  - 入站媒体下载：仅 http/https、禁 userinfo、主机白名单（iLink/CDN + 配置），生产默认拒绝本机/私网；
+    `redirect:'manual'` 每跳复验（BA-05）。
 - 安全响应头：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、
   `Referrer-Policy: no-referrer`、CSP：
-  `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'`
+  `default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'`
   （前端不得使用内联 `<script>`/`onclick=`；样式可用 `<style>`/内联 style 属性）。
 - 请求体上限 64KB；`MAX_TEXT_LENGTH` 校验中文字符数按 `String.length`。
 - 404/错误响应不得泄漏内部路径或堆栈（生产）。
 
 ## 9. 前端约定（web/）
 
-- 零构建、零外部 CDN：原生 ES Module + 手写 CSS；所有资源由本服务 `/assets/*` 提供。
+- 零构建、零外部 CDN：原生 ES Module + 手写 CSS；所有资源由本服务 `/assets/*` 提供。HTML 只引用
+  `/assets/admin.js`、`/assets/bind.js`、`/assets/docs.js` 三个入口脚本与 `/assets/style.css`，
+  其余模块通过相对 `import` 加载（新模块必须落在 `web/assets/**` 内，禁止裸包名/外部 URL）。
+- **管理后台模块结构（2026-11 起）**：
+  - `web/assets/admin.js`：entry（约 200 行）——事件绑定、视图加载器注册、末尾唯一 `init()`；
+  - `web/assets/admin/`：`constants.js`（常量/元数据/`MENU_VIEWS`）、`state.js`（全局 `state` 与 `els`）、
+    `core.js`（登录/登出/401/hash 路由/自动刷新/注册表）、`ui.js`（switch/行按钮/表格/分页/formField 等公共构建器）、
+    `templates.js`（模板语法帮助/Markdown 预览/请求响应区块）、`views/*.js`（概览/用户/分组/消息/广播/
+    接口应用/定时通知/运行配置 + 发送消息弹窗）；
+  - `web/assets/lib/`：纯函数（parse/settings/summary/media），可直接被 `node:test` import 单测。
+  - **依赖方向**：`admin.js → admin/views/** → {core, ui, state, templates, lib, common}`；`core` 不 import views
+    （由 entry 注册）；禁止循环 import（由 `tests/unit/frontend-modules.test.js` 强制）。
+  - **新增视图步骤**：① `admin.html` 增加 `<section class="view-section" data-view="x">`；② `constants.js` 的
+    `MENU_VIEWS` 增加菜单项；③ 新增 `admin/views/x.js` 导出 `loadX()`；④ entry 中
+    `registerViewLoaders('x', [...])` / `registerDataLoader('x', loadX)`；⑤ 视图私有 `state` 字段放 `state.js`。
 - **全站响应式（单套 DOM/CSS）**：后台、文档页、首页使用同一套侧栏/顶栏壳与共享
   `initSidebarDrawer`；JS 不判断屏幕宽度。桌面端侧栏常驻、窄屏 off-canvas 完全由 CSS 媒体查询切换，
   不存在独立的 PC/移动端页面或两套导航 DOM。
@@ -270,23 +324,37 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   - `/`：首页（公开绑定页）。品牌介绍 + 昵称输入 + "生成绑定二维码" 按钮；`/bind` 302 跳转到 `/`，不再重复提供页面；
     弹层/卡片展示二维码 SVG、状态文案（等待扫码/已扫码/请输入配对数字/刷新中/绑定成功）、
     配对数字输入框、重新生成、成功后的用户信息；移动端优先。
-  - `/admin`：管理后台。未登录显示登录表单；登录后：概览卡片、用户列表（搜索/状态筛选/
-    发消息/解绑/重连）、批量广播、消息记录（入站+出站）、运行配置。
+  - `/admin`：管理后台。未登录显示登录表单；登录后：概览、用户管理、用户分组、消息记录、广播、
+    接口应用（规则 + 定时通知）、运行配置（含安全卡片），hash 路由可直达。
   - `/docs`：API 文档页（推送 API 示例、curl、环境变量说明），内容与 `docs/API.md` 一致。
 - 统一 `fetch` 封装：JSON、错误 toast、401 跳登录；管理写请求自动加 `X-Requested-With`。
 - 中文界面，微信绿 `#07C160` 主色；无图片资源（用 CSS/emoji/SVG inline）。
-- 轮询：绑定状态 1s，后台数据 5s（页面隐藏时暂停）。
+- 轮询：绑定状态 1s；后台仅 4 个实时视图（概览/用户/分组/消息）5s 轮询，页面隐藏或弹窗打开时暂停。
+- 动态内容只允许 `textContent`/DOM 属性写入；禁止 `innerHTML`/`outerHTML`/内联事件（由
+  `tests/unit/frontend-modules.test.js` 全量扫描 `web/assets/**/*.js` 强制）。
 
-## 10. 测试策略（infra-dev 负责 e2e，backend-dev 负责单元）
+## 10. 测试策略
 
 - 单测（`tests/unit/`，`node --test`）：crypto 往返/篡改、rate-limiter 假时钟、
-  ilink.parseILinkJson 无损 ID、ilink 请求头/URL 对 mock、store CRUD 与加密落库。
+  ilink.parseILinkJson 无损 ID、ilink 请求头/URL 对 mock、store CRUD 与加密落库、HTTP 路由契约、
+  调度/保活/规则引擎/设置校验等。
+- **前端测试**（`tests/unit/`）：`frontend-pages.test.js`（页面结构、CSP、关键 id、契约 token；
+  源码断言通过 `readAllAssets()` 聚合全部模块，不绑定单文件）；`frontend-modules.test.js`
+  （import 路径存在、无环、入口可达、禁止 innerHTML/设备判断、entry 末尾唯一 init、entry ≤ 600 行）；
+  `frontend-lib.test.js`（`web/assets/lib/**` 纯函数行为单测）。
 - e2e（`tests/e2e/`）：启动 `mock/ilink-mock.mjs`（子进程，随机端口）+ 启动真实 app
   （子进程，随机端口、临时 DATA_DIR、显式 secret），通过 HTTP 全链路验证：
   绑定（wait→scaned→confirmed）、配对数字、二维码刷新、binded_redirect、发送（含 context_token
   回传断言、-2 重试、-14 处理）、入站消息落库与去重、解绑 notifyStop、鉴权失败、限流。
+- 浏览器冒烟（可选，需本机 Edge/Chrome）：`npm run test:ui` 以 headless 浏览器 + CDP 启动临时 app，
+  真实登录并遍历 7 个菜单视图、分组创建/删除、规则/定时编辑器、登出、绑定页/文档页，收集
+  Console/未捕获异常；无浏览器环境自动跳过（exit 0）。
 - 测试要求：确定性（禁用真实网络）；用 `waitFor(fn, timeout)` 轮询代替固定 sleep；
   每个测试独立临时目录；失败时打印服务端日志；全部测试在 90s 内跑完。
+- 规模基线（2026-11）：`npm test` 464 项（unit 373 + e2e 91；462 通过 + 2 项 POSIX-only 在 Windows 跳过）约 35s；
+  mock 自测 26 项；`npm run lint` 0 告警；
+  `npm run coverage` 输出 in-process 覆盖率（排除 `web/**` 与 `tests/**`，服务端源码 line 约 94.0%、
+  branch 约 77.2%、funcs 约 93.8%；CI 强制阈值 line 90 / branch 70 / funcs 85）。
 - `npm test` 必须同时跑 unit + e2e；`npm run test:unit` / `npm run test:e2e` 可单独跑。
 
 ## 11. Docker 约定（infra-dev）
@@ -311,6 +379,11 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   管理员密码提示、提示如何用 mock 完成绑定）。
 
 ## 12. 多媒体扩展（图片 / 视频 / 文件）
+
+> ⚠️ **历史设计记录**：§12–§16 中的「DB vX（additive migration）/ ALTER TABLE / 逐级迁移」描述的是
+> 当时的增量设计过程。**现行实现（schema v10 起）不再提供旧版本迁移**：启动时检测到非当前
+> schema 版本会直接失败（`db.js`），升级只能备份后使用空库重建。阅读升级/排障步骤时以
+> `README.md`「升级」章节与 `db.js` 实际行为为准。
 
 完整协议与 API 契约见 [`docs/MEDIA.md`](MEDIA.md)。架构增量：
 
@@ -422,7 +495,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
     窗口外 next 自动推进到窗口内）与 `daily`
     （每天 HH:mm，时区 `SCHEDULER_TIMEZONE`，用 Intl 计算下一次；服务启动时过期任务补跑一次）；
   - tick 扫描（`SCHEDULER_TICK_MS`）：取 `enabled=1 AND next_run_at<=now` 任务顺序执行，单任务异常不影响其他；
-  - 执行：复用 `app-rules` 的模板渲染/HTTP 调用（SSRF/超时/大小/重定向）与响应解析；成功按回复模板渲染，
+  - 执行：复用 `shared/**` 的模板渲染/HTTP 调用（SSRF/超时/大小/重定向）与响应解析（`scheduler.maxResponseBytes`/
+    `scheduler.allowedHosts` 缺省继承接口应用配置）；成功按回复模板渲染，
     失败时用兜底文案（为空则不发送）；目标用户（users/groups，active 去重、上限）逐个入队 outbox
     （`source='schedule'`），复用微信限流；写 `scheduled_task_logs`；
   - `runScheduledTaskNow(taskId,{dryRun})` 供管理端"测试运行/立即执行"复用；`start/stop` 幂等。
@@ -449,13 +523,85 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   `resetGroup()`、机密管理（scrypt 密码哈希 / AES Token 加密 / rotate/reset / 首启 bootstrap）；
   更新时校验→UPSERT→覆盖 `config`→调用运行时 hooks；事件只记录字段名/动作。
 - **运行时 hooks**：`keepalive.restart()`、`scheduler.restart()`、`app-rules` 引擎重启/启停、`logger.setLogLevel()`；
-  无法热更的字段（iLink/monitor/trustProxy/push.tickMs 等）标记 `restartRequired`。
+  大多数字段在请求/每轮时实时读取即**即时生效**；确实在启动时创建/无法热更的字段（push.rateLimit*、
+  media.maxBytes/inboundMaxConcurrent/inboundMaxQueue、server.trustProxy、monitor 两项）才标记 `restartRequired`
+  （2026-11 已逐字段校正，详见 `docs/SETTINGS.md` §7.2）。
 - **index.js**：db 初始化后、各引擎启动前 `settings.loadOverrides()`；启动后注册 hooks。
 - **api.js**：`GET/PATCH /api/admin/settings`、`POST /api/admin/settings/reset`（Cookie+CSRF+校验）；
   机密管理 `POST /api/admin/security/{password,password/reset,api-token/rotate,api-token/reset}`，
   GET settings 附带 `security` 摘要（来源/preview，永不回哈希/明文）。
 - **前端**：运行配置页改为可编辑分组表单（保存/恢复默认/已修改/需重启标记），保留 env-only 脱敏只读区。
 - **测试**：校验边界、覆盖/恢复默认、hooks 调用、API 鉴权与事件脱敏；e2e 覆盖修改生效与 reset。
+
+## 18. 模块化重构记录（2026-11）
+
+### 18.1 重构前后度量
+
+| 模块 | 重构前 | 重构后 | 说明 |
+| --- | --- | --- | --- |
+| `server/src/api.js` | 1895 行（69 个路由 + 校验 + 媒体 IO + 错误处理） | **87 行**（仅 `createApp()` 组合根） | 拆出 `http/**` 8 文件 + `routes/**` 11 文件，共 2097 行，最大单文件 203 行 |
+| `server/src/store.js` | 2126 行 / 107 个导出（9 个领域 + 映射 + 统计混在一起） | **23 行 façade** + `data/**` 13 文件 | 按域拆分（users/groups/keepalive/rules/scheduled/attachments/outbox/inbound/messages/events/stats + mappers/helpers）；`export *` 保持导出名零改动 |
+| `server/src/app-rules.js` | ~1744 行（模板引擎 + SSRF HTTP + 匹配 + 引擎） | **656 行** + `shared/**` 4 文件 | `shared/{http-client,template,response,http-execute}.js`；scheduler 不再依赖 app-rules 内部实现（BA-09） |
+| `web/assets/admin.js` | 5895 行 / 171 个顶层函数 | **198 行**（entry） | 拆出 `admin/**` 14 文件 + `lib/**` 4 文件，共约 6064 行 |
+| 前端编辑器 | 规则/定时编辑器各 ~768/567 行、重复 ~1335 行 | `views/app-rules.js` 927 行、`views/schedules.js` 657 行 + `admin/integrations/**` 6 文件 | F-04：公共块 0 重复 |
+| 前端测试 | `frontend-pages.test.js` 51 项（源码文本 grep，绑定单文件） | 57 项（`readAllAssets()` 聚合）+ modules 10 + lib 18 + 弹窗/焦点行为 4 | 测试总量 362 → 464 |
+
+**等价性**：纯搬迁/等价重构，对外契约/路由/中间件顺序/响应字段/文案不变；各轮后 `npm test` 全绿、
+`npm run test:ui` 真实浏览器冒烟全通过。重构实施前的完整审查报告见 `docs/CODE_REVIEW.md`（明细归档 `docs/review/`）。
+
+### 18.2 后端分层（依赖方向自上而下）
+
+```
+index.js（进程入口/生命周期）
+  └─ api.js（组合根：中间件顺序 + 挂载路由）
+       ├─ routes/*.js（按领域注册路由，使用 http/** 与领域模块）
+       ├─ http/middleware.js（安全头/no-store/body 解析/404/统一错误处理）
+       ├─ http/{helpers,views,validators,app-rule-validators,scheduled-validators}.js
+       ├─ http/{media-handlers,queue-service}.js
+       ├─ 领域模块：binding / monitor / dispatcher / keepalive / app-rules / scheduler / settings / auth / maintenance
+       │    └─ app-rules / scheduler → shared/**（http-client / template / response / http-execute）
+       └─ store.js（façade）→ data/** → db.js / crypto.js
+            基础层：config/logger/errors/rate-limiter；协议层：ilink.js / media.js
+```
+
+约定：新增 HTTP 接口放 `server/src/routes/<领域>.js` 并在 `api.js` 按既有顺序挂载；新增校验放
+`http/validators.js`（或对应领域校验文件）；错误统一抛 `AppError`/`badRequest` 等，由
+`http/middleware.js` 的 `errorHandler` 输出 `{ error: { code, message } }`。
+
+### 18.3 前端分层
+
+```
+admin.js（entry：事件绑定 + 视图/数据加载器注册 + init()）
+  └─ admin/views/*.js（视图逻辑 + 编辑器 + 列表渲染）
+       └─ { admin/core.js（认证/路由/刷新/注册表）, admin/ui.js（公共构建器）,
+            admin/state.js（全局 state/els）, admin/templates.js,
+            admin/constants.js, lib/**（纯函数）, common.js（fetch/modal/toast/poller） }
+```
+
+约定：新增视图按 §9「新增视图步骤」；公共构建器优先抽到 `ui.js`；可单测的纯逻辑放 `lib/**`；
+动态内容只用 `textContent`/DOM 属性，禁止 `innerHTML`（静态测试强制）。
+
+### 18.4 后续拆分建议（尚未实施）
+
+- `settings.js`（~758 行）：拆分 schema/validate/apply/secrets；`auth.js` 只依赖 secrets 子模块。
+- `scheduler.js`：计划计算（calc）与执行（tick）可再拆分；`app-rules.js` 引擎可再拆 match/extract。
+- 前端：`state` 按域拆分、`els` 下沉到各视图、视图子模块化（app-rules/schedules 的 editor/test/logs 未再拆）；
+  可选动态 `import()` 懒加载非默认视图。
+- 详见 `docs/CODE_REVIEW.md` 第 6 节路线图。
+
+## 19. 数据生命周期维护（maintenance.js，BA-18）
+
+进程内定时维护（默认启动 1 分钟后首跑、之后每天一次；`MAINTENANCE_*` 环境变量控制，见
+[`docs/UPGRADE.md`](UPGRADE.md) §8 与 `.env.example` 第十二节）：
+
+- **附件 GC**：删除 DB 中 `status='ready'` 但磁盘文件缺失的附件行（仍被 queued/sending outbox 引用的保留，
+  交由 dispatcher 失败处理）；删除 `media/inbound|outbound` 下无 DB 引用的孤儿文件（有最小文件年龄防误删）；
+  删除超过保留期且从未被任何 outbox 引用的管理端上传附件（行 + 文件）。
+- **日志保留**：`events` / `app_rule_logs` / `scheduled_task_logs` 按保留天数分批删除；`outbox` /
+  `inbound_messages` 属业务数据不自动删除。
+- 每批 `MAINTENANCE_BATCH_SIZE` 条 + 单事务；每轮输出清理计数日志；可选 `PRAGMA optimize` 与
+  `wal_checkpoint(TRUNCATE)`；`start()/stop()` 幂等，`index.js` 在 `closeDb()` 前停止。
+- 维护参数当前仅由 env 管理（后台运行配置暂未暴露，后续可并入 `SETTINGS_SCHEMA`）。
 
 
 

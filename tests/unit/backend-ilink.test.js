@@ -105,3 +105,8 @@ test('ilink.sanitizeBotAgent / createClientId', () => {
   assert.notEqual(a, b);
   assert.match(a, /^clawbridge-[0-9a-f-]{36}$/);
 });
+
+test('BA-10: 未使用的 getConfig/sendTyping 导出已移除（协议端点随后续需求再加回）', () => {
+  assert.equal('getConfig' in ilink, false);
+  assert.equal('sendTyping' in ilink, false);
+});

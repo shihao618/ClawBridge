@@ -35,6 +35,10 @@
  *   POST /__mock/accounts/{botId}/inbound-media        注入图片/文件/视频/语音入站媒体消息
  *   GET  /__mock/state               暴露 uploads[] / cdnFiles[] / sentMessages[].itemList
  *
+ * 本地占位页（非真实微信页面）：
+ *   GET  /mock-bind?qrcode=…         qrcode_img_content 指向的说明页：展示 qrcode 参数、说明这是
+ *                                    mock 模拟器，并提示用 /__mock/qr/... 控制面完成扫码/确认（不再 404）
+ *
  * 所有日志为单行 JSON（stdout），便于测试读取端口与排障。
  */
 import crypto from 'node:crypto';
@@ -140,11 +144,6 @@ function jsonSafe(value) {
   return value;
 }
 
-function digitsOf(value) {
-  const text = String(value ?? '');
-  return /^\d+$/.test(text) ? text : String(Math.trunc(Number(value) || 0));
-}
-
 // ---------------------------------------------------------------------------
 // 多媒体 / CDN 工具（协议见 docs/MEDIA.md §1/§2，mock 契约见 §9）
 // ---------------------------------------------------------------------------
@@ -160,10 +159,6 @@ function md5Hex(buffer) {
 }
 
 /** AES-128-ECB/PKCS7 密文长度（与明文长度对应）。 */
-function aes128EcbCipherSize(plainSize) {
-  return Math.floor(plainSize / 16) * 16 + 16;
-}
-
 function aes128EcbEncrypt(plaintext, key) {
   const cipher = crypto.createCipheriv('aes-128-ecb', key, null);
   cipher.setAutoPadding(true);
@@ -473,8 +468,6 @@ function resolveBaseUrl(req) {
 }
 
 const EXPIRABLE_STATUSES = new Set(['wait', 'scaned', 'need_verifycode']);
-const TERMINAL_STATUSES = new Set(['expired', 'confirmed', 'binded_redirect', 'verify_code_blocked']);
-
 function effectiveStatus(qr) {
   if (EXPIRABLE_STATUSES.has(qr.status) && Date.now() > qr.expiresAt) {
     qr.status = 'expired';
@@ -776,6 +769,28 @@ function sendJson(res, statusCode, payload) {
 
 function sendError(res, statusCode, code, message) {
   sendJson(res, statusCode, { error: { code, message } });
+}
+
+/** 返回 HTML（仅 /mock-bind 占位页使用）。 */
+function sendHtml(res, statusCode, html) {
+  if (res.headersSent) return;
+  res.writeHead(statusCode, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+    'Cache-Control': 'no-store',
+  });
+  res.end(html);
+}
+
+/** HTML 转义（占位页会回显 query 参数，避免注入）。 */
+function htmlEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[ch]);
 }
 
 function readJsonBody(req) {
@@ -1676,6 +1691,58 @@ async function handleControlReset(req, res) {
   sendJson(res, 200, { ok: true, state: snapshotState() });
 }
 
+/**
+ * GET /mock-bind?qrcode=…：二维码内容占位页。
+ *
+ * 真实微信会把 `qrcode_img_content` 当作二维码内容展示/跳转；mock 把它构造为
+ * `<baseUrl>/mock-bind?qrcode=…`，因此这里返回一个说明页（而非 404），讲清楚
+ * “这是本地模拟器、不能真正扫码”，并提示用控制面完成 扫码 → 确认。
+ */
+function handleMockBind(req, res, url) {
+  const qrcode = String(url?.searchParams?.get?.('qrcode') ?? '');
+  const matched = qrcode ? state.qrs.get(qrcode) : undefined;
+  const statusLine = matched
+    ? `当前 mock 状态：<code>${htmlEscape(matched.status)}</code>（二维码创建于 ${new Date(matched.createdAt).toISOString()}，有效期 ${Math.max(0, Math.round((matched.expiresAt - Date.now()) / 1000))}s）`
+    : '未在 mock 状态中找到该 qrcode（可能已过期或已被 reset）。';
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClawBridge mock 绑定占位页</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 2rem 1.25rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.65; }
+  main { max-width: 44rem; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 1rem; }
+  code { padding: .1em .35em; border-radius: 4px; background: rgba(127,127,127,.18); word-break: break-all; }
+  .note { padding: .75rem 1rem; border-left: 4px solid #07C160; background: rgba(7,193,96,.08); border-radius: 4px; }
+  ol { padding-left: 1.25rem; }
+  footer { margin-top: 2rem; font-size: .85rem; opacity: .7; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ClawBridge 本地模拟器 · 绑定占位页</h1>
+  <p class="note"><strong>这是 mock 模拟器页面，不是真实微信绑定页，也不能真的扫码绑定。</strong>
+  真实环境的二维码内容由微信返回；本地调试/演示时请用下方控制面接口模拟扫码。</p>
+  <p>二维码参数 <code>qrcode=${htmlEscape(qrcode || '(missing)')}</code></p>
+  <p>${statusLine}</p>
+  <p>继续模拟手机操作（控制面）：</p>
+  <ol>
+    <li><code>POST /__mock/qr/${htmlEscape(qrcode || '(missing)')}/scan</code> —— 模拟扫码</li>
+    <li><code>POST /__mock/qr/${htmlEscape(qrcode || '(missing)')}/confirm</code> —— 模拟确认绑定</li>
+    <li><code>GET /ilink/bot/get_qrcode_status?qrcode=…</code> —— 轮询状态（confirmed 后返回凭证）</li>
+  </ol>
+  <p>接口/状态说明见 <code>mock/README.md</code>；协议参考 <code>docs/PROTOCOL.md</code>。</p>
+  <footer>ClawBridge mock · 仅用于本地开发、Docker demo 与 e2e 测试，请勿部署到生产或公网。</footer>
+</main>
+</body>
+</html>
+`;
+  sendHtml(res, 200, html);
+}
+
 // ---------------------------------------------------------------------------
 // 路由
 // ---------------------------------------------------------------------------
@@ -1786,6 +1853,16 @@ async function dispatch(req, res) {
     }
     if (pathname.startsWith('/__mock/')) {
       sendError(res, 404, 'NOT_FOUND', `unknown mock endpoint: ${pathname}`);
+      return;
+    }
+
+    // 二维码内容占位页：qrcode_img_content 指向这里（真实微信会渲染扫码页，mock 返回说明页）
+    if (pathname === '/mock-bind') {
+      if (method !== 'GET') {
+        sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET');
+        return;
+      }
+      handleMockBind(req, res, url);
       return;
     }
 

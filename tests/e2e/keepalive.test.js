@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
-import { sleep, startE2E, waitFor } from '../helpers/e2e-env.mjs';
+import { expectNoChange, sleep, startE2E, waitFor } from '../helpers/e2e-env.mjs';
 
 const KEEPALIVE_WINDOW_MS = 8000;
 const KEEPALIVE_LEAD_MS = 3000;
@@ -176,8 +176,12 @@ test('未开启保活的用户不触发（窗口有效期内也不发送）', as
   assert.ok(age < KEEPALIVE_WINDOW_MS, `B 的窗口应仍有效（age=${age}ms）`);
 
   assert.equal(await keepaliveCountFor(userB), 0, '未开启保活的用户不应收到保活消息');
-  await sleep(900);
-  assert.equal(await keepaliveCountFor(userB), 0, '未开启保活的用户不应收到保活消息（等待后仍无）');
+  // 负向断言：计数稳定为 0 并在观察窗口内保持不变（替代固定 sleep）
+  assert.equal(
+    await expectNoChange(() => keepaliveCountFor(userB), { label: '未开启保活用户不触发', observeMs: 900 }),
+    '0',
+    '未开启保活的用户不应收到保活消息（观察窗口内仍无）',
+  );
   const messages = await e2e.adminGet(`/api/admin/messages?direction=outbound&userId=${userB.id}&limit=50`);
   assert.equal(messages.status, 200);
   assert.equal(
@@ -236,8 +240,12 @@ test('开启保活后：窗口临近时自动发送（{name} 渲染 / mock 收�
 
 test('同一会话窗口内不重复发送', async () => {
   assert.equal(await keepaliveCountFor(userA), 1, '上一用例应恰好发送 1 条保活');
-  await sleep(1600); // > 1 个 tick，仍在同一窗口内
-  assert.equal(await keepaliveCountFor(userA), 1, '同一窗口不应重复发送保活消息');
+  // 观察 > 1 个 tick：计数稳定为 1，同一窗口不重复发送
+  assert.equal(
+    await expectNoChange(() => keepaliveCountFor(userA), { label: '同一窗口不重复发送', observeMs: 1600 }),
+    '1',
+    '同一窗口不应重复发送保活消息',
+  );
 
   const messages = await e2e.adminGet(`/api/admin/messages?direction=outbound&userId=${userA.id}&limit=100`);
   assert.equal(messages.status, 200);
@@ -329,8 +337,11 @@ test('从未有入站消息的用户不触发保活', async () => {
   assert.equal(enable.status, 200);
   assert.equal(enable.json.user.keepaliveEnabled, true);
 
-  await sleep(1300);
-  assert.equal(await keepaliveCountFor(userD), 0, '从未入站的用户不应收到保活消息');
+  assert.equal(
+    await expectNoChange(() => keepaliveCountFor(userD), { label: '从未入站用户不触发', observeMs: 1300 }),
+    '0',
+    '从未入站的用户不应收到保活消息',
+  );
   const messages = await e2e.adminGet(`/api/admin/messages?direction=outbound&userId=${userD.id}&limit=50`);
   assert.equal(messages.status, 200);
   assert.equal((messages.json.items ?? []).length, 0, '用户 D 不应有出站消息');
@@ -354,8 +365,11 @@ test('窗口已过期不触发（过期后再开启也不发送）', async () =>
 
   const enable = await e2e.setUserKeepalive(userE.id, true);
   assert.equal(enable.status, 200);
-  await sleep(1300);
-  assert.equal(await keepaliveCountFor(userE), 0, '窗口已过期的用户不应收到保活消息');
+  assert.equal(
+    await expectNoChange(() => keepaliveCountFor(userE), { label: '窗口已过期不触发', observeMs: 1300 }),
+    '0',
+    '窗口已过期的用户不应收到保活消息',
+  );
 
   const detail = await e2e.waitUser(userE.id, (data) => data.user.keepaliveEnabled === true);
   assert.equal(detail.user.keepaliveLastSentAt, 0, '过期窗口开启保活后 keepaliveLastSentAt 应保持 0');
