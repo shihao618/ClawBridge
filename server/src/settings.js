@@ -30,9 +30,9 @@ const GROUPS = [
       { key: 'rateLimitWindowMs', label: '限流窗口（毫秒）', type: 'number', min: 1000, max: 86400000, restartRequired: true, description: '令牌桶窗口，修改后需重启生效' },
       { key: 'tickMs', label: '出站队列扫描间隔（毫秒）', type: 'number', min: 50, max: 60000, restartRequired: true, description: 'dispatcher worker 间隔，修改后需重启生效' },
       { key: 'maxAttempts', label: '最大重试次数', type: 'number', min: 1, max: 20, description: '单条消息发送失败后的最大尝试次数' },
-      { key: 'retryDelaysMs', label: '重试间隔（毫秒，逗号分隔）', type: 'numberArray', min: 0, max: 300000, description: '例如 5000,15000,30000,60000' },
       { key: 'apiRateLimitPerMinute', label: '对外 API 每分钟上限', type: 'number', min: 1, max: 10000, restartRequired: true, description: 'API 限流器在服务启动时创建，修改后需重启生效' },
       { key: 'maxTextLength', label: '消息最大长度', type: 'number', min: 1, max: 20000, description: '单条文本消息最大字符数' },
+      { key: 'retryDelaysMs', label: '重试间隔（毫秒，逗号分隔）', type: 'numberArray', min: 0, max: 300000, description: '例如 5000,15000,30000,60000' },
     ],
   },
   {
@@ -44,8 +44,8 @@ const GROUPS = [
       { key: 'leadMs', label: '首次提前量（毫秒）', type: 'number', min: 0, max: 604800000, description: '窗口剩余该时长时首次触发保活' },
       { key: 'repeatMs', label: '重复提醒间隔（毫秒）', type: 'number', min: 1000, max: 604800000, description: '用户未回复时，每隔该时长重复提醒直到窗口过期' },
       { key: 'tickMs', label: '扫描间隔（毫秒）', type: 'number', min: 1000, max: 3600000, description: '保活调度扫描间隔' },
-      { key: 'text', label: '保活文案', type: 'string', min: 1, max: 500, description: '支持 {name} 占位' },
       { key: 'maxPerTick', label: '单次最多处理用户数', type: 'number', min: 1, max: 1000, description: '防御性上限' },
+      { key: 'text', label: '保活文案', type: 'string', min: 1, max: 500, description: '支持 {name} 占位' },
     ],
   },
   {
@@ -56,8 +56,8 @@ const GROUPS = [
       { key: 'timeoutMs', label: '请求超时（毫秒）', type: 'number', min: 1000, max: 30000, description: '外部接口单次请求超时上限' },
       { key: 'maxResponseBytes', label: '响应大小上限（字节）', type: 'number', min: 1024, max: 10485760, description: '超过即判失败' },
       { key: 'workerConcurrency', label: '并发数', type: 'number', min: 1, max: 16, description: '规则执行 worker 并发数' },
-      { key: 'allowedHosts', label: '内网/本机白名单', type: 'stringArray', description: '允许访问私网的主机名/IP（数组或逗号分隔；空=只允许公网）' },
       { key: 'maxQueue', label: '队列上限', type: 'number', min: 1, max: 10000, description: '内存队列最大长度，满则丢弃' },
+      { key: 'allowedHosts', label: '内网/本机白名单', type: 'stringArray', description: '允许访问私网的主机名/IP（数组或逗号分隔；空=只允许公网）' },
     ],
   },
   {
@@ -66,9 +66,9 @@ const GROUPS = [
     fields: [
       { key: 'enabled', label: '全局开关', type: 'boolean', description: '关闭后不再自动执行定时任务' },
       { key: 'tickMs', label: '扫描间隔（毫秒）', type: 'number', min: 1000, max: 300000, description: '定时任务扫描间隔' },
+      { key: 'timeoutMs', label: '请求超时（毫秒）', type: 'number', min: 1000, max: 30000, description: '外部接口单次请求超时上限' },
       { key: 'timezone', label: '时区（IANA）', type: 'string', min: 1, max: 64, validator: 'timezone', description: '每日任务使用的时区，如 Asia/Shanghai' },
       { key: 'maxRecipients', label: '单次最多收件人数', type: 'number', min: 1, max: 1000, description: '超过按用户 id 截断' },
-      { key: 'timeoutMs', label: '请求超时（毫秒）', type: 'number', min: 1000, max: 30000, description: '外部接口单次请求超时上限' },
     ],
   },
   {
@@ -120,13 +120,13 @@ const GROUPS = [
     fields: [
       { key: 'loginBaseUrl', label: '登录服务地址', type: 'url', restartRequired: true, description: 'iLink 登录服务 Base URL（修改需重启）' },
       { key: 'defaultBaseUrl', label: '默认服务地址', type: 'url', restartRequired: true, description: 'iLink 业务服务 Base URL（修改需重启）' },
-      { key: 'cdnBaseUrl', label: '媒体 CDN 地址', type: 'url', restartRequired: true, description: '媒体上传/下载 CDN Base URL（修改需重启）' },
       { key: 'appId', label: 'App ID', type: 'string', min: 1, max: 100, restartRequired: true, description: 'iLink App ID（修改需重启）' },
-      { key: 'clientVersion', label: '客户端版本号', type: 'number', min: 1, max: 1000000000, restartRequired: true, description: '请求头中的 client version（修改需重启）' },
       { key: 'channelVersion', label: '渠道版本', type: 'string', min: 1, max: 50, restartRequired: true, description: '请求头中的 channel version（修改需重启）' },
       { key: 'botAgent', label: 'Bot Agent', type: 'string', min: 1, max: 100, restartRequired: true, description: '请求头中的 Bot-Agent（修改需重启）' },
       { key: 'botType', label: 'Bot 类型', type: 'string', min: 1, max: 20, restartRequired: true, description: 'iLink bot type（修改需重启）' },
+      { key: 'cdnBaseUrl', label: '媒体 CDN 地址', type: 'url', restartRequired: true, description: '媒体上传/下载 CDN Base URL（修改需重启）' },
       { key: 'routeTag', label: '路由标签', type: 'string', min: 0, max: 200, restartRequired: true, description: '可选路由标签（修改需重启）' },
+      { key: 'clientVersion', label: '客户端版本号', type: 'number', min: 1, max: 1000000000, restartRequired: true, description: '请求头中的 client version（修改需重启）' },
       { key: 'requestTimeoutMs', label: '请求超时（毫秒）', type: 'number', min: 1000, max: 120000, restartRequired: true, description: 'iLink 请求超时（修改需重启）' },
       { key: 'qrPollTimeoutMs', label: '二维码轮询超时（毫秒）', type: 'number', min: 1000, max: 300000, restartRequired: true, description: '扫码状态轮询超时（修改需重启）' },
       { key: 'longPollTimeoutMs', label: '长轮询超时（毫秒）', type: 'number', min: 1000, max: 300000, restartRequired: true, description: 'getupdates 长轮询超时（修改需重启）' },

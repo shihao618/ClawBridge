@@ -3595,8 +3595,22 @@ body.admin-authed .admin-main {
 
 .password-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 12px;
+}
+
+.password-form > .form-field:first-child {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 639px) {
+  .password-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .password-form > .form-field:first-child {
+    grid-column: auto;
+  }
 }
 
 .token-reveal {
