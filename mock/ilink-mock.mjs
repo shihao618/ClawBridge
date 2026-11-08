@@ -44,7 +44,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const STARTED_AT = Date.now();
 
 // ---------------------------------------------------------------------------

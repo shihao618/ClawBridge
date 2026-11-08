@@ -1385,10 +1385,10 @@ done</code></pre></div>
             <li><strong>{{noreply}}</strong>：模板渲染结果包含该指令时<strong>不回复</strong>（也不使用兜底文案；
               运行日志仍记录本次执行）。</li>
           </ul>
-          <div class="code-block"><pre><code>【未归寝】{{count data.data where CQZT=1}} 人
-{{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
-{{/each}}【已归寝】{{count data.data where CQZT=2}} 人
-{{#each data.data where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+          <div class="code-block"><pre><code>【天气概览】{{count data.data}} 个城市
+{{#each data.data where weather=雨}}{{@number}}. {{city}}：有雨 {{temperature}}℃
+{{/each}}【晴天城市】{{count data.data where weather=晴}} 个
+{{#each data.data where weather=晴}}{{@number}}. {{city}}：晴 {{temperature}}℃
 {{/each}}</code></pre></div>
           <ul class="doc-list">
             <li>空回复或接口失败时使用 <code class="code-inline">fallback_text</code>；回复文本按
@@ -1584,10 +1584,10 @@ curl "http://localhost:10380/api/admin/app-rule-logs?ruleId=rule_xxxxxxxx&status
             <li><strong>{{noreply}}</strong>：模板渲染结果包含该指令时<strong>不回复</strong>（也不使用兜底文案；
               运行日志仍记录本次执行）。</li>
           </ul>
-          <div class="code-block"><pre><code>【未归寝】{{count data.data where CQZT=1}} 人
-{{#each data.data where CQZT=1}}{{@number}}. {{XSXM}}（{{FJH}} 房）
-{{/each}}【已归寝】{{count data.data where CQZT=2}} 人
-{{#each data.data where CQZT=2}}{{@number}}. {{XSXM}}（{{FJH}} 房）
+          <div class="code-block"><pre><code>【天气概览】{{count data.data}} 个城市
+{{#each data.data where weather=雨}}{{@number}}. {{city}}：有雨 {{temperature}}℃
+{{/each}}【晴天城市】{{count data.data where weather=晴}} 个
+{{#each data.data where weather=晴}}{{@number}}. {{city}}：晴 {{temperature}}℃
 {{/each}}</code></pre></div>
           <ul class="doc-list">
             <li>接口失败 / 超时 / JSON 解析失败 / 模板为空：若配置了 <code class="code-inline">fallback_text</code>

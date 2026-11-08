@@ -59,7 +59,7 @@ function openTemplateSyntaxHelpModal() {
           item('Markdown 与模板变量可混用，例如 ', inline('- {{name}}：{{count rows}} 条'), '。预览不替换模板变量，最终文案请用「模板预览」。'),
           item('不回复（静默）：在模板中输出 ', inline('{{noreply}}'), '（通常放在 ', inline('{{#if}}'), ' 的空数据分支），例如 ', inline('{{#if rows}}有数据{{else}}{{noreply}}{{/if}}'), '；命中时不发送任何消息，也**不会使用兜底文案**。'),
         ),
-        code('# 今日归寝\n\n**未归寝**：{{count rows where CQZT=1}} 人\n- {{#each rows where CQZT=1}}{{@number}}. {{XSXM}}{{/each}}'),
+        code('# 今日天气\n\n**有雨城市**：{{count rows where weather=雨}} 个\n- {{#each rows where weather=雨}}{{@number}}. {{city}}{{/each}}'),
       ),
       section(
         '变量与模板根',
@@ -101,7 +101,7 @@ function openTemplateSyntaxHelpModal() {
           item('条件支持真值判断及 ', inline('='), ' / ', inline('!='), ' / ', inline('>'), ' / ', inline('>='), ' / ', inline('<'), ' / ', inline('<='), ' 比较；左侧可为字段或 ', inline('count 路径'), '。'),
           item('组合条件：', inline('not 条件'), '、', inline('条件A and 条件B'), '、', inline('条件A or 条件B'), '。'),
         ),
-        code('{{#if checks.inRange=false}}\n不在打卡范围：{{location.distance}} 米\n{{else if submitted=true}}\n状态：{{after.status}}\n{{else}}\n提示：{{reason}}\n{{/if}}'),
+        code('{{#if weather.rain}}\n出门带伞：{{city}} 有雨\n{{else if weather.temperature>30}}\n注意防暑：{{city}} {{weather.temperature}}℃\n{{else}}\n天气不错：{{city}} {{weather.text}}\n{{/if}}'),
       ),
       section(
         '默认值',
