@@ -1665,10 +1665,10 @@ function openAppRuleEditor(rule = null) {
     placeholder: '每行一个关键词，或用逗号分隔（1-10 个，每个最多 50 字）',
     value: Array.isArray(trigger.keywords) ? trigger.keywords.join('\n') : '',
   });
-  const regexInput = el('input', {
+  const regexInput = el('textarea', {
     id: 'rule-regex',
-    class: 'input',
-    type: 'text',
+    class: 'textarea',
+    rows: '3',
     placeholder: '例如：^查天气\\s*(?<city>\\S+)$',
     value: trigger.regexPattern || '',
   });
@@ -2015,15 +2015,7 @@ function openAppRuleEditor(rule = null) {
     formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path', { span: 2 }),
   );
   const fallbackField = formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback', { span: 2 });
-  const timeoutSection = formSection(
-    '请求超时',
-    '调用频率统一由微信默认发送限流控制（默认 7 条 / 5 分钟 / 账号），规则不再单独设置冷却或每小时上限；同一条消息对同一规则仍只执行一次。',
-    el(
-      'div',
-      { class: 'rule-form-grid' },
-      formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout', { span: 1 }),
-    ),
-  );
+  const timeoutField = formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout', { span: 1 });
   function syncRuleRequestMode() {
     const noRequest = getRequestMode() === 'none';
     setHidden(extractionSection, noRequest);
@@ -2031,7 +2023,7 @@ function openAppRuleEditor(rule = null) {
     setHidden(requestDetailsBox, noRequest);
     setHidden(responseGrid, noRequest);
     setHidden(fallbackField, noRequest);
-    setHidden(timeoutSection, noRequest);
+    setHidden(timeoutField, noRequest);
     if (noRequest) {
       replyTemplateInput.placeholder = '默认回复文本，例如：收到，我们会尽快处理。';
     } else {
@@ -2056,19 +2048,19 @@ function openAppRuleEditor(rule = null) {
       null,
       el(
         'div',
+        { class: 'form-field form-field--full' },
+        el('span', { class: 'form-label', text: '启用规则' }),
+        el(
+          'label',
+          { class: 'rule-inline-check rule-control-align' },
+          enabledInput,
+          el('span', { text: '启用' }),
+        ),
+      ),
+      el(
+        'div',
         { class: 'rule-form-grid' },
         formField('规则名称', nameInput, '必填，1-60 字符', 'rule-name-input', { span: 2 }),
-        el(
-          'div',
-          { class: 'form-field form-field--full' },
-          el('span', { class: 'form-label', text: '启用规则' }),
-          el(
-            'label',
-            { class: 'rule-inline-check rule-control-align' },
-            enabledInput,
-            el('span', { text: '启用' }),
-          ),
-        ),
         formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input', { span: 1 }),
       ),
       errorNode,
@@ -2112,9 +2104,13 @@ function openAppRuleEditor(rule = null) {
           }), '预览规则回复'),
         ),
       ),
-      fallbackField,
+      el(
+        'div',
+        { class: 'rule-form-grid' },
+        fallbackField,
+        timeoutField,
+      ),
     ),
-    timeoutSection,
   ];
 
   openTrackedModal({
@@ -2886,7 +2882,7 @@ async function openScheduleEditor(task = null) {
     el('span', { class: 'form-label', text: '每日生效时间段（可选，仅间隔计划）' }),
     el(
       'div',
-      { class: 'rule-form-grid' },
+      { class: 'form-grid-2' },
       formField('开始时间（HH:mm）', windowStartInput, null, 'schedule-window-start'),
       formField('结束时间（HH:mm）', windowEndInput, '结束分钟也包含；如 09:00–10:30 在 09:00 / 09:30 / 10:00 / 10:30 触发。支持跨午夜，如 22:00–06:00。', 'schedule-window-end'),
     ),

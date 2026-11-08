@@ -1458,7 +1458,9 @@ test('后台表单三列栅格：下拉占 1 列、输入占 2 列、长文本/�
   for (const token of ['form-field--wide', 'form-field--full', 'span: 2', 'span: 3']) {
     assert.ok(admin.includes(token), `admin.js 应使用三列栅格字段跨度：${token}`);
   }
-  assert.match(css, /\.rule-form-grid,[\s\S]*?\.schedule-plan-main-row\s*\{[\s\S]*?repeat\(3, minmax\(0, 1fr\)\)/, '主表单应为三列栅格');
+  assert.match(css, /\.rule-form-grid\s*\{[\s\S]*?repeat\(3, minmax\(0, 1fr\)\)/, '主表单应为三列栅格');
+  assert.match(css, /\.schedule-plan-main-row\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/, '计划类型/间隔、开始/结束时间应各占一半');
+  assert.match(css, /\.form-grid-2\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/, '两列字段行应为等宽两列');
   for (const token of ['.form-field--wide', '.form-field--full', '.settings-field--wide', '.settings-field--full']) {
     assert.ok(css.includes(token), `style.css 应定义字段跨度：${token}`);
   }

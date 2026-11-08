@@ -1372,10 +1372,16 @@ main {
   font-weight: 700;
 }
 
-.rule-form-grid,
-.schedule-plan-main-row {
+.rule-form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+  align-items: start;
+}
+
+.schedule-plan-main-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 14px;
   align-items: start;
 }
@@ -1390,6 +1396,19 @@ main {
 
 .form-field--full {
   grid-column: 1 / -1;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  align-items: start;
+}
+
+@media (max-width: 639px) {
+  .form-grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1023px) {
@@ -3604,10 +3623,10 @@ body.admin-authed .admin-main {
   }
 }
 
-/* 定时任务：计划类型与间隔/每日时间同一行（窄屏自动换行） */
+/* 定时任务：计划类型与间隔/每日时间各占一半；开始/结束时间同样各占一半 */
 .schedule-plan-main-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 14px;
   align-items: start;
 }
