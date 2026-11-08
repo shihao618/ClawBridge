@@ -1388,12 +1388,12 @@ test('表单行：2/3 个输入框等宽均分并占满一行', async () => {
   assert.ok(css.includes('.rule-form-grid .input-narrow'), '窄输入框应在表单行内填满列宽');
   assert.ok(css.includes('max-width: none'), '表单行内窄输入框不应限制最大宽度');
 });
-test('规则基本信息：名称/启用/优先级同一行且输入框对齐', async () => {
+test('规则/任务基本信息：启用项在名称上方，规则名称与优先级同一行', async () => {
   const [admin, css] = await Promise.all([readAsset('admin.js'), readAsset('style.css')]);
-  for (const token of ['rule-control-align', 'rule-priority-input', '启用规则', "formField('规则名称'"]) {
-    assert.ok(admin.includes(token), `规则基本信息应包含：${token}`);
+  for (const token of ['class: \'check-field\'', 'rule-priority-input', '启用规则', '启用任务', "formField('规则名称'", "formField('任务名称"]) {
+    assert.ok(admin.includes(token), `规则/任务基本信息应包含：${token}`);
   }
-  assert.ok(css.includes('.rule-control-align'), 'style.css 应提供启用控件对齐样式');
+  assert.ok(css.includes('.check-field'), 'style.css 应提供启用项卡片样式');
 });
 test('文档页：移动端目录使用侧边抽屉（与后台一致）', async () => {
   const [html, js, css] = await Promise.all([readPage('docs.html'), readAsset('docs.js'), readAsset('style.css')]);

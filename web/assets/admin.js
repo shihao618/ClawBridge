@@ -2047,14 +2047,14 @@ function openAppRuleEditor(rule = null) {
       '基本信息',
       null,
       el(
-        'div',
-        { class: 'form-field form-field--full' },
-        el('span', { class: 'form-label', text: '启用规则' }),
+        'label',
+        { class: 'check-field' },
+        enabledInput,
         el(
-          'label',
-          { class: 'rule-inline-check rule-control-align' },
-          enabledInput,
-          el('span', { text: '启用' }),
+          'span',
+          { class: 'check-field-text' },
+          el('strong', { text: '启用规则' }),
+          el('span', { class: 'form-hint', text: '停用后不再触发关键词规则；已有运行日志保留。' }),
         ),
       ),
       el(
@@ -3182,11 +3182,11 @@ async function openScheduleEditor(task = null) {
     formSection(
       '基本信息',
       null,
+      el('label', { class: 'check-field' }, enabledInput, el('span', { class: 'check-field-text' }, el('strong', { text: '启用任务' }), el('span', { class: 'form-hint', text: '停用后调度器不再自动执行，也可手动「立即执行」。' }))),
       el(
         'div',
         { class: 'rule-form-grid' },
-        formField('任务名称（必填，1-60 字符）', nameInput, null, 'schedule-name-input', { span: 2 }),
-        el('label', { class: 'check-field form-field--full' }, enabledInput, el('span', { class: 'check-field-text' }, el('strong', { text: '启用任务' }), el('span', { class: 'form-hint', text: '停用后调度器不再自动执行，也可手动「立即执行」。' }))),
+        formField('任务名称（必填，1-60 字符）', nameInput, null, 'schedule-name-input', { span: 3 }),
       ),
       errorNode,
     ),
