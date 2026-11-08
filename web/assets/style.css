@@ -3492,7 +3492,8 @@ body.admin-authed .admin-main {
 }
 
 .settings-number {
-  max-width: 200px;
+  width: 100%;
+  max-width: none;
 }
 
 .settings-array {

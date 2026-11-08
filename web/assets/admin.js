@@ -5037,7 +5037,7 @@ function buildSettingControl(group, field, type, value) {
   if (type === 'number') {
     const input = el('input', {
       id,
-      class: 'input input-narrow settings-number',
+      class: 'input settings-number',
       type: 'number',
       step: 'any',
       value: value === undefined || value === null ? '' : String(value),
