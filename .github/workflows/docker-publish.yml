@@ -41,7 +41,7 @@ jobs:
         run: node mock/selftest.mjs
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       # actions 供应链固定：所有 uses 固定到 commit SHA，并在行尾保留主版本注释；
       # 升级方式：git ls-remote https://github.com/<org>/<repo> refs/tags/<tag>（annotated tag 取 ^{} 行）
