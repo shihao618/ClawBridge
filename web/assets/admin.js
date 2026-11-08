@@ -1222,7 +1222,17 @@ function openTemplateSyntaxHelpModal() {
     title: '模板语法',
     size: 'wide',
     content: [
-      el('p', { class: 'form-hint', text: '规则回复与定时通知共用同一套模板语法；模板为空时直接使用解析结果。' }),
+      el('p', { class: 'form-hint', text: '规则回复与定时通知共用同一套模板语法；模板为空时直接使用解析结果。回复模板按 Markdown 发送。' }),
+      section(
+        'Markdown 格式',
+        el('ul', { class: 'template-help-list' },
+          item('微信客户端会渲染部分 Markdown：标题 ', inline('# 标题'), '、粗体 ', inline('**粗体**'), '、列表 ', inline('- 项目'), '、代码块、表格、引用。'),
+          item('换行直接按 Enter；单行换行会自动补 Markdown hard break，避免被客户端压成空格。'),
+          item('Markdown 与模板变量可混用，例如 ', inline('- {{name}}：{{count rows}} 条'), '。'),
+          item('不支持 Markdown 图片/链接卡片；链接会按文字显示。'),
+        ),
+        code('# 今日归寝\n\n**未归寝**：{{count rows where CQZT=1}} 人\n- {{#each rows where CQZT=1}}{{@number}}. {{XSXM}}{{/each}}'),
+      ),
       section(
         '变量与模板根',
         el('ul', { class: 'template-help-list' },
@@ -1271,6 +1281,154 @@ function buildTemplatePreviewButton(getValues, title = '模板预览') {
   const button = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '预览模板' });
   button.addEventListener('click', () => openTemplatePreviewModal({ getValues, title }));
   return button;
+}
+
+function buildMarkdownPreviewButton(getText, title = 'Markdown 预览') {
+  const button = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: 'Markdown 预览' });
+  button.addEventListener('click', () => openMarkdownPreviewModal({ getText, title }));
+  return button;
+}
+
+/** 安全渲染常见 Markdown（标题/粗体/斜体/列表/代码/引用/表格），全部走 textContent。 */
+function renderMarkdownPreview(markdown) {
+  const root = el('div', { class: 'markdown-preview' });
+  const lines = String(markdown ?? '').replace(/\r\n?/g, '\n').split('\n');
+  let i = 0;
+  let list = null;
+  const closeList = () => {
+    if (list) {
+      root.append(list);
+      list = null;
+    }
+  };
+  const inline = (target, text) => {
+    const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]*\))/g;
+    let last = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > last) target.append(text.slice(last, match.index));
+      const token = match[1];
+      if (token.startsWith('`')) target.append(el('code', { class: 'markdown-inline-code', text: token.slice(1, -1) }));
+      else if (token.startsWith('**')) target.append(el('strong', { text: token.slice(2, -2) }));
+      else if (token.startsWith('*')) target.append(el('em', { text: token.slice(1, -1) }));
+      else {
+        const link = /^\[([^\]]+)\]\(([^)]*)\)$/.exec(token);
+        target.append(link ? el('span', { class: 'markdown-link', text: link[1], title: link[2] }) : token);
+      }
+      last = match.index + token.length;
+    }
+    if (last < text.length) target.append(text.slice(last));
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed === '') {
+      closeList();
+      i += 1;
+      continue;
+    }
+    if (/^```/.test(trimmed)) {
+      closeList();
+      const codeLines = [];
+      i += 1;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      i += 1;
+      root.append(el('pre', { class: 'markdown-code-block' }, el('code', { text: codeLines.join('\n') })));
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      closeList();
+      const level = Math.min(6, heading[1].length);
+      root.append(el(`h${level}`, { class: 'markdown-heading', text: heading[2] }));
+      i += 1;
+      continue;
+    }
+    if (trimmed === '---' || trimmed === '***') {
+      closeList();
+      root.append(el('hr'));
+      i += 1;
+      continue;
+    }
+    const quote = /^>\s?(.*)$/.exec(trimmed);
+    if (quote) {
+      closeList();
+      const p = el('p');
+      inline(p, quote[1]);
+      root.append(el('blockquote', {}, p));
+      i += 1;
+      continue;
+    }
+    const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
+    const ordered = /^\s*(\d+)\.\s+(.*)$/.exec(line);
+    if (bullet || ordered) {
+      const tag = ordered ? 'ol' : 'ul';
+      if (!list || list.tagName.toLowerCase() !== tag) {
+        closeList();
+        list = el(tag, { class: 'markdown-list' });
+      }
+      const li = el('li');
+      inline(li, ordered ? ordered[2] : bullet[1]);
+      list.append(li);
+      i += 1;
+      continue;
+    }
+    closeList();
+    // 简单表格：表头 + 分隔行 + 数据行
+    if (trimmed.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*\|?\s*$/.test(lines[i + 1])) {
+      const splitRow = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+      const table = el('table', { class: 'markdown-table' });
+      const thead = el('thead');
+      const headRow = el('tr');
+      for (const cell of splitRow(line)) {
+        const th = el('th');
+        inline(th, cell);
+        headRow.append(th);
+      }
+      thead.append(headRow);
+      table.append(thead);
+      i += 2;
+      const tbody = el('tbody');
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
+        const tr = el('tr');
+        for (const cell of splitRow(lines[i])) {
+          const td = el('td');
+          inline(td, cell);
+          tr.append(td);
+        }
+        tbody.append(tr);
+        i += 1;
+      }
+      table.append(tbody);
+      root.append(table);
+      continue;
+    }
+    const p = el('p');
+    inline(p, trimmed);
+    root.append(p);
+    i += 1;
+  }
+  closeList();
+  if (root.childElementCount === 0) root.append(el('p', { class: 'form-hint', text: '（模板为空）' }));
+  return root;
+}
+
+function openMarkdownPreviewModal({ getText, title = 'Markdown 预览' } = {}) {
+  const text = typeof getText === 'function' ? String(getText() ?? '') : '';
+  const preview = renderMarkdownPreview(text);
+  openTrackedModal({
+    title,
+    size: 'wide',
+    content: [
+      el('p', { class: 'form-hint', text: '以下为本地 Markdown 预览，不会发送消息；微信客户端会渲染标题、粗体、列表、代码块、表格等常见语法。' }),
+      preview,
+    ],
+    actions: [{ label: '关闭', class: 'btn btn-secondary' }],
+  });
 }
 
 /** 离线模板预览：用粘贴的示例响应调用后端真实模板引擎，不访问外部接口。 */
@@ -1934,11 +2092,12 @@ function openAppRuleEditor(rule = null) {
       '响应解析与回复',
       '请求模式按响应类型/路径解析后渲染回复模板；不请求模式直接使用「回复模板 / 默认文本」。',
       responseGrid,
-      formField('回复模板 / 不请求时默认文本', replyTemplateInput, '请求模式：模板为空时直接使用解析结果；支持变量、循环、条件判断与 default。不请求模式：填写一段默认回复文本（必填）。', 'rule-reply-template'),
+      formField('回复模板（Markdown / 默认文本）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；请求模式可用 {{变量}}，不请求模式直接作为默认回复文本。', 'rule-reply-template'),
       el('div', { class: 'form-row-between' },
-        el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看完整规则。' }),
+        el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看变量与 Markdown 规则。' }),
         el('div', { class: 'template-tools' },
           buildTemplateSyntaxHelpButton(),
+          buildMarkdownPreviewButton(() => replyTemplateInput.value, 'Markdown 预览'),
           buildTemplatePreviewButton(() => ({
             responseType: responseTypeSelect.value,
             responsePath: responsePathInput.value.trim(),
@@ -3067,11 +3226,12 @@ async function openScheduleEditor(task = null) {
         formField('响应类型', responseTypeSelect, null, 'schedule-response-type'),
         formField('JSON 路径', responsePathInput, 'response.type=json 时按点路径取值。', 'schedule-response-path'),
       ),
-      formField('通知模板', replyTemplateInput, '模板为空时直接使用解析结果；支持变量、循环、条件判断与 default。', 'schedule-reply-template'),
+      formField('通知模板（Markdown）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；可混用 {{变量}}。', 'schedule-reply-template'),
       el('div', { class: 'form-row-between' },
-        el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看完整规则。' }),
+        el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看变量与 Markdown 规则。' }),
         el('div', { class: 'template-tools' },
           buildTemplateSyntaxHelpButton(),
+          buildMarkdownPreviewButton(() => replyTemplateInput.value, 'Markdown 预览'),
           buildTemplatePreviewButton(() => ({
             responseType: responseTypeSelect.value,
             responsePath: responsePathInput.value.trim(),

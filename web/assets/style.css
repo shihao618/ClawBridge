@@ -4043,6 +4043,113 @@ body.admin-authed .admin-main {
 .template-preview-result[hidden] {
   display: none;
 }
+
+/* Markdown 模板预览 */
+.markdown-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-preview .markdown-heading {
+  margin: 2px 0;
+  line-height: 1.35;
+}
+
+.markdown-preview h1.markdown-heading { font-size: 22px; }
+.markdown-preview h2.markdown-heading { font-size: 19px; }
+.markdown-preview h3.markdown-heading { font-size: 17px; }
+.markdown-preview h4.markdown-heading,
+.markdown-preview h5.markdown-heading,
+.markdown-preview h6.markdown-heading { font-size: 15px; }
+
+.markdown-preview p {
+  margin: 0;
+}
+
+.markdown-preview .markdown-list {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.markdown-preview .markdown-list li {
+  margin: 2px 0;
+}
+
+.markdown-preview blockquote {
+  margin: 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--wechat-green);
+  background: var(--bg-soft);
+  color: var(--text-secondary);
+}
+
+.markdown-preview blockquote p {
+  margin: 0;
+}
+
+.markdown-preview .markdown-code-block {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.markdown-preview .markdown-inline-code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.markdown-preview .markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown-preview .markdown-table th,
+.markdown-preview .markdown-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-preview .markdown-table th {
+  background: var(--bg-soft);
+}
+
+.markdown-preview .markdown-link {
+  color: var(--link, var(--wechat-green-dark));
+  text-decoration: underline;
+}
 /* 回复模板语法帮助 */
 .template-tools {
   display: flex;

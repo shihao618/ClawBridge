@@ -7,7 +7,7 @@
 ## 0. 范围与原则
 
 - 任务由后台配置：名称、启用、计划（间隔 / 每日定时）、目标（指定用户/指定分组）、
-  请求（GET/POST、URL、Header、Body 模板）、响应解析（JSON 路径/文本）、回复模板与兜底文案。
+  请求（GET/POST、URL、Header、Body 模板）、响应解析（JSON 路径/文本）、Markdown 通知模板与兜底文案。
 - 调度器在服务进程内定时扫描（默认每 15s），到点执行一次 → 渲染文本 → 入队 outbox（source=schedule）
   → 由现有发送队列按微信限流投递；不绕过限流。
 - 默认时区 `Asia/Shanghai`（可配置）；间隔任务从「上次执行时间 + 间隔」计算下一次；
@@ -197,7 +197,7 @@ POST   /api/admin/template-preview                   → 200 { responseText, rep
    - 计划：类型（间隔 / 每日定时）+ 间隔分钟或 HH:mm 时间；间隔可另选「每日生效时间段」（HH:mm–HH:mm，留空不限，支持跨午夜）；展示时区；
    - 目标：指定用户 / 指定分组（复选框列表，带全选/清空）；
    - 请求：方法 GET/POST、URL 模板、Header（保留/重设/清空，值加密不回显）、Body 模板（仅 POST 显示；GET 参数写在 URL）；
-   - 响应：类型 JSON/文本、JSON 路径、通知模板（`{{path}}`/`{{response}}`/`{{raw}}`）、失败兜底文案；
+   - 响应：类型 JSON/文本、JSON 路径、Markdown 通知模板（`{{path}}`/`{{response}}`/`{{raw}}`）、失败兜底文案；
    - 超时；
    - 表单校验与后端错误展示。
 3. 「测试运行」弹窗：真实调用接口并展示实际请求（Header 只显示名称）、HTTP/耗时、响应预览、响应头诊断、

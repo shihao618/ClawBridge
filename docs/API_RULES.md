@@ -187,6 +187,8 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 - 回复模板 `reply_template`：使用 `{{路径}}` 占位；`{{reply}}` 表示模板根/响应对象的 `reply` 字段
   （空路径时解析器会优先使用该字段）；内置 `{{response}}`=解析后的文本值、
   `{{raw}}`=原始响应文本；为空时直接用解析结果。
+- **回复模板按 Markdown 发送**：支持标题、粗体、列表、代码块、表格等常见语法（微信客户端会渲染部分 Markdown）。
+  不请求模式的默认文本同样按 Markdown 发送；行内换行可直接按 Enter，出站会补 Markdown hard break。
 - **列表渲染**（数组数据一次性拼接）：`{{count 路径}}` 输出数组/对象长度；`{{#each 路径}}...{{/each}}`
   对内层逐项渲染，内层可用当前项字段 `{{字段}}`（当前项没有该字段时依次回退父级/根响应）、`{{@index}}`（从 0）、
   `{{@number}}`（从 1）。支持 `where 字段=值` / `where 字段!=值` 过滤（值可加引号）。

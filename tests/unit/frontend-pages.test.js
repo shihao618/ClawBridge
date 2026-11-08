@@ -993,6 +993,9 @@ test('响应模板：条件判断、默认值与离线预览入口', async () =>
   ]);
   for (const token of [
     'buildTemplatePreviewButton',
+    'buildMarkdownPreviewButton',
+    'markdown-preview',
+    'Markdown 预览',
     'buildTemplateSyntaxHelpButton',
     'openTemplatePreviewModal',
     'openTemplateSyntaxHelpModal',
