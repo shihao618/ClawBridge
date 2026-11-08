@@ -1672,8 +1672,8 @@ function openAppRuleEditor(rule = null) {
     placeholder: '例如：^查天气\\s*(?<city>\\S+)$',
     value: trigger.regexPattern || '',
   });
-  const matchKeywordField = formField('关键词', keywordsInput, '匹配方式为「包含 / 全等」时使用，大小写不敏感。', 'rule-keywords', { span: 2 });
-  const matchRegexField = formField('正则表达式', regexInput, '匹配方式为「正则」时使用（u flag，保存时校验合法性）。', 'rule-regex', { span: 2 });
+  const matchKeywordField = formField('关键词', keywordsInput, '匹配方式为「包含 / 全等」时使用，大小写不敏感。', 'rule-keywords', { span: 3 });
+  const matchRegexField = formField('正则表达式', regexInput, '匹配方式为「正则」时使用（u flag，保存时校验合法性）。', 'rule-regex', { span: 3 });
   function syncMatchVisibility() {
     const isRegex = matchModeSelect.value === 'regex';
     setHidden(matchKeywordField, isRegex);
@@ -1960,7 +1960,7 @@ function openAppRuleEditor(rule = null) {
 
   const extractionConfigField = el(
     'div',
-    { class: 'form-field form-field--wide' },
+    { class: 'form-field form-field--full' },
     el('span', { class: 'form-label', text: '提取配置' }),
     extractionConfigBox,
   );
@@ -1970,7 +1970,7 @@ function openAppRuleEditor(rule = null) {
     el(
       'div',
       { class: 'rule-form-grid' },
-      formField('提取模式', extractionModeSelect, null, 'rule-extraction-mode'),
+      formField('提取模式', extractionModeSelect, null, 'rule-extraction-mode', { span: 3 }),
       extractionConfigField,
     ),
   );
@@ -2078,7 +2078,7 @@ function openAppRuleEditor(rule = null) {
       el(
         'div',
         { class: 'rule-form-grid' },
-        formField('匹配方式', matchModeSelect, null, 'rule-match-mode', { span: 1 }),
+        formField('匹配方式', matchModeSelect, null, 'rule-match-mode', { span: 3 }),
         matchKeywordField,
         matchRegexField,
         requestModeField,
