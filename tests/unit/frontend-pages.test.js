@@ -1468,6 +1468,10 @@ test('后台表单三列栅格：下拉占 1 列、输入占 2 列、长文本/�
   }
   assert.match(css, /\.settings-fields\s*\{[\s\S]*?display:\s*flex[\s\S]*?flex-wrap:\s*wrap/, '运行配置行应使用自动填满的 flex 布局');
   assert.match(css, /\.settings-field\s*\{[\s\S]*?flex:\s*1 1 calc\(\(100% - 36px\) \/ 3\)/, '运行配置字段应按行内数量自动均分');
+  for (const token of ['ADVANCED_SETTINGS_KEYS', 'settings-advanced', 'binding.verifyTimeoutMs', 'media.uploadTimeoutMs', 'ilink.routeTag']) {
+    assert.ok(admin.includes(token) || css.includes(token), `运行配置应包含高级设置折叠：${token}`);
+  }
+  assert.match(css, /\.settings-advanced-summary\s*\{[\s\S]*?cursor:\s*pointer/, '高级设置应可折叠展开');
   assert.match(css, /@media \(max-width: 1023px\)[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/, '平板应降为两列');
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/, '手机应降为单列');
 });

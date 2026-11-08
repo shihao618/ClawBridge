@@ -33,6 +33,14 @@ import {
 const POLL_INTERVAL_MS = 5000;
 const PAGE_SIZE = 20;
 const MAX_TEXT_LENGTH = 4000;
+const ADVANCED_SETTINGS_KEYS = new Set([
+  'binding.verifyTimeoutMs',
+  'binding.networkErrorLimit',
+  'binding.pollGapMs',
+  'media.uploadTimeoutMs',
+  'ilink.routeTag',
+  'ilink.clientVersion',
+]);
 
 const USER_STATUS_META = {
   active: { label: '活跃', className: 'badge-success' },
@@ -5157,6 +5165,9 @@ function renderSettings() {
       if (key === 'media.allowedImageMime') {
         fieldsBox.append(el('div', { class: 'settings-row-break', 'aria-hidden': 'true' }));
       }
+      if (key === 'ilink.requestTimeoutMs') {
+        fieldsBox.append(el('div', { class: 'settings-row-break', 'aria-hidden': 'true' }));
+      }
       fieldsBox.append(
         el(
           'div',
@@ -5181,7 +5192,29 @@ function renderSettings() {
         ),
       );
     }
-    card.append(fieldsBox);
+    const advancedNodes = [...fieldsBox.querySelectorAll('[data-setting-field]')].filter((node) =>
+      ADVANCED_SETTINGS_KEYS.has(node.dataset.settingField),
+    );
+    if (advancedNodes.length) {
+      const advancedFields = el('div', { class: 'settings-fields' });
+      for (const node of advancedNodes) advancedFields.append(node);
+      card.append(
+        fieldsBox,
+        el(
+          'details',
+          { class: 'settings-advanced' },
+          el(
+            'summary',
+            { class: 'settings-advanced-summary' },
+            el('span', { class: 'settings-advanced-title', text: '高级设置' }),
+            el('span', { class: 'form-hint', text: '低频参数，展开后修改' }),
+          ),
+          advancedFields,
+        ),
+      );
+    } else {
+      card.append(fieldsBox);
+    }
     els.settingsGroups.append(card);
   }
   syncAllSettingFieldStates();

@@ -3458,6 +3458,35 @@ body.admin-authed .admin-main {
   padding: 0;
 }
 
+.settings-advanced {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.settings-advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.settings-advanced-summary:hover {
+  color: var(--text);
+}
+
+.settings-advanced[open] .settings-advanced-summary {
+  margin-bottom: 10px;
+}
+
+.settings-advanced .settings-fields {
+  margin-top: 4px;
+}
+
 @media (max-width: 639px) {
   .settings-field--half {
     flex-basis: 100%;
