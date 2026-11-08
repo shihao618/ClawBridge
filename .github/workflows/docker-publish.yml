@@ -48,7 +48,7 @@ jobs:
       # 或 GitHub API /repos/<org>/<repo>/git/ref/tags/<tag>，把新 SHA 与注释一起更新。
       # .github/dependabot.yml 的 github-actions 生态每周检查并提 PR（SHA pin 后仍能收到更新）。
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
