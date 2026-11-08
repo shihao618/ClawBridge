@@ -40,9 +40,18 @@ jobs:
       - name: Lint (ESLint)
         run: npm run lint
 
+      # 文档值级一致性（版本号/env/设置字段/API 端点/相对链接/质量表命令），零依赖只读检查
+      - name: Docs consistency (doc-lint)
+        run: npm run doc:lint
+
       # coverage 运行的是同一套 unit + e2e 测试，并强制执行覆盖率阈值（line 90 / branch 70 / funcs 85）
       - name: Unit + e2e tests (coverage gate)
         run: npm run coverage
 
       - name: Mock protocol selftest
         run: node mock/selftest.mjs
+
+      # e2e 连跑稳定性（INF-07）：固定 --test-concurrency=1 串行跑 3 次，任一次失败即红。
+      # 用于拦截 e2e 的偶发时序回归（端口探测/sleep/协议违规等）；本地可用 `npm run e2e:stability`。
+      - name: e2e stability (3 serial runs)
+        run: npm run e2e:stability -- --runs=3 --concurrency=1

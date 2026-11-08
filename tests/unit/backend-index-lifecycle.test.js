@@ -39,7 +39,7 @@ async function findMockAccount(e2e, botId) {
 }
 
 test('SIGTERM 优雅退出：退出码 0、优雅退出日志、monitor notifystop', { skip: POSIX_ONLY }, async () => {
-  const e2e = await startE2E({ appEnv: { LOG_LEVEL: 'info' } });
+  const e2e = await startE2E();
   try {
     const bound = await bindUserAndWaitMonitor(e2e);
     const pid = e2e.appProc.pid;
@@ -69,7 +69,7 @@ test('SIGTERM 优雅退出：退出码 0、优雅退出日志、monitor notifyst
 });
 
 test('SIGINT 优雅退出：退出码 0 且日志与 SIGTERM 路径一致', { skip: POSIX_ONLY }, async () => {
-  const e2e = await startE2E({ appEnv: { LOG_LEVEL: 'info' } });
+  const e2e = await startE2E();
   try {
     await bindUserAndWaitMonitor(e2e);
     const result = await e2e.terminateApp({ signal: 'SIGINT', timeoutMs: 25000 });
@@ -83,7 +83,7 @@ test('SIGINT 优雅退出：退出码 0 且日志与 SIGTERM 路径一致', { sk
 });
 
 test('终止兜底：terminateApp 返回退出信息、进程退出、临时目录被清理（跨平台）', async () => {
-  const e2e = await startE2E({ appEnv: { LOG_LEVEL: 'error' } });
+  const e2e = await startE2E();
   const dataDir = e2e.dataDir;
   try {
     const result = await e2e.terminateApp({ signal: 'SIGTERM', timeoutMs: 25000 });

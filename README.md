@@ -7,7 +7,7 @@
 > `@tencent-weixin/openclaw-weixin@2.4.10` 的协议实现扫码绑定、长轮询收消息、文本消息发送，
 > 不依赖任何第三方微信协议服务或个人号 Hook。
 >
-> **当前版本 2.0.0**：数据库 schema **v10**，旧版本数据库不再兼容，启动时直接拒绝；请备份后使用当前版本。
+> **当前版本 2.1.0**：数据库 schema **v10**，旧版本数据库不再兼容，启动时直接拒绝；请备份后使用当前版本。
 
 ---
 
@@ -61,51 +61,51 @@
 
 | 公开绑定页（移动端） | 绑定成功（移动端） |
 | --- | --- |
-| ![绑定页](screenshots/bind-mobile.png) | ![绑定成功](screenshots/bind-mobile-confirmed.png) |
+| ![绑定页](screenshots/bind-mobile.webp) | ![绑定成功](screenshots/bind-mobile-confirmed.webp) |
 
 | 管理后台（菜单模式·概览） | 管理后台（用户管理） |
 | --- | --- |
-| ![管理后台菜单概览](screenshots/admin-menu-overview.png) | ![用户管理](screenshots/admin-menu-users.png) |
+| ![管理后台菜单概览](screenshots/admin-menu-overview.webp) | ![用户管理](screenshots/admin-menu-users.webp) |
 
 | 管理后台（用户分组） | 管理后台（接口应用） |
 | --- | --- |
-| ![用户分组](screenshots/admin-menu-groups.png) | ![接口应用](screenshots/admin-menu-app-rules.png) |
+| ![用户分组](screenshots/admin-menu-groups.webp) | ![接口应用](screenshots/admin-menu-app-rules.webp) |
 
 | 接口应用：规则运行日志弹窗 | 定时通知：按间隔 + 每日生效时间段 |
 | --- | --- |
-| ![规则运行日志](screenshots/admin-app-rules-logs-modal.png) | ![定时通知时间段](screenshots/admin-schedule-window.png) |
+| ![规则运行日志](screenshots/admin-app-rules-logs-modal.webp) | ![定时通知时间段](screenshots/admin-schedule-window.webp) |
 
 | 管理后台（响应式侧栏） | 推送 API 文档页 |
 | --- | --- |
-| ![移动端菜单](screenshots/admin-menu-mobile.png) | ![API 文档](screenshots/docs-page.png) |
+| ![移动端菜单](screenshots/admin-menu-mobile.webp) | ![API 文档](screenshots/docs-page.webp) |
 
 | 多媒体：发送弹窗（图片/视频/文件 + caption） | 消息记录：图片缩略图 / 视频播放 / 文件下载 |
 | --- | --- |
-| ![发送多媒体](screenshots/admin-media-send.png) | ![多媒体消息记录](screenshots/admin-media-messages.png) |
+| ![发送多媒体](screenshots/admin-media-send.webp) | ![多媒体消息记录](screenshots/admin-media-messages.webp) |
 
 | 用户分组管理（多标签 / 计数 / 群发） | 入站消息 API 文档 |
 | --- | --- |
-| ![用户分组](screenshots/admin-groups.png) | ![入站消息 API](screenshots/docs-inbound-api.png) |
+| ![用户分组](screenshots/admin-groups.webp) | ![入站消息 API](screenshots/docs-inbound-api.webp) |
 
 | 接口应用：规则管理（关键词触发外部接口） | 接口应用：测试运行（dry-run，不发送） |
 | --- | --- |
-| ![接口应用](screenshots/admin-app-rules.png) | ![测试运行](screenshots/admin-app-rules-test.png) |
+| ![接口应用](screenshots/admin-app-rules.webp) | ![测试运行](screenshots/admin-app-rules-test.webp) |
 
 | 24h 会话保活开关 | 接口应用文档 |
 | --- | --- |
-| ![会话保活](screenshots/admin-keepalive.png) | ![接口应用文档](screenshots/docs-app-rules.png) |
+| ![会话保活](screenshots/admin-keepalive.webp) | ![接口应用文档](screenshots/docs-app-rules.webp) |
 
 | 定时通知（任务列表） | 定时通知（测试运行，不发送） |
 | --- | --- |
-| ![定时通知](screenshots/admin-app-rules-schedule.png) | ![定时通知测试](screenshots/admin-app-rules-schedule-test.png) |
+| ![定时通知](screenshots/admin-app-rules-schedule.webp) | ![定时通知测试](screenshots/admin-app-rules-schedule-test.webp) |
 
 | 运行配置（后台可改，DB 持久化） | 定时通知文档 |
 | --- | --- |
-| ![运行配置](screenshots/admin-settings.png) | ![定时通知文档](screenshots/docs-scheduled-tasks.png) |
+| ![运行配置](screenshots/admin-settings.webp) | ![定时通知文档](screenshots/docs-scheduled-tasks.webp) |
 
 | 安全设置（管理密码 / API Token） | 运行配置（.env 仅剩必须项） |
 | --- | --- |
-| ![安全设置](screenshots/admin-security.png) | ![运行配置](screenshots/admin-settings.png) |
+| ![安全设置](screenshots/admin-security.webp) | ![运行配置](screenshots/admin-settings.webp) |
 
 > 截图来自本地演示模式（mock 微信 API + mock CDN/外部接口，自动确认绑定），未连接真实微信。
 
@@ -508,12 +508,14 @@ npm start                 # 本地启动（默认 http://127.0.0.1:10380，自�
 npm test                  # 单元测试 + e2e（需先安装依赖）
 npm run test:unit         # 单元测试（config/crypto/ilink 客户端/store/限流/API 契约/生命周期等）
 npm run test:e2e          # 端到端：真实 app 进程 + mock 微信 API，全 HTTP 黑盒
+npm run e2e:stability     # e2e 连跑稳定性（默认串行跑 3 次并汇总，CI 使用）
 npm run test:ui           # 浏览器冒烟测试（本机 Edge/Chrome headless + CDP，无浏览器时自动跳过）
 npm run coverage          # 单元 + e2e + 覆盖率报告（排除 web/tests；CI 阈值 line 90 / branch 70 / funcs 85）
 npm run lint              # ESLint 静态检查（含 CI；零告警）
+npm run doc:lint          # 文档值级一致性检查（版本/环境变量/设置字段/API 端点/链接/质量表命令）
+npm run screenshots       # 用演示数据重新生成 README 截图（WebP；headless Edge/Chrome，可选）
 npm run mock              # 单独启动模拟微信 API（默认 127.0.0.1:3100）
 npm run smoke:mock        # mock 自身自测（26 项协议行为断言）
-node scripts/screenshots.mjs  # 用演示数据重新生成 README 截图（headless Edge/Chrome，可选）
 ```
 
 本地不带 Docker 的演示：
@@ -559,12 +561,14 @@ Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editor
 | 后端/核心单测（config、crypto、iLink 客户端、store 与拆分后的 data/**、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载与有界并发、入站下载 URL 白名单、schema 版本校验、数据库索引、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎与 SSRF IP 固定、shared 模板/响应管线、定时通知调度与生效时间段、优雅退出 drain、数据维护 GC、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互/焦点陷阱/Tab 语义、响应式布局、前端模块/纯函数/弹窗行为、日志脱敏、错误映射） | `npm run test:unit` | 373 项（371 通过 + 2 项 POSIX-only 在 Windows 跳过） |
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token；子进程 env 白名单、稳定等待断言、mock 违规统一断言） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
 | 全量测试（unit + e2e） | `npm test` | 464 项（462 通过 + 2 项 POSIX-only 跳过，约 35s） |
-| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line 94.02% / branch 77.15% / funcs 93.72% |
+| e2e 连跑稳定性（串行 3 次，CI 门禁） | `npm run e2e:stability` | 3/3 次通过（每次 91 项，单次约 127s） |
+| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line 94.05% / branch 77.10% / funcs 93.82% |
 | 静态检查（ESLint flat config，CI `--max-warnings=0`） | `npm run lint` | 0 error / 0 warning |
+| 文档值级一致性（版本/环境变量/设置字段/API 端点/相对链接/质量表命令） | `npm run doc:lint` | 6 项全部通过（CI 门禁） |
 | mock 自身协议自测 | `node mock/selftest.mjs` | 26 项通过 |
 | 浏览器人工回归（历史记录，不可复现；可复现基线见下一行） | 见历史交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项累计检查 |
 | 浏览器冒烟测试（可复现的子集：登录、7 个菜单视图、新建/删除分组、规则/任务编辑器、登出、绑定页/文档页加载、Console 异常检查） | `npm run test:ui` | 16 项通过（无 Edge/Chrome 时自动跳过） |
-| 演示数据截图（23 张，与 README 引用同名；自动脱敏、假名演示数据） | `node scripts/screenshots.mjs` | 成功生成 / 可重复运行 |
+| 演示数据截图（23 张 WebP，与 README 引用同名；自动脱敏、假名演示数据、v2.1.0 UI） | `npm run screenshots` | 成功生成 / 可重复运行（合计约 1.2MB） |
 
 > 说明：mock 用于本地/CI 验证协议与业务逻辑，真实微信 ClawBot 需在手机微信上扫码绑定后才能端到端体验；
 > 首次启动会生成随机管理密码/API Token 并写入数据卷 `data/`；上线前请备份数据卷与 `APP_SECRET`，建议启用 HTTPS。

@@ -13,7 +13,7 @@ import { hashToken, signAdminSession, timingSafeEqualStr, verifyAdminSession, ve
 import { forbidden, notFound, rateLimited, unauthorized } from './errors.js';
 import { logger } from './logger.js';
 import { SlidingWindowLimiter } from './rate-limiter.js';
-import { getAdminPasswordHashRecord } from './settings.js';
+import { getAdminPasswordHashRecord } from './settings/secrets.js';
 
 const log = logger.child({ mod: 'auth' });
 

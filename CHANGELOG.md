@@ -2,31 +2,57 @@
 
 本项目当前为自托管单仓库发布（Docker 镜像 + 源码），版本号以 `package.json` 为准；
 记录原则：只写**用户可感知的版本/契约变化与重要修复**，不逐条罗列内部重构。
+版本归属：`2.0.0` 为平台基线；2026-11-08 的审查 / 重构 / 加固统一随 **2.1.0** 发布。
 
-## [2.0.0] - 2026-11-08
+## [2.1.0] - 2026-11-08
 
-### 概要
+### 概要（审查 / 重构 / 加固）
 
-- **定位**：ClawBridge 2.0.0 是自托管的多用户微信 ClawBot 绑定 / 推送平台（Node 24 + Express 5 +
-  `node:sqlite`，零构建前端，`node --test` 测试体系；生产依赖仅 `express`、`qrcode`）。
-- **核心能力**：多用户扫码绑定与凭证隔离、出站 outbox 队列（每账号限流、`-2` 退避 / `-14` 冷却）、
-  入站长轮询与消息记录、用户分组（多标签/按组群发）、对外入站消息 API（分页 / 游标 / 长轮询）、
-  24h 会话保活、接口应用（关键词触发外部 HTTP 接口并回复）、定时通知、媒体（图片/视频/文件出站，
-  图片/文件/视频/语音入站；CDN AES-128-ECB 加解密）。
-- **安全底座**：凭证 AES-256-GCM 加密落库、HMAC 会话 Cookie、管理写接口 CSRF 头、IP/API Key 双层限流、
-  接口应用 SSRF 私网拒绝、媒体文件私有读取（鉴权 + Range + 防目录穿越）、日志键名脱敏。
-- **运行配置**：常用参数存 `app_settings` 并可在后台「运行配置」修改；`.env` 只保留启动期必须项
-  （`APP_SECRET`/`DATA_DIR`/`MEDIA_DIR`/`PORT`/`HOST`/`NODE_ENV`）作为**首次启动默认值**。
-  管理密码 / API Token 只由 DB 管理（首启自动生成，写入 `data/` 文件），不再读取旧 env。
-- **数据库**：schema **v10**，**不兼容旧版本数据库**——旧库启动直接拒绝（不提供迁移），
-  升级须备份 `DATA_DIR` 后用空库重建并重新绑定。
-- **交付**：Dockerfile + 3 份 compose（含 fnOS）、GHCR 多架构镜像、`mock/ilink-mock.mjs` 本地模拟器
-  （`node mock/selftest.mjs` 自测）。
+- **定位**：2.1.0 是 2.0.0 的**质量与安全加固版本**，数据库 schema 保持 **v10 不变**
+  （2.0.0 → 2.1.0 可原地升级，见 [`docs/UPGRADE.md`](docs/UPGRADE.md)；发布流程见
+  [`docs/RELEASE.md`](docs/RELEASE.md)）。
+- **审计**：对全仓完成 backend / frontend / infra 三份明细只读审计（归档 `docs/review/`），
+  汇总与修复记录见 [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md)。
+- **模块拆分**（对外契约不变）：后端 `api.js` → `http/` + `routes/`、`store.js` → `data/**`、
+  `app-rules.js` → `shared/**`（scheduler 解耦）；前端 `admin.js` → `admin/**` + `lib/**` +
+  规则/定时编辑器公共模块。
+- **安全加固**：接口应用/定时通知 SSRF **连接层固定已校验 IP**（修复 DNS rebinding）、入站媒体下载
+  URL 白名单 + 流式解密 + 有界并发（防 OOM）、日志 URL query 机密脱敏、Webhook `?token=` 脱敏、
+  共享媒体附件归属修复。
+- **数据维护**：新增 `server/src/maintenance.js`——孤儿附件/媒体文件 GC、日志保留期清理、
+  `PRAGMA optimize` / WAL checkpoint（参数 `MAINTENANCE_*`）。
+- **可靠性**：优雅退出等待在途任务（dispatcher drain / scheduler tick，修复重启重复投递与重复定时、
+  日志丢失）、高频查询索引启动时幂等补齐、v1 发送对 `paused` 用户语义与后台对齐。
+- **可访问性与截图**：颜色 token 达 WCAG AA、模态框焦点陷阱与 Tab 键盘语义、死 CSS/断点统一；
+  README 截图用**演示数据**重新生成（无真实昵称/本机路径）。
+- **工程化**：ESLint flat config（0 error / 0 warning）、CI 覆盖率门禁（line 90 / branch 70 / funcs 85）
+  与测试 + mock + 浏览器冒烟门禁、e2e 稳定性改造、`.editorconfig` / Dependabot、
+  `docs/UPGRADE.md` / `docs/RELEASE.md`、compose demo 加固、GHCR 发布 provenance/SBOM。
+- **测试**：**362 → 464** 用例（unit + e2e + 前端/生命周期/维护等新增），mock 协议自测 26/26。
+- **部署验证**：本机 `docker compose build` 新镜像后部署验证通过——`/health` 200（version 2.1.0）、
+  `/` `/admin` `/docs` 均 200、安全响应头完整；旧数据卷 `clawbridge-data` 与绑定用户保留
+  （详见 [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) 部署记录）。
+- **升级提示**：旧版本数据库（schema < 10）仍需「备份 → 空库重建 → 重新绑定」；同为 v10 的
+  `2.0.0 → 2.1.0` 直接换镜像/源码即可（建议先备份）。
 
-### 本次审查与重构（2026-11-08）
+### 兼容性说明
+
+- 对外 HTTP API（`/api/admin/*`、`/api/v1/*`、`/api/bind/*`、`/api/v1/webhook`）的路径、字段与错误码
+  经多轮审查/重构/加固**未变化**；错误响应格式与鉴权语义不变。
+- **行为收紧（安全）**：入站媒体下载在生产环境默认只允许 https + iLink/CDN/显式白名单主机，并拒绝本机/私网地址；
+  dev/test 环境自动放行 localhost 以兼容 mock/demo；如需自定义主机请配置 `MEDIA_ALLOWED_HOSTS`。接口应用/定时
+  通知的外部调用在连接层固定已校验 IP，功能语义不变。
+- **资源限制**：入站媒体下载默认并发 2、排队 64、排队超时 60s（后台可调）；原先依赖"无限并发/整文件内存"的
+  极端场景可能改为排队或失败（会记录附件失败原因）。
+- **启动行为**：每次启动会幂等补齐高频查询索引（无需 schema 变更）；数据量大时首次升级启动会多一次建索引耗时。
+- 升级自旧版本（schema < v10）**不支持原地升级**：备份后空库重建、重新扫码绑定。
+- 本版本新增 `security`/`media`/`binding` 等后台字段、`/mock-bind`（仅 mock）与工程化文件，
+  不影响既有部署行为。
+
+### 审计与各轮加固记录
 
 对全仓完成一轮只读审计（`backend` / `frontend` / `infra` 三份报告，含逐条问题与修复建议），
-并落地以下与用户/契约直接相关的变更：
+并落地以下变更（新 → 旧）：
 
 ### 第三轮加固（2026-11-08，可维护性/数据生命周期/工程化）
 
@@ -54,7 +80,7 @@
     不再提示需重启）；前台"需重启"标记与实现一致。
 - **前端**：管理后台颜色 token 提升到 WCAG AA（`--text-muted` 等）；清理 41 条死 CSS 规则、补齐未定义
   变量、统一断点（639/640、899/900、1023/1024）；README 全部截图用**演示数据**重新生成
-  （`npm run screenshots` 可复现，无真实昵称/本机路径，2.0.0 最新 UI）。
+  （`npm run screenshots` 可复现，无真实昵称/本机路径，随 2.1.0 发布的 UI）。
 - **工程化**：新增 ESLint flat config（CI `--max-warnings=0`，0 error/0 warning）；
   e2e 子进程 env 白名单、负向断言稳定等待、mock 违规统一断言；新增生命周期/错误/维护等测试；
   `.editorconfig`、dependabot、`docs/UPGRADE.md`、compose demo 加固、GHCR 发布增加 provenance/SBOM；
@@ -123,16 +149,25 @@
     `MEDIA_ALLOWED_IMAGE_MIME`、`MEDIA_ALLOWED_VIDEO_MIME`；另补 `ADMIN_SESSION_TTL_MS`、
     `PUSH_RETRY_DELAYS_MS`），并修正 `BOT_AGENT` 示例值（代码默认 `OpenClaw`）。
 
-### 兼容性说明
+## [2.0.0] - 2026-11-08
 
-- 对外 HTTP API（`/api/admin/*`、`/api/v1/*`、`/api/bind/*`、`/api/v1/webhook`）的路径、字段与错误码
-  经两轮审查/重构/加固**未变化**；错误响应格式与鉴权语义不变。
-- **行为收紧（安全）**：入站媒体下载在生产环境默认只允许 https + iLink/CDN/显式白名单主机，并拒绝本机/私网地址；
-  dev/test 环境自动放行 localhost 以兼容 mock/demo；如需自定义主机请配置 `MEDIA_ALLOWED_HOSTS`。接口应用/定时
-  通知的外部调用在连接层固定已校验 IP，功能语义不变。
-- **资源限制**：入站媒体下载默认并发 2、排队 64、排队超时 60s（后台可调）；原先依赖"无限并发/整文件内存"的
-  极端场景可能改为排队或失败（会记录附件失败原因）。
-- **启动行为**：每次启动会幂等补齐高频查询索引（无需 schema 变更）；数据量大时首次升级启动会多一次建索引耗时。
-- 升级自旧版本（schema < v10）**不支持原地升级**：备份后空库重建、重新扫码绑定。
-- 本版本新增 `security`/`media`/`binding` 等后台字段、`/mock-bind`（仅 mock）与工程化文件，
-  不影响既有部署行为。
+> 说明：本段为 2.0.0 平台基线记录；其后 2026-11-08 的审查/重构/加固（含测试 362→464）已归档到
+> 上方 [2.1.0]。
+
+### 概要
+
+- **定位**：ClawBridge 2.0.0 是自托管的多用户微信 ClawBot 绑定 / 推送平台（Node 24 + Express 5 +
+  `node:sqlite`，零构建前端，`node --test` 测试体系；生产依赖仅 `express`、`qrcode`）。
+- **核心能力**：多用户扫码绑定与凭证隔离、出站 outbox 队列（每账号限流、`-2` 退避 / `-14` 冷却）、
+  入站长轮询与消息记录、用户分组（多标签/按组群发）、对外入站消息 API（分页 / 游标 / 长轮询）、
+  24h 会话保活、接口应用（关键词触发外部 HTTP 接口并回复）、定时通知、媒体（图片/视频/文件出站，
+  图片/文件/视频/语音入站；CDN AES-128-ECB 加解密）。
+- **安全底座**：凭证 AES-256-GCM 加密落库、HMAC 会话 Cookie、管理写接口 CSRF 头、IP/API Key 双层限流、
+  接口应用 SSRF 私网拒绝、媒体文件私有读取（鉴权 + Range + 防目录穿越）、日志键名脱敏。
+- **运行配置**：常用参数存 `app_settings` 并可在后台「运行配置」修改；`.env` 只保留启动期必须项
+  （`APP_SECRET`/`DATA_DIR`/`MEDIA_DIR`/`PORT`/`HOST`/`NODE_ENV`）作为**首次启动默认值**。
+  管理密码 / API Token 只由 DB 管理（首启自动生成，写入 `data/` 文件），不再读取旧 env。
+- **数据库**：schema **v10**，**不兼容旧版本数据库**——旧库启动直接拒绝（不提供迁移），
+  升级须备份 `DATA_DIR` 后用空库重建并重新绑定。
+- **交付**：Dockerfile + 3 份 compose（含 fnOS）、GHCR 多架构镜像、`mock/ilink-mock.mjs` 本地模拟器
+  （`node mock/selftest.mjs` 自测）。

@@ -7,7 +7,7 @@
  *   2. 启动临时 app 实例（随机端口 + 临时 DATA_DIR，连接 mock，不接触真实微信/真实数据）；
  *   3. 通过 mock 控制面自动「扫码 + 确认」绑定 3 个演示用户（昵称固定为演示用户A/B/C）；
  *   4. 通过管理 API 种入演示分组/保活/接口规则/定时任务，并注入演示消息、图片与文件附件；
- *   5. 用 headless Edge/Chrome + CDP 打开各页面，按固定视口截取 screenshots/*.png（文件名与 README 引用一致）。
+ *   5. 用 headless Edge/Chrome + CDP 打开各页面，按固定视口截取 screenshots/*.webp（文件名与 README 引用一致）。
  *
  * 隐私：演示数据均为虚构；脚本在截图前会清除页面文本中的本机绝对路径，并断言页面不包含
  * 真实昵称/绝对路径痕迹（截图内容不含 `C:\...`、`/Users/...`、`/tmp/...` 等）。
@@ -36,6 +36,7 @@ const ONLY = (() => {
   if (!arg) return null;
   return new Set(arg.slice('--only='.length).split(',').map((item) => item.trim()).filter(Boolean));
 })();
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const APP_START_TIMEOUT_MS = 30_000;
 const BROWSER_START_TIMEOUT_MS = 30_000;
 const NAV_TIMEOUT_MS = 20_000;
@@ -498,7 +499,7 @@ class CdpClient {
   }
 
   async capture(name, { clip } = {}) {
-    const params = { format: 'png', captureBeyondViewport: Boolean(clip), fromSurface: true };
+    const params = { format: 'webp', quality: 82, captureBeyondViewport: Boolean(clip), fromSurface: true };
     if (clip) params.clip = { ...clip, scale: 1 };
     const shot = await this.send('Page.captureScreenshot', params);
     return Buffer.from(shot.data, 'base64');
@@ -560,9 +561,9 @@ async function adminLogin(cdp, baseUrl, password) {
   await waitFor(
     async () =>
       (await cdp.evaluate(
-        "document.querySelector('#sidebar-version')?.textContent?.includes('v2.0.0') || false",
+        `document.querySelector('#sidebar-version')?.textContent?.includes(${JSON.stringify('v' + APP_VERSION)}) || false`,
       )) === true,
-    { timeoutMs: 10_000, intervalMs: 200, label: '侧栏版本号 v2.0.0' },
+    { timeoutMs: 10_000, intervalMs: 200, label: `侧栏版本号 v${APP_VERSION}` },
   );
 }
 
@@ -627,10 +628,10 @@ async function capture(cdp, name, { clipSelector = null, viewport = DESKTOP, wai
 
 function saveScreenshot(name, buffer) {
   fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
-  const file = path.join(SCREENSHOTS_DIR, `${name}.png`);
+  const file = path.join(SCREENSHOTS_DIR, `${name}.webp`);
   fs.writeFileSync(file, buffer);
   results.push({ name, bytes: buffer.length });
-  log(`已生成 screenshots/${name}.png（${(buffer.length / 1024).toFixed(1)} KB）`);
+  log(`已生成 screenshots/${name}.webp（${(buffer.length / 1024).toFixed(1)} KB）`);
   return file;
 }
 
@@ -680,7 +681,7 @@ async function run() {
   fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
   const beforeSizes = new Map();
   for (const file of fs.readdirSync(SCREENSHOTS_DIR)) {
-    if (file.endsWith('.png')) beforeSizes.set(file.replace(/\.png$/, ''), fs.statSync(path.join(SCREENSHOTS_DIR, file)).size);
+    if (file.endsWith('.webp')) beforeSizes.set(file.replace(/\.webp$/, ''), fs.statSync(path.join(SCREENSHOTS_DIR, file)).size);
   }
 
   let mock = null;
@@ -1042,7 +1043,7 @@ async function run() {
     for (const item of results) {
       const before = beforeSizes.get(item.name);
       const detail = before ? `${(before / 1024).toFixed(1)} KB -> ${(item.bytes / 1024).toFixed(1)} KB` : `${(item.bytes / 1024).toFixed(1)} KB（新增）`;
-      log(`  ${item.name}.png  ${detail}`);
+      log(`  ${item.name}.webp  ${detail}`);
     }
     const missing = [...beforeSizes.keys()].filter((name) => !results.some((item) => item.name === name));
     if (missing.length > 0) log(`未重截（--only 过滤）：${missing.join(', ')}`);

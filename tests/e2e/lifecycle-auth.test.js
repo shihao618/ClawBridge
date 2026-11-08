@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
-import { startE2E, waitFor } from '../helpers/e2e-env.mjs';
+import { PACKAGE_VERSION, startE2E, waitFor } from '../helpers/e2e-env.mjs';
 
 let e2e;
 
@@ -79,7 +79,7 @@ test('管理后台鉴权：未登录 401、错误密码 401、登录成功、CSR
   const overview = await e2e.adminGet('/api/admin/overview');
   assert.equal(overview.status, 200);
   assert.equal(typeof overview.json.stats.totalUsers, 'number');
-  assert.equal(overview.json.server.version, '2.0.0');
+  assert.equal(overview.json.server.version, PACKAGE_VERSION, '概览版本应与 package.json 一致');
   assert.equal(overview.json.server.ilink.loginBaseUrl, e2e.mockUrl);
   const configRes = await e2e.adminGet('/api/admin/config');
   assert.equal(configRes.status, 200);

@@ -192,10 +192,14 @@ async function main() {
   const app = createApp();
 
   const server = app.listen(config.port, config.host, () => {
+    // 实际监听端口：PORT=0 时由 OS 随机分配（e2e 依赖该回传拿到真实端口，避免“先探测空闲端口再监听”的 TOCTOU）。
+    const address = server.address();
+    const actualPort = address && typeof address === 'object' ? address.port : config.port;
     log.info('ClawBridge 已启动', {
       version: config.version,
       host: config.host,
-      port: config.port,
+      port: actualPort,
+      configuredPort: config.port,
       node: process.version,
       dataDir: config.dataDir,
       pushApiEnabled: config.pushApiEnabled,

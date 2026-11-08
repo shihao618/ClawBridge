@@ -1,17 +1,22 @@
 # 升级与回滚（Upgrade / Rollback）
 
-> 适用版本：**ClawBridge 2.0.0（数据库 schema v10）**。本文只讲「数据与镜像」的升级/回滚实操；
+> 适用版本：**ClawBridge 2.1.0（数据库 schema v10）**。本文只讲「数据与镜像」的升级/回滚实操；
 > 配置字段与默认值见 [`docs/SETTINGS.md`](SETTINGS.md)，媒体文件规则见 [`docs/MEDIA.md`](MEDIA.md)，
-> 版本变更摘要见 [CHANGELOG.md](../CHANGELOG.md)。
+> 版本变更摘要见 [CHANGELOG.md](../CHANGELOG.md)，发布流程见 [`docs/RELEASE.md`](RELEASE.md)。
+> **2.0.0 → 2.1.0 的 schema 未变化（同为 v10），可原地升级**；本次 2.1.0 为审查/重构/加固版本，
+> 不涉及数据库结构变更（仅启动时幂等补齐查询索引）。
 
 ## 0. 先看结论（TL;DR）
 
 | 场景 | 是否可原地升级 | 操作 |
 | --- | --- | --- |
-| 2.0.0 → 后续 **同为 schema v10** 的小版本 | ✅ 可以 | 备份 → 拉取/构建新镜像 → `up -d` |
-| 旧版本（schema **< 10**，如 v9）→ 2.0.0 | ❌ **不可以** | 备份 → **空库重建** → 重新扫码绑定 → 手工重建后台配置 |
+| **2.0.0 → 2.1.0**，以及后续同为 **schema v10** 的版本 | ✅ 可以 | 备份 → 拉取/构建新镜像 → `up -d` |
+| 旧版本（schema **< 10**，如 v9）→ 2.1.0 | ❌ **不可以** | 备份 → **空库重建** → 重新扫码绑定 → 手工重建后台配置 |
 | 全新部署 | — | 直接启动，自动创建 v10 空库 |
 | 回滚（降级） | 视目标版本而定 | v10 → v10：换回旧镜像即可；回滚到旧 schema：**必须连数据卷一起回滚** |
+
+> 2.0.0 与 2.1.0 的数据库 schema 均为 v10，`2.0.0 → 2.1.0` 属于**原地升级**（只需备份 + 换镜像/源码）；
+> 「空库重建」只用于 **schema < 10 的旧库**升级到当前版本（见 §4）。
 
 关键设计（`server/src/db.js`）：启动时读取 `meta.schema_version`，若既不是 0（全新库）也不是
 **10**，直接抛错拒绝启动，**不执行任何 `ALTER TABLE` / 逐级迁移**：
@@ -106,7 +111,7 @@ node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('
 结果含义：`10` = 可原地升级（§5）；`0` 或查询不到 = 空库/极早期库（按空库处理）；
 其它值（如 9）= 旧库，必须走 §4 重建。
 
-## 4. 旧库（schema < 10）→ 2.0.0 重建步骤
+## 4. 旧库（schema < 10）→ 2.1.0 重建步骤
 
 > 目标：把“旧库 + 旧媒体”留档，换一个**空 v10 库**启动，再重新绑定/配置。
 
@@ -178,7 +183,7 @@ docker exec clawbridge cat /app/data/admin-password.txt      # fnOS（容器名 
 ### 4.7 验收
 
 ```bash
-curl -s http://127.0.0.1:10380/health        # {"status":"ok","version":"2.0.0"}
+curl -s http://127.0.0.1:10380/health        # {"status":"ok","version":"2.1.0"}
 ```
 
 - 后台可登录（新密码）、`/docs` 可打开；
@@ -188,7 +193,7 @@ curl -s http://127.0.0.1:10380/health        # {"status":"ok","version":"2.0.0"}
 
 ## 5. 同一 schema（v10）的原地升级
 
-适用于：2.0.0 及后续仍为 schema v10 的版本（例如 2.0.x 修复版）。查询索引等通过
+适用于：2.0.0 → 2.1.0，以及后续仍为 schema v10 的版本（例如 2.1.x 修复版）。查询索引等通过
 `CREATE INDEX IF NOT EXISTS` 在启动时幂等补齐，不会改 schema 版本。
 
 ```bash
@@ -223,7 +228,7 @@ docker compose up -d
 升级前建议先 `docker tag clawbridge:local clawbridge:pre-upgrade`（或 `docker save -o` 存档），
 避免旧镜像被清理后无法回滚。
 
-### 6.2 回滚到旧 schema 版本（2.0.0 → 旧版本）
+### 6.2 回滚到旧 schema 版本（2.1.0 → 旧版本）
 
 旧版本程序只能读旧 schema 的库，**必须同时恢复旧镜像与旧数据卷**：
 
@@ -243,12 +248,12 @@ docker run --rm -v clawbridge-data:/data -v "${PWD}/backups:/backup" alpine:3.20
 docker compose up -d
 ```
 
-> ⚠️ 回滚到旧版本 = 放弃 2.0.0 期间产生的数据（v10 库不能被旧版本读取，只能留档）。
-> 如果已经用 2.0.0 重新绑定/配置过，回滚前请明确取舍。
+> ⚠️ 回滚到旧版本 = 放弃 2.0.0/2.1.0 期间产生的数据（v10 库不能被旧版本读取，只能留档）。
+> 如果已经用 2.1.0 重新绑定/配置过，回滚前请明确取舍。
 
 ### 6.3 固定版本以便回滚（推荐）
 
-GHCR 镜像同时发布 `:latest`、`sha-<commit>`（以及打 tag 后的版本 tag，如 `:v2.0.0`）。
+GHCR 镜像同时发布 `:latest`、`sha-<commit>`（以及打 tag 后的版本 tag，如 `:v2.1.0`）。
 fnOS 用户可把 `docker-compose.fnos.yml` 中：
 
 ```yaml
@@ -316,3 +321,4 @@ image: ghcr.io/shihao618/clawbridge:sha-<commit>
 - 接口应用 / 定时通知：[`docs/API_RULES.md`](API_RULES.md)、[`docs/SCHEDULED_TASKS.md`](SCHEDULED_TASKS.md)
 - HTTP API 契约：[`docs/API.md`](API.md)
 - 版本变更摘要：[CHANGELOG.md](../CHANGELOG.md)
+- 发布流程（tag / GHCR / 发布检查清单 / 回滚）：[`docs/RELEASE.md`](RELEASE.md)

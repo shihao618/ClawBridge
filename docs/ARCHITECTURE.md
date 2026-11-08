@@ -23,20 +23,20 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
 | `server/src/store.js` | 数据层 façade：`export *` 重导出 `data/**`，保持既有导出名与调用方零改动 |
 | `server/src/data/` | 数据层按域实现：`users.js`、`groups.js`、`keepalive.js`、`rules.js`、`scheduled.js`、`attachments.js`、`outbox.js`、`inbound.js`、`messages.js`、`events.js`、`stats.js` + `mappers.js`/`helpers.js` |
 | `server/src/shared/` | 领域共享层：`http-client.js`（SSRF/传输/钉 IP/响应读取）、`template.js`（模板引擎）、`response.js`（响应解析）、`http-execute.js`（渲染→HTTP→解析→渲染回复管线） |
-| `server/src/binding.js` / `monitor.js` / `dispatcher.js` / `keepalive.js` / `app-rules.js` / `scheduler.js` / `settings.js` / `auth.js` / `maintenance.js` | 领域层：扫码绑定状态机、入站长轮询、出站队列 drain、会话保活、接口应用规则引擎（656 行，依赖 `shared/**`）、定时通知（依赖 `shared/**`，独立 HTTP 限制配置）、运行配置与机密管理、认证与限流、数据生命周期维护（孤儿附件/日志保留 GC） |
+| `server/src/binding.js` / `monitor.js` / `dispatcher.js` / `keepalive.js` / `app-rules.js` / `scheduler.js` / `settings.js` / `auth.js` / `maintenance.js` | 领域层：扫码绑定状态机、入站长轮询、出站队列 drain、会话保活、接口应用规则引擎（656 行，依赖 `shared/**`）、定时通知（依赖 `shared/**`，独立 HTTP 限制配置）、运行配置与机密管理（`settings.js` 32 行 façade + `settings/{schema,validate,apply,secrets,persistence}.js`；`auth.js` 只依赖 secrets）、认证与限流、数据生命周期维护（孤儿附件/日志保留 GC） |
 | `server/src/http/` | HTTP 支撑层：`middleware.js`（安全头/body 解析/404/统一错误处理）、`helpers.js`、`views.js`、`validators.js`、`app-rule-validators.js`、`scheduled-validators.js`、`media-handlers.js`、`queue-service.js` |
 | `server/src/routes/` | 路由层：`public.js`（健康检查/扫码绑定）、`admin-auth.js`、`admin-users.js`、`admin-groups.js`、`admin-rules.js`、`admin-scheduled.js`、`admin-settings.js`、`admin-messages.js`、`v1.js`、`webhook.js`、`pages.js` |
 | `server/src/api.js` | Express 组合根：仅装配中间件顺序与挂载路由（`createApp()`） |
 | `web/*.html` + `web/assets/style.css` | 零构建前端页面（绑定页 / 管理后台 / API 文档页）与全站样式（WCAG AA 对比度 token、统一断点） |
 | `web/assets/common.js` / `bind.js` / `docs.js` | 公共能力（fetch/上传/DOM/格式化/toast/modal 焦点陷阱/轮询/抽屉）与两个页面入口 |
 | `web/assets/admin.js` | 管理后台入口：事件绑定、视图加载器注册、末尾唯一 `init()` |
-| `web/assets/admin/` | 管理后台模块：`constants.js`、`state.js`、`core.js`（认证/hash 路由/刷新/注册表）、`ui.js`（公共 UI 构建器）、`templates.js`（模板语法/Markdown 预览）、`views/*.js`（8 个菜单视图 + 发送消息弹窗）、`integrations/**`（规则/定时编辑器共享片段） |
+| `web/assets/admin/` | 管理后台模块：`constants.js`、`state.js`（26 行组合入口）、`state/**`（按域状态 core/users/messages/groups/rules/scheduled/settings + els）、`core.js`（认证/hash 路由/刷新/注册表）、`ui.js`（公共 UI 构建器）、`templates.js`（模板语法/Markdown 预览）、`views/*.js`（8 个菜单视图 + 发送消息弹窗）、`integrations/**`（规则/定时编辑器共享片段） |
 | `web/assets/lib/` | 前端纯函数模块（parse/settings/summary/media），可被 `node:test` 直接单测 |
 | `mock/**` | 零依赖微信 iLink 模拟器 + 控制面 + 自测（26 项，含 `/mock-bind` 占位页） |
 | `tests/unit/**` | 进程内单测 + 前端静态/模块/纯函数测试 + 生命周期/错误/维护等针对性测试 |
 | `tests/e2e/**` | 真实 app + mock 双进程、随机端口、临时 DATA_DIR 的全 HTTP 黑盒测试（子进程 env 白名单、稳定等待断言、mock 违规统一断言） |
 | `tests/helpers/e2e-env.mjs` | e2e 环境管理、断言助手、外部 HTTP mock、媒体工具、优雅退出/清理 |
-| `scripts/**` | `demo.ps1`/`demo.sh` 一键演示；`frontend-smoke.mjs` 浏览器冒烟（`npm run test:ui`）；`screenshots.mjs` 演示数据截图生成 |
+| `scripts/**` | `demo.ps1`/`demo.sh` 一键演示；`frontend-smoke.mjs` 浏览器冒烟（`npm run test:ui`）；`screenshots.mjs` 演示数据 WebP 截图；`e2e-stability.mjs` e2e 连跑稳定性；`doc-lint.mjs` 文档值级一致性检查 |
 | `docs/**` | 协议与设计契约（PROTOCOL / API / ARCHITECTURE / MEDIA / GROUPS_AND_INBOUND / KEEPALIVE / API_RULES / SCHEDULED_TASKS / SETTINGS / UPGRADE / CODE_REVIEW） |
 | `Dockerfile` / `docker-compose*.yml` / `.github/workflows/**` | 构建、部署与 CI（PR：lint + coverage 门禁；main 发布前同样先跑测试，镜像带 provenance/SBOM） |
 | `eslint.config.js` / `.editorconfig` / `.gitattributes` | 静态检查与跨平台编辑器/换行约定 |
@@ -307,10 +307,11 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   其余模块通过相对 `import` 加载（新模块必须落在 `web/assets/**` 内，禁止裸包名/外部 URL）。
 - **管理后台模块结构（2026-11 起）**：
   - `web/assets/admin.js`：entry（约 200 行）——事件绑定、视图加载器注册、末尾唯一 `init()`；
-  - `web/assets/admin/`：`constants.js`（常量/元数据/`MENU_VIEWS`）、`state.js`（全局 `state` 与 `els`）、
-    `core.js`（登录/登出/401/hash 路由/自动刷新/注册表）、`ui.js`（switch/行按钮/表格/分页/formField 等公共构建器）、
+  - `web/assets/admin/`：`constants.js`（常量/元数据/`MENU_VIEWS`）、`state.js`（26 行组合入口）+ `state/**`
+    （按域状态 core/users/messages/groups/rules/scheduled/settings + els）、`core.js`（登录/登出/401/hash 路由/
+    自动刷新/注册表）、`ui.js`（switch/行按钮/表格/分页/formField 等公共构建器）、
     `templates.js`（模板语法帮助/Markdown 预览/请求响应区块）、`views/*.js`（概览/用户/分组/消息/广播/
-    接口应用/定时通知/运行配置 + 发送消息弹窗）；
+    接口应用/定时通知/运行配置 + 发送消息弹窗）、`integrations/**`（规则/定时编辑器共享片段）；
   - `web/assets/lib/`：纯函数（parse/settings/summary/media），可直接被 `node:test` import 单测。
   - **依赖方向**：`admin.js → admin/views/** → {core, ui, state, templates, lib, common}`；`core` 不 import views
     （由 entry 注册）；禁止循环 import（由 `tests/unit/frontend-modules.test.js` 强制）。
@@ -352,9 +353,9 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 - 测试要求：确定性（禁用真实网络）；用 `waitFor(fn, timeout)` 轮询代替固定 sleep；
   每个测试独立临时目录；失败时打印服务端日志；全部测试在 90s 内跑完。
 - 规模基线（2026-11）：`npm test` 464 项（unit 373 + e2e 91；462 通过 + 2 项 POSIX-only 在 Windows 跳过）约 35s；
-  mock 自测 26 项；`npm run lint` 0 告警；
+  mock 自测 26 项；`npm run lint` 0 告警；`npm run doc:lint` 6/6；`npm run e2e:stability` 串行 3 次全绿；
   `npm run coverage` 输出 in-process 覆盖率（排除 `web/**` 与 `tests/**`，服务端源码 line 约 94.0%、
-  branch 约 77.2%、funcs 约 93.8%；CI 强制阈值 line 90 / branch 70 / funcs 85）。
+  branch 约 77.1%、funcs 约 93.8%；CI 强制阈值 line 90 / branch 70 / funcs 85）。
 - `npm test` 必须同时跑 unit + e2e；`npm run test:unit` / `npm run test:e2e` 可单独跑。
 
 ## 11. Docker 约定（infra-dev）
@@ -581,12 +582,11 @@ admin.js（entry：事件绑定 + 视图/数据加载器注册 + init()）
 约定：新增视图按 §9「新增视图步骤」；公共构建器优先抽到 `ui.js`；可单测的纯逻辑放 `lib/**`；
 动态内容只用 `textContent`/DOM 属性，禁止 `innerHTML`（静态测试强制）。
 
-### 18.4 后续拆分建议（尚未实施）
+### 18.4 后续优化建议（尚未实施，收益递减项）
 
-- `settings.js`（~758 行）：拆分 schema/validate/apply/secrets；`auth.js` 只依赖 secrets 子模块。
 - `scheduler.js`：计划计算（calc）与执行（tick）可再拆分；`app-rules.js` 引擎可再拆 match/extract。
-- 前端：`state` 按域拆分、`els` 下沉到各视图、视图子模块化（app-rules/schedules 的 editor/test/logs 未再拆）；
-  可选动态 `import()` 懒加载非默认视图。
+- 前端：`views/app-rules` / `views/schedules` 的 editor/test/logs 子模块化；可选动态 `import()` 懒加载非默认视图。
+- `tests/helpers/e2e-env.mjs` 拆分（进程管理 / HTTP 客户端 / 外部 mock / 媒体工具）。
 - 详见 `docs/CODE_REVIEW.md` 第 6 节路线图。
 
 ## 19. 数据生命周期维护（maintenance.js，BA-18）

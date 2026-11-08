@@ -1,6 +1,7 @@
 # ClawBridge 系统审查与代码结构优化报告
 
 - **审查对象**：ClawBridge v2.0.0（多用户微信 ClawBot 扫码绑定与消息推送平台），仓库根目录 `F:\ClawBot`
+  ——**历史审查基线 v2.0.0；当前发布版本为 v2.1.0**（本次审查的修复/重构/加固随 2.1.0 发布，见 [CHANGELOG.md](../CHANGELOG.md)）
 - **审查基线**：`main` @ `a23c2be`（2026-11-08），审查开始时工作区干净；全部 362 项测试通过
 - **审查日期**：2026-11-08
 - **审查方式**：3 名并行审查员（后端 / 前端 / 测试与基础设施）+ 主审运行验证、重构实施、回归验收
@@ -17,7 +18,7 @@
 
 **总体结论：这是一套工程质量明显高于同规模项目的系统，但仍存在 4 个 P1 级问题（其中 2 个已在本轮修复）、24 个 P2 级问题，以及两个"巨石模块"造成的可维护性瓶颈。**
 
-验证侧：审查基线 362 项测试（unit 271 + e2e 91）全部通过；三轮修复/重构/加固后 **464 项（462 通过 + 2 项 POSIX-only 在 Windows 跳过，约 35s）**，源码 in-process 覆盖率 line 94.03% / branch 77.17% / funcs 93.82%（排除 `web/**` 与 `tests/**`，CI 强制阈值）；`npm run lint` 0 告警；mock 协议自测 26/26；Docker 镜像/容器健康、GHCR 多架构发布链路实测可用；生产依赖仅 `express` + `qrcode`，`npm audit --omit=dev` 0 漏洞；机密管理（`.env`/`backups` 未入库、AES-GCM 凭证、scrypt、常量时间比较、CSP/CSRF）扎实。本次额外补上了此前缺失的**真实浏览器冒烟测试**（headless Edge + CDP，16 项检查）与**可复现截图脚本**，使前端行为与文档截图都可复现验证。
+验证侧：审查基线 362 项测试（unit 271 + e2e 91）全部通过；四轮修复/重构/加固后 **464 项（462 通过 + 2 项 POSIX-only 在 Windows 跳过，约 35s）**，源码 in-process 覆盖率 line 94.05% / branch 77.10% / funcs 93.82%（排除 `web/**` 与 `tests/**`，CI 强制阈值）；`npm run lint` 0 告警、`npm run doc:lint` 6 项值级一致性全过、`npm run e2e:stability` 连跑 3/3 通过；mock 协议自测 26/26；Docker 镜像/容器健康、GHCR 多架构发布链路实测可用；生产依赖仅 `express` + `qrcode`，`npm audit --omit=dev` 0 漏洞；机密管理（`.env`/`backups` 未入库、AES-GCM 凭证、scrypt、常量时间比较、CSP/CSRF）扎实。本次额外补上了此前缺失的**真实浏览器冒烟测试**（16 项）、**可复现 WebP 截图脚本**与**文档值级一致性门禁**，使前端行为、文档截图与文档数值都可复现验证。
 
 结构侧：重构前 `server/src/api.js`（1895 行/1 个导出/69 个路由 + 全部校验与媒体 IO）、`web/assets/admin.js`（5895 行/171 个函数/7 个视图）是两个典型"上帝模块"。本轮已完成等价拆分：
 
@@ -60,8 +61,10 @@
 | `npm test` | 重构前 **362/362 pass**（33.3s）→ 三轮修复/重构/加固后 **464 项：462 通过 + 2 项 POSIX-only 跳过**（约 35s） |
 | `npm run test:unit` | 271 → **373**（371 通过 + 2 项 Windows 跳过；新增前端 modules/lib/弹窗/焦点、后端 logger、调度器/分发器生命周期、数据库索引、SSRF、媒体闸门、维护 GC、错误映射、shared 管线等测试） |
 | `npm run test:e2e` | 91/91（真实 app + mock 双进程、随机端口、临时 DATA_DIR 黑盒；子进程 env 白名单、稳定等待断言、mock 违规统一断言） |
-| 覆盖率（`npm run coverage`，in-process，排除 web/tests，CI 强制阈值 90/70/85） | line **94.03%** / branch **77.17%** / funcs **93.82%**；最低集中在 dispatcher/monitor 等异步生命周期模块（本轮已补生命周期测试；`index.js` 由子进程运行不计入） |
+| 覆盖率（`npm run coverage`，in-process，排除 web/tests，CI 强制阈值 90/70/85） | line **94.05%** / branch **77.10%** / funcs **93.82%**；最低集中在 dispatcher/monitor 等异步生命周期模块（本轮已补生命周期测试；`index.js` 由子进程运行不计入） |
 | `npm run lint`（ESLint flat config，CI `--max-warnings=0`） | **0 error / 0 warning** |
+| `npm run doc:lint`（文档值级一致性，CI 门禁） | **6/6 项通过**（版本号、环境变量、设置字段、API 端点、相对链接、质量表命令） |
+| `npm run e2e:stability`（串行连跑 3 次，CI 门禁） | **3/3 次通过**（每次 91 项，单次约 127s；Linux CI 预计更快） |
 | mock 自测 | 26/26 |
 | 浏览器冒烟（新增） | `npm run test:ui`：登录、7 个菜单视图、分组创建/删除、规则/任务编辑器、登出、绑定页/文档页，Console/未捕获异常检查，全部通过 |
 
@@ -231,7 +234,19 @@
 | 截图隐私（INF-08） | 新增 `scripts/screenshots.mjs`（临时 app+mock+演示数据+headless CDP，自动脱敏断言），重新生成 23 张 2.0.0 截图（与 README 引用同名、无真实昵称/本机路径，`npm run screenshots` 可复现） | 连续两次实跑成功；抽查 8 张确认假名数据与最新 UI |
 | 工程化（INF-06/10/12/13/15/17/21） | ESLint flat config（CI `--max-warnings=0`，0 error/0 warning）、`.editorconfig`、`.gitattributes` 换行规范、dependabot、`docs/UPGRADE.md`、compose demo 加固、GHCR provenance/SBOM、覆盖率阈值门禁接入发布流程 | `npm run lint` 0 告警；compose config 全绿；37 条 docs 相对链接 0 断链 |
 
-**最终基线**：`npm test` 464 项（462 通过 + 2 项 POSIX-only 在 Windows 跳过，约 35s）；`npm run test:unit` 373 项；`npm run test:e2e` 91 项；覆盖率 line 94.03% / branch 77.17% / funcs 93.82%；`npm run lint` 0 告警；mock 自测 26/26；`npm run test:ui` 全过。
+**最终基线**：`npm test` 464 项（462 通过 + 2 项 POSIX-only 在 Windows 跳过，约 35s）；`npm run test:unit` 373 项；`npm run test:e2e` 91 项；`npm run e2e:stability` 3/3 次通过；覆盖率 line 94.05% / branch 77.10% / funcs 93.82%；`npm run lint` 0 告警；`npm run doc:lint` 6/6；mock 自测 26/26；`npm run test:ui` 全过。
+
+### 5.6 第四轮收尾（v2.1.0，剩余建议全部落地）
+
+| 项 | 内容 | 验证 |
+| --- | --- | --- |
+| settings 解耦 | `settings.js` 762 → **32 行 façade** + `settings/{schema,validate,apply,secrets,persistence}.js`；`auth.js` 只依赖 `settings/secrets.js`（消除 auth→settings 整体耦合）；导出面/加载顺序/行为零变化 | 导出集对比 14/14、import 图无环；settings/auth 单测 29/29；e2e settings* 22/22 |
+| 前端 state 按域拆分 | `admin/state.js` 140 → **26 行组合入口** + `state/{core,users,messages,groups,rules,scheduled,settings,els}.js`；`state.xxx`/`els.xxx` 访问路径不变、els 76 键顺序一致；删除死状态 `viewLoaded` | 前端 4 个测试文件 89/89；`test:ui` 全过；lint 0 |
+| e2e 端口与稳定性 | `index.js` 输出实际监听端口（`server.address().port`）；e2e 改 `PORT=0` + 启动日志回传端口（消除 getFreePort TOCTOU）；新增 `scripts/e2e-stability.mjs`（串行 N 次+汇总，失败非 0）并接入 CI | `npm run e2e:stability` **3/3 通过**（每次 91 项，单次 ~127s）；CI 增加 step |
+| 文档值级门禁 | 新增 `scripts/doc-lint.mjs`（464 行零依赖）：版本号、config env↔`.env.example`、SETTINGS_SCHEMA↔docs/SETTINGS.md、API.md↔docs.html 端点、相对链接、README 质量表命令，6 项双向校验 | 当前仓库 6/6 通过；负向注入 6 类漂移全部被捕获；CI 接入 |
+| 发布 v2.1.0 + 截图 WebP | 版本号 2.1.0（package/lock/README/API/UPGRADE/mock）与 `CHANGELOG [2.1.0]`/`docs/RELEASE.md` 发布流程；截图重生成 WebP（23 张 **2429KB → 1231KB，−49.3%**，v2.1.0 UI、假名数据、无本机路径） | 文档链接 93 条 0 断链；截图脚本连跑两次 23/23；`read_image` 抽查；mock selftest 26/26 |
+
+**最终发布状态**：`package.json` v2.1.0，git tag `v2.1.0`，镜像重建并部署（验证见 §2.1 部署记录）。
 
 ---
 
@@ -253,25 +268,28 @@
 12. **e2e 稳定性 + 生命周期测试（INF-06/07）** ✅：env 白名单、稳定等待负向断言、mock 违规统一断言；新增 index 生命周期/错误映射/维护测试；Windows 跳过 2 条 POSIX-only 用例。
 13. **前端 a11y/CSS + 截图（F-08/F-16/F-17/F-23/INF-08）** ✅：颜色 token 达 WCAG AA、清 41 条死规则、统一断点；`scripts/screenshots.mjs` 用演示数据重生成 23 张 2.0.0 截图（无真实昵称/本机路径）。
 14. **工程化（INF-10/12/13/15/17/21）** ✅：ESLint（CI 0 告警）、`.editorconfig`、`.gitattributes`、dependabot、`docs/UPGRADE.md`、compose demo 加固、GHCR provenance/SBOM、覆盖率门禁接入发布流程。
+15. **settings 解耦** ✅：`settings.js` 762 → 32 行 façade + `settings/{schema,validate,apply,secrets,persistence}.js`；`auth.js` 只依赖 `settings/secrets.js`。
+16. **前端 state 按域拆分** ✅：`admin/state.js` 140 → 26 行组合入口 + `state/**` 8 文件；删除死状态 `viewLoaded`；`state.xxx`/`els.xxx` 路径不变。
+17. **e2e 端口与稳定性** ✅：真实端口回传（`PORT=0` + 启动日志解析，消除 TOCTOU）；`scripts/e2e-stability.mjs` 连跑 3 次全绿并接入 CI；生命周期用例 LOG_LEVEL 冲突修复。
+18. **doc-lint + v2.1.0 发布 + 截图 WebP** ✅：`scripts/doc-lint.mjs` 6 项值级门禁；版本 2.1.0、CHANGELOG/RELEASE 发布流程；23 张截图 WebP 化（−49.3%）。
 
 ### 6.2 短期（2–4 周，剩余事项）
 
-1. **剩余模块解耦**：`settings.js`（~758 行）拆 schema/validate/apply/secrets，`auth.js` 只依赖 secrets；`scheduler.js` 计划计算与执行分离；`app-rules.js` 引擎再拆 match/extract（当前 656 行已可接受，优先级低）。
-2. **前端状态与视图重构**：`state` 按域拆分、`els` 下沉到各视图、`views/app-rules|schedules` 的 editor/test/logs 子模块化；可选动态 `import()` 懒加载非默认视图（当前首屏加载全部视图模块）。
-3. **文档值级一致性（doc-lint）**：默认值表由 `config.js`/`SETTINGS_SCHEMA` 校验，`web/docs.html` 与 `docs/*.md` 做反向端点/字段校验；README 质量表由脚本生成或校验。
-4. **e2e CI 稳定性证据**：CI 固定 `--test-concurrency` 并连跑 3 次；app 端口改 `PORT=0` + 启动日志回传实际端口（当前 e2e 仍用 getFreePort，存在 TOCTOU 小窗口）。
-5. **测试工具链整理（INF-18/19）**：抽 `tests/helpers/unit-env.mjs` 统一单测 mkdtemp/env/cleanup；拆 `e2e-env.mjs`（进程管理 / HTTP 客户端 / 外部 API mock / 媒体工具）；mock e2e 统一 `assertNoRejections()` 已落地，可继续补协议 golden 对照。
-6. **可观测性**：overview 统计改单条聚合或 5–10s 缓存；补队列长度、规则执行耗时/失败率、媒体下载并发/内存等指标与结构化事件；IM 级告警。
-7. **截图体验**：当前截图为整视口（detail 类下滚 118px 区分），如需更聚焦可做内容裁剪/局部高亮（非功能项）。
-8. **依赖与发布**：处理 dependabot PR（Node 镜像 digest、actions SHA、npm devDeps）；README 与 Release 补充版本 tag 策略。
+1. **进一步模块化（可选，收益递减）**：`scheduler.js` 计划计算与执行分离、`app-rules.js` 引擎再拆 match/extract（当前 656 行可接受）；`web/assets/admin/views/app-rules|schedules` 再拆 editor/test/logs 子模块。
+2. **前端视图懒加载**：当前 `/admin` 首屏加载全部视图模块；可对非默认视图使用动态 `import()` 降低首屏解析量（零构建约束下可行）。
+3. **测试工具链整理（INF-18/19）**：抽 `tests/helpers/unit-env.mjs` 统一单测 mkdtemp/env/cleanup；拆 `e2e-env.mjs`（进程管理 / HTTP 客户端 / 外部 API mock / 媒体工具）；mock 协议 golden 对照。
+4. **可观测性**：overview 统计改单条聚合或 5–10s 缓存；补队列长度、规则执行耗时/失败率、媒体下载并发/内存等指标与结构化事件；IM 级告警。
+5. **依赖与发布**：处理 dependabot PR（Node 镜像 digest、actions SHA、npm devDeps）；推送 v2.1.0 tag 触发 GHCR 发布并建 GitHub Release（见 `docs/RELEASE.md`）。
+6. **截图体验**：当前为整视口（detail 类下滚 118px 区分），如需更聚焦可做内容裁剪/局部高亮（非功能项）。
+7. **doc-lint 扩展**：可覆盖 docs.html 文案与 docs/*.md 的语义级一致性（当前为端点/默认值/链接级）。
 
 ### 6.3 中期（1–2 月，可持续）
 
-1. **文档单一来源**：由代码/契约生成默认值表与端点表，CI doc-lint；`docs/UPGRADE.md` 升级步骤随 schema 变更同步。
-2. **发布与仓库卫生**：打 tag + GitHub Release（CHANGELOG 已建立）；截图转 WebP/压缩或外链（当前 23 张约 2.4MB）；历史提交中的旧截图（含旧演示昵称）如需彻底清理需评估重写公开历史的风险。
+1. **文档单一来源**：由代码/契约生成默认值表与端点表（当前 doc-lint 已做值级校验，可进一步生成 docs 表格片段）。
+2. **发布与仓库卫生**：GitHub Release 自动化（release-please 或 release 脚本）；历史提交中的旧 PNG 截图（含旧演示昵称）如需彻底清理需评估重写公开历史的风险。
 3. **可观测性与性能基准**：性能基准脚本（消息/队列/媒体吞吐）、慢查询日志、DB 体积与 WAL 监控。
 4. **schema 演进工具**：当前"拒绝旧库、只能空库重建"是明确取舍；若用户规模增长，设计一次性导出/导入工具（旧库 → 新库）。
-5. **安全纵深**：依赖与镜像定期扫描（SBOM 已产出）、密钥轮换流程文档化、审计日志导出。
+5. **安全纵深**：依赖与镜像定期扫描（SBOM 已产出）、密钥轮换流程文档化、审计日志导出；生产接入 HTTPS/反向代理并启用 `TRUST_PROXY`/`COOKIE_SECURE`。
 
 ### 6.4 需要 Owner 决策的事项
 
@@ -279,8 +297,9 @@
 2. **入站媒体默认上限**：资源加固后默认仍为 100MB/文件（未下调以避免行为变更）；若部署实例内存有限，建议下调或明确按"并发 2 × 单文件"估算内存模型。
 3. **schema 版本策略**：当前"拒绝旧库、只能空库重建"是明确取舍；本轮新增查询索引通过 `CREATE INDEX IF NOT EXISTS` 启动幂等补齐、未改 schema 版本。若后续需要加列/改表，需先决定是否恢复可迁移路径。
 4. **APP_SECRET 轮换**：当前运行实例曾出现 `data/admin-password.txt` 缺失告警（旧卷升级场景）；若曾打包/分享过工作区，建议轮换 `APP_SECRET`（代价：已绑定用户需重新扫码）。
-5. **公开仓库历史隐私**：截图已用假名演示数据重新生成，但旧截图（含旧演示昵称）仍存在于 git 历史中；若确认为真实用户数据，需按隐私事件处理（重写历史或归档仓库）。
-6. **是否引入 Prettier / Playwright 等开发期依赖**：ESLint 已引入并零告警；格式化与浏览器 E2E 是否需要增加 devDependencies 与 CI 时间，由 Owner 决定。
+5. **公开仓库历史隐私**：截图已用假名演示数据重新生成（当前工作区无真实昵称），但旧截图仍存在于 git 历史中；若确认为真实用户数据，需按隐私事件处理（重写历史或归档仓库）。
+6. **是否推送 v2.1.0 tag / 发布 GHCR 镜像**：本地已建 tag `v2.1.0`；推送 tag 会触发 GitHub Actions 多架构构建并发布 `ghcr.io/shihao618/clawbridge:v2.1.0`（需确认 GitHub 凭据与镜像仓库策略后由 Owner 执行 `git push origin v2.1.0`）。
+7. **是否引入 Prettier / Playwright 等开发期依赖**：ESLint 已引入并零告警；格式化与浏览器 E2E 是否需要增加 devDependencies 与 CI 时间，由 Owner 决定。
 
 ---
 
@@ -288,13 +307,13 @@
 
 | 风险 | 建议跟踪方式 |
 | --- | --- |
-| `settings.js`/`auth.js` 解耦、前端 state/els 重构 | 下一轮重构任务，按 `docs/review/*.md` 的分步迁移方案执行，每步跑全量测试 |
-| e2e 稳定性缺乏 CI 实测证据 | 接入 CI 后连续跑 10 次观察；app 端口改 `PORT=0`+日志回传（当前 getFreePort 仍有 TOCTOU 小窗口） |
-| 文档值级漂移 | doc-lint：默认值/端点表由代码与契约生成或校验 |
+| 进一步模块化/懒加载（收益递减项） | 下一轮可选重构，按 `docs/review/*.md` 的分步迁移方案执行，每步跑全量测试 |
+| CI 长期稳定性 | 已接入 e2e 连跑脚本（本地 3/3）；推送到 GitHub 后观察 CI 运行结果，必要时固定 runner/超时 |
 | 旧库升级路径 | `docs/UPGRADE.md` 已给出备份→空库重建→重新绑定与回滚步骤；如未来需要原地升级再设计导出/导入工具 |
 | 入站媒体 100MB 默认上限 × 并发 2 的内存模型 | 部署前按实例内存评估，必要时下调 `INBOUND_MEDIA_MAX_BYTES` |
-| 公开仓库历史中的旧截图（旧演示昵称） | 若确认为真实用户数据，需重写公开 git 历史或归档；当前新截图已脱敏 |
-| 生产实例尚未部署本次改动 | 本次已在本地 `docker build` + 容器冒烟验证；部署步骤与回滚见交付说明 |
+| 公开仓库历史中的旧截图（旧演示昵称） | 当前工作区截图已脱敏；旧提交内容若确认为真实数据需重写公开 git 历史或归档 |
+| v2.1.0 tag/GHCR 发布 | 本地 tag 已创建；推送 `git push origin v2.1.0` 后由 workflow 发布镜像（Owner 确认凭据后执行） |
+| 生产部署 | 已部署 v2.1.0（compose 容器 healthy，数据卷保留；见 §2.1 部署记录） |
 
 ---
 
@@ -307,10 +326,12 @@ npm ci
 npm test                 # 464 项（unit + e2e，462 通过 + 2 项 POSIX-only 跳过），约 35s
 npm run test:unit        # 需要快速回归时（373 项）
 npm run test:e2e
+npm run e2e:stability    # e2e 串行连跑 3 次并汇总（CI 门禁）
 npm run test:ui          # 浏览器冒烟（需本机 Edge/Chrome，无则跳过）
 npm run coverage         # in-process 覆盖率 + CI 阈值（line 90 / branch 70 / funcs 85）
 npm run lint             # ESLint（CI --max-warnings=0）
-npm run screenshots      # 用演示数据重新生成 README 截图（可选，需浏览器）
+npm run doc:lint         # 文档值级一致性（版本/env/设置字段/端点/链接/质量表命令）
+npm run screenshots      # 用演示数据重新生成 README WebP 截图（可选，需浏览器）
 node mock/selftest.mjs   # mock 协议自测 26 项
 docker compose config    # 校验 3 份 compose（demo 需 --profile demo）
 ```

@@ -220,7 +220,6 @@ async function loadView(viewId, { silent = false } = {}) {
   const loaders = viewLoaders.get(viewId) || [];
   const tasks = loaders.map((loader) => loader());
   const results = await Promise.allSettled(tasks);
-  state.viewLoaded.add(viewId);
   if (!silent) {
     const failed = results.find((result) => result.status === 'rejected');
     if (failed && failed.reason && failed.reason.status !== 401) {

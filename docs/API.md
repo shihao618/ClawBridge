@@ -140,7 +140,7 @@ GET /api/admin/overview
     "inboundLast24h": 8
   },
   "server": {
-    "version": "2.0.0",
+    "version": "2.1.0",
     "uptimeMs": 123456,
     "now": 1760000000000,
     "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
@@ -244,7 +244,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
 ```
 GET /api/admin/config
 → 200 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
@@ -382,7 +382,7 @@ Resp 201:
 错误：400（缺少 X-File-Name 请求头、或请求体为空）、413（超过上限）、401（未登录）。
 ```
 
-> **MIME 行为（v2.0.0 实际实现）**：服务端**不校验 MIME 白名单、也不会因 MIME 非法返回 400**。
+> **MIME 行为（当前实现，v2.1.0 起一致）**：服务端**不校验 MIME 白名单、也不会因 MIME 非法返回 400**。
 > `Content-Type` 取请求头（缺失或 `application/octet-stream` 时按文件名扩展名/魔数嗅探），
 > 然后按 MIME/扩展名归入 `image` / `video`，**其余一律按 `file` 入库并发送**。
 > `X-File-Name` 只做安全清洗（去目录、控制字符、限长；全空时回退 `file.bin`），

@@ -34,6 +34,11 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, '..', '..');
 
+/** package.json 版本号（e2e 断言 /version 字段用，避免测试里硬编码版本号随发版漂移）。 */
+export const PACKAGE_VERSION = String(
+  JSON.parse(await fsp.readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')).version ?? '0.0.0',
+);
+
 /**
  * APP_SECRET 仍由 env 注入（§7.1 六项之一，e2e 用固定值便于重复启动）。
  * 管理密码 / API Token 不再由 env 提供：app 首启自动生成到 DATA_DIR 文件，
@@ -198,7 +203,13 @@ function createLogCollector(child, name) {
       if (lines.length > 2000) lines.shift();
       try {
         const parsed = JSON.parse(line);
+        // mock：{"event":"listening","port":...}
         if (parsed?.event === 'listening' && Number(parsed.port) > 0) collector.listeningPort = Number(parsed.port);
+        // app（server/src/index.js）：启动日志 "ClawBridge 已启动" 的 port 为实际监听端口（PORT=0 时为 OS 分配），
+        // e2e 用它替代 getFreePort“先探测再监听”的 TOCTOU 方案。
+        else if (parsed?.msg === 'ClawBridge 已启动' && Number(parsed.port) > 0) {
+          collector.listeningPort = Number(parsed.port);
+        }
       } catch {
         /* 非 JSON 行（node warning 等）忽略解析 */
       }
@@ -1479,7 +1490,8 @@ const BASE_APP_ENV = {
   NODE_ENV: 'test',
   HOST: '127.0.0.1',
   APP_SECRET,
-  LOG_LEVEL: 'error',
+  // 必须 info：app 启动日志 "ClawBridge 已启动" 携带实际监听端口，e2e 依赖它回传 PORT=0 的真实端口。
+  LOG_LEVEL: 'info',
   BINDING_POLL_GAP_MS: '50',
   BINDING_IP_LIMIT_PER_HOUR: '1000',
   RATE_LIMIT_MAX: '100',
@@ -1549,26 +1561,59 @@ export async function startE2E({
   const mockUrl = `http://127.0.0.1:${mockPort}`;
 
   // 2) app
-  const appPort = await getFreePort();
+  // PORT=0：由 OS 分配随机端口（彻底消除 getFreePort “先探测再监听”的 TOCTOU 竞态），
+  // 实际端口从启动日志 "ClawBridge 已启动" 的 port 字段回传（server/src/index.js 输出实际监听端口）。
+  const appChildEnv = buildChildEnv({
+    ...BASE_APP_ENV,
+    ...parseExtraAppEnv(),
+    PORT: '0',
+    DATA_DIR: dataDir,
+    ILINK_LOGIN_BASE_URL: mockUrl,
+    ILINK_BASE_URL: mockUrl,
+    // mock CDN 的下载路径为 /cdn/download?encrypted_query_param=…；
+    // 后端按 `{ILINK_CDN_BASE_URL}/download?…` 拼 URL，因此 base 需带 /cdn 后缀。
+    ILINK_CDN_BASE_URL: `${mockUrl}/cdn`,
+    ...appEnv,
+  });
+  // 端口回传依赖 info 级的「ClawBridge 已启动」日志：调用方若把 LOG_LEVEL 调成 warn/error/silent，
+  // 会拿不到端口（曾导致 backend-index-lifecycle 用例等待 20s 超时），这里强制回退到 info；
+  // 只有显式 debug（更详细）时保留。
+  if (!['debug', 'info'].includes(String(appChildEnv.LOG_LEVEL ?? '').toLowerCase())) {
+    appChildEnv.LOG_LEVEL = 'info';
+  }
   const appProc = spawn(process.execPath, [path.join(REPO_ROOT, 'server', 'src', 'index.js')], {
     cwd: REPO_ROOT,
-    env: buildChildEnv({
-      ...BASE_APP_ENV,
-      ...parseExtraAppEnv(),
-      PORT: String(appPort),
-      DATA_DIR: dataDir,
-      ILINK_LOGIN_BASE_URL: mockUrl,
-      ILINK_BASE_URL: mockUrl,
-      // mock CDN 的下载路径为 /cdn/download?encrypted_query_param=…；
-      // 后端按 `{ILINK_CDN_BASE_URL}/download?…` 拼 URL，因此 base 需带 /cdn 后缀。
-      ILINK_CDN_BASE_URL: `${mockUrl}/cdn`,
-      ...appEnv,
-    }),
+    env: appChildEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
   appProc.on('error', () => {});
   const appLogs = createLogCollector(appProc, 'app');
+
+  let appPort = 0;
+  try {
+    const deadline = Date.now() + 20000;
+    while (appLogs.listeningPort <= 0) {
+      if (appProc.exitCode != null || appProc.signalCode != null) {
+        throw new Error(`app 进程提前退出（code=${appProc.exitCode}, signal=${appProc.signalCode}）`);
+      }
+      if (Date.now() >= deadline) throw new Error('app 启动日志端口回传超时（20000ms）');
+      await sleep(25);
+    }
+    appPort = appLogs.listeningPort;
+  } catch (err) {
+    // 启动失败：回收 app/mock 子进程与临时目录，避免残留（此时 E2E 实例尚未创建）
+    try {
+      appProc.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    await stopProcess(mockProc, mockLogs, 'mock').catch(() => {});
+    if (ownsDataDir) {
+      await fsp.rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+    }
+    throw new Error(`${err.message}\n--- app 日志 ---\n${appLogs.tail(60)}\n--- mock 日志 ---\n${mockLogs.tail(40)}`);
+  }
   const appUrl = `http://127.0.0.1:${appPort}`;
 
   const e2e = new E2E({
