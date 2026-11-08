@@ -28,7 +28,7 @@
 # - 发布镜像由 GHCR 工作流附加 SBOM 与 build provenance attestation（见
 #   .github/workflows/docker-publish.yml 的 provenance/sbom 参数）。
 # =============================================================================
-FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
 
 LABEL org.opencontainers.image.title="ClawBridge" \
       org.opencontainers.image.description="Multi-user WeChat ClawBot binding & messaging bridge" \
