@@ -5143,13 +5143,9 @@ function renderSettings() {
       // 推送 API 开关在「安全」卡片中单独管理（走 PATCH settings security.pushApiEnabled）
       if (group.key === 'security' && field.key === 'pushApiEnabled') continue;
       const control = buildSettingControl(group, field, meta.type, state.settings.draft.get(key));
-      const settingsSpanClass = group.key === 'ilink'
-        ? ''
-        : key === 'keepalive.text' || meta.type === 'array'
-          ? ' settings-field--full'
-          : ['string', 'url', 'enum', 'text'].includes(meta.type)
-            ? ' settings-field--wide'
-            : '';
+      const settingsSpanClass = key === 'keepalive.text' || meta.type === 'array'
+        ? ' settings-field--full'
+        : '';
       const minMax =
         field.min !== undefined && field.min !== null || field.max !== undefined && field.max !== null
           ? `范围：${field.min ?? '—'} ~ ${field.max ?? '—'}`

@@ -120,11 +120,11 @@ const GROUPS = [
     fields: [
       { key: 'loginBaseUrl', label: '登录服务地址', type: 'url', restartRequired: true, description: 'iLink 登录服务 Base URL（修改需重启）' },
       { key: 'defaultBaseUrl', label: '默认服务地址', type: 'url', restartRequired: true, description: 'iLink 业务服务 Base URL（修改需重启）' },
-      { key: 'appId', label: 'App ID', type: 'string', min: 1, max: 100, restartRequired: true, description: 'iLink App ID（修改需重启）' },
+      { key: 'cdnBaseUrl', label: '媒体 CDN 地址', type: 'url', restartRequired: true, description: '媒体上传/下载 CDN Base URL（修改需重启）' },
       { key: 'channelVersion', label: '渠道版本', type: 'string', min: 1, max: 50, restartRequired: true, description: '请求头中的 channel version（修改需重启）' },
       { key: 'botAgent', label: 'Bot Agent', type: 'string', min: 1, max: 100, restartRequired: true, description: '请求头中的 Bot-Agent（修改需重启）' },
       { key: 'botType', label: 'Bot 类型', type: 'string', min: 1, max: 20, restartRequired: true, description: 'iLink bot type（修改需重启）' },
-      { key: 'cdnBaseUrl', label: '媒体 CDN 地址', type: 'url', restartRequired: true, description: '媒体上传/下载 CDN Base URL（修改需重启）' },
+      { key: 'appId', label: 'App ID', type: 'string', min: 1, max: 100, restartRequired: true, description: 'iLink App ID（修改需重启）' },
       { key: 'routeTag', label: '路由标签', type: 'string', min: 0, max: 200, restartRequired: true, description: '可选路由标签（修改需重启）' },
       { key: 'clientVersion', label: '客户端版本号', type: 'number', min: 1, max: 1000000000, restartRequired: true, description: '请求头中的 client version（修改需重启）' },
       { key: 'requestTimeoutMs', label: '请求超时（毫秒）', type: 'number', min: 1000, max: 120000, restartRequired: true, description: 'iLink 请求超时（修改需重启）' },

@@ -1463,9 +1463,11 @@ test('后台表单三列栅格：下拉占 1 列、输入占 2 列、长文本/�
   assert.match(css, /\.rule-form-grid\s*\{[\s\S]*?repeat\(3, minmax\(0, 1fr\)\)/, '主表单应为三列栅格');
   assert.match(css, /\.schedule-plan-main-row\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/, '计划类型/间隔、开始/结束时间应各占一半');
   assert.match(css, /\.form-grid-2\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/, '两列字段行应为等宽两列');
-  for (const token of ['.form-field--wide', '.form-field--full', '.settings-field--wide', '.settings-field--full']) {
+  for (const token of ['.form-field--wide', '.form-field--full', '.settings-field', '.settings-field--full']) {
     assert.ok(css.includes(token), `style.css 应定义字段跨度：${token}`);
   }
+  assert.match(css, /\.settings-fields\s*\{[\s\S]*?display:\s*flex[\s\S]*?flex-wrap:\s*wrap/, '运行配置行应使用自动填满的 flex 布局');
+  assert.match(css, /\.settings-field\s*\{[\s\S]*?flex:\s*1 1 calc\(\(100% - 36px\) \/ 3\)/, '运行配置字段应按行内数量自动均分');
   assert.match(css, /@media \(max-width: 1023px\)[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/, '平板应降为两列');
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/, '手机应降为单列');
 });
