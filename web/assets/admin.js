@@ -5143,13 +5143,20 @@ function renderSettings() {
       // 推送 API 开关在「安全」卡片中单独管理（走 PATCH settings security.pushApiEnabled）
       if (group.key === 'security' && field.key === 'pushApiEnabled') continue;
       const control = buildSettingControl(group, field, meta.type, state.settings.draft.get(key));
-      const settingsSpanClass = key === 'keepalive.text' || meta.type === 'array'
+      const settingsSpanClass = key === 'keepalive.text'
         ? ' settings-field--full'
-        : '';
+        : key === 'media.allowedImageMime' || key === 'media.allowedVideoMime'
+          ? ' settings-field--half'
+          : meta.type === 'array'
+            ? ' settings-field--full'
+            : '';
       const minMax =
         field.min !== undefined && field.min !== null || field.max !== undefined && field.max !== null
           ? `范围：${field.min ?? '—'} ~ ${field.max ?? '—'}`
           : '';
+      if (key === 'media.allowedImageMime') {
+        fieldsBox.append(el('div', { class: 'settings-row-break', 'aria-hidden': 'true' }));
+      }
       fieldsBox.append(
         el(
           'div',
