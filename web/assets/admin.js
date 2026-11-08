@@ -2059,9 +2059,9 @@ function openAppRuleEditor(rule = null) {
       ),
       el(
         'div',
-        { class: 'rule-form-grid' },
-        formField('规则名称', nameInput, '必填，1-60 字符', 'rule-name-input', { span: 2 }),
-        formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input', { span: 1 }),
+        { class: 'form-grid-2' },
+        formField('规则名称', nameInput, '必填，1-60 字符', 'rule-name-input'),
+        formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input'),
       ),
       errorNode,
     ),
