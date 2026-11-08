@@ -3,23 +3,24 @@
  * 本地假 HTTP server；假 now 仅用于冷却；不触真实外网。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-app-rules-engine-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'app-rules-engine-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'app-rules-engine-password';
-process.env.API_TOKEN = 'app-rules-engine-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.APP_RULES_ALLOWED_HOSTS = '127.0.0.1';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-app-rules-engine-',
+  env: {
+    APP_SECRET: 'app-rules-engine-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'app-rules-engine-password',
+    API_TOKEN: 'app-rules-engine-token',
+    LOG_LEVEL: 'silent',
+    APP_RULES_ALLOWED_HOSTS: '127.0.0.1',
+  },
+});
 
 const appRules = await import('../../server/src/app-rules.js');
 const store = await import('../../server/src/store.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 
 let server;
 let port = 0;
@@ -46,9 +47,8 @@ test.before(async () => {
 
 test.after(async () => {
   appRules.stop();
-  closeDb();
   if (server) await new Promise((resolve) => server.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

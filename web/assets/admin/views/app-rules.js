@@ -6,7 +6,7 @@ import { MULTI_EXTRACTOR_TYPE_LABELS, RULE_EXTRACTION_LABELS, RULE_RUN_STATUS_ME
 import { loadErrorHandler, refreshAfterWrite } from '../core.js';
 import { els, state } from '../state.js';
 import { buildTemplateTools } from '../templates.js';
-import { buildRequestRow, buildResponseRow, buildSwitch, createTableClickHandler, emptyRow, formField, formSection, rowActionButton } from '../ui.js';
+import { buildRequestRow, buildResponseRow, buildSwitch, createTableClickHandler, emptyRow, formField, formSection, rowActionButton, setupTablist } from '../ui.js';
 import { $$, apiFetch, clearNode, confirmDialog, el, formatDateTime, formatNumber, formatRelative, setHidden, toast, toastError } from '../../common.js';
 import { parseKeywordsInput } from '../../lib/parse.js';
 import { RULE_MATCH_LABELS, RULE_SCOPE_LABELS, scopeSummary, triggerSummary } from '../../lib/summary.js';
@@ -20,6 +20,7 @@ import { createFormError, createSaveAction, openEditorModal } from '../integrati
 import { loadPickerUsers } from './users.js';
 
 export async function loadAppRules() {
+  initAppRulesView();
   const data = await apiFetch('/api/admin/app-rules?includeDisabled=1');
   state.appRules.items = data && Array.isArray(data.items) ? data.items : [];
   renderAppRules();
@@ -928,5 +929,25 @@ function openRuleLogsModal(rule) {
       );
     },
     errorFallback: '加载规则运行日志失败',
+  });
+}
+
+/** 接口应用视图事件绑定（首次进入该视图时加载，幂等）。 */
+let appRulesViewBound = false;
+export function initAppRulesView() {
+  if (appRulesViewBound) return;
+  appRulesViewBound = true;
+  els.createRuleButton.addEventListener('click', () => openAppRuleEditor(null));
+  els.ruleStatusFilter.addEventListener('change', () => {
+    state.appRules.filter = els.ruleStatusFilter.value || 'all';
+    renderAppRules();
+  });
+  els.appRuleTableBody.addEventListener('click', handleAppRuleTableClick);
+  // 接口应用页内 Tab：规则列表 / 定时通知（点击 + 方向键/Home/End，F-07）
+  setupTablist({
+    tablist: els.ruleTabs,
+    tabSelector: 'button[data-rule-tab]',
+    getValue: (tab) => tab.dataset.ruleTab,
+    onChange: setRuleTab,
   });
 }

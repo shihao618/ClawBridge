@@ -10,23 +10,26 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-maintenance-'));
-process.env.DATA_DIR = dataDir;
-delete process.env.MEDIA_DIR; // 媒体目录跟 DATA_DIR 走：<DATA_DIR>/media
-process.env.APP_SECRET = 'maintenance-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'maintenance-password';
-process.env.API_TOKEN = 'maintenance-token';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-maintenance-',
+  env: {
+    MEDIA_DIR: undefined, // 媒体目录跟 DATA_DIR 走：<DATA_DIR>/media
+    APP_SECRET: 'maintenance-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'maintenance-password',
+    API_TOKEN: 'maintenance-token',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const maintenance = await import('../../server/src/maintenance.js');
 const store = await import('../../server/src/store.js');
 const media = await import('../../server/src/media.js');
 const { config } = await import('../../server/src/config.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 关闭 SQLite 优化动作，避免测试环境 WAL/统计行为干扰断言。 */
@@ -34,8 +37,7 @@ const NO_OPTIMIZE = { pragmaOptimize: false, walCheckpoint: false };
 
 test.after(async () => {
   await maintenance.stop();
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

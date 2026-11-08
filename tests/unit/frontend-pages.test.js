@@ -1612,8 +1612,11 @@ test('无障碍：Tab 组件具备 tabpanel/aria-controls/roving tabindex 与键
   for (const token of ['setupTablist', 'ArrowRight', 'ArrowLeft', 'Home', 'End', 'tabIndex', 'aria-selected']) {
     assert.ok(ui.includes(token), `ui.js setupTablist 应实现键盘/roving 语义：${token}`);
   }
-  assert.match(entry, /tablist: els\.messagesTabs/, '入口应初始化消息方向 Tab');
-  assert.match(entry, /tablist: els\.ruleTabs/, '入口应初始化接口应用 Tab');
+  // Tab 初始化随视图懒加载下沉到各视图模块（entry 不再静态绑定视图内事件）
+  assert.ok(!entry.includes('tablist: els.messagesTabs'), '消息 Tab 初始化应随消息视图按需加载');
+  assert.ok(!entry.includes('tablist: els.ruleTabs'), '规则/定时 Tab 初始化应随接口应用视图按需加载');
+  assert.match(messages, /tablist: els\.messagesTabs/, '消息视图应初始化消息方向 Tab');
+  assert.match(appRules, /tablist: els\.ruleTabs/, '接口应用视图应初始化规则/定时 Tab');
   assert.match(messages, /aria-labelledby.*messages-tab/, '消息方向切换应同步面板 aria-labelledby');
   assert.match(appRules, /button\.tabIndex = active \? 0 : -1/, '规则/定时 Tab 切换应维护 roving tabindex');
 });

@@ -12,11 +12,9 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-media-inbound-'));
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
 // ---------------------------------------------------------------------------
 // 假 CDN：/cdn/download?encrypted_query_param=<token> → 返回预置密文
@@ -93,26 +91,30 @@ function registerCdnFile(plaintext, token, { rawKeyBase64 = false } = {}) {
 }
 
 // 必须在 import 业务模块前设置
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'media-inbound-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'media-inbound-password';
-process.env.API_TOKEN = 'media-inbound-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.ILINK_CDN_BASE_URL = cdnBase;
-process.env.INBOUND_MEDIA_MAX_BYTES = '4096';
-process.env.MEDIA_DOWNLOAD_TIMEOUT_MS = '5000';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-media-inbound-',
+  env: {
+    APP_SECRET: 'media-inbound-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'media-inbound-password',
+    API_TOKEN: 'media-inbound-token',
+    LOG_LEVEL: 'silent',
+    ILINK_CDN_BASE_URL: cdnBase,
+    INBOUND_MEDIA_MAX_BYTES: '4096',
+    MEDIA_DOWNLOAD_TIMEOUT_MS: '5000',
+  },
+});
+const dataDir = unitEnv.dataDir;
 
 const monitor = await import('../../server/src/monitor.js');
 const store = await import('../../server/src/store.js');
 const media = await import('../../server/src/media.js');
 const { config } = await import('../../server/src/config.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 
-after(() => {
-  closeDb();
+after(async () => {
   fake.closeAllConnections?.();
   fake.close();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

@@ -147,6 +147,23 @@ GET /api/admin/overview
     "rateLimit": { "max": 7, "windowMs": 300000 },
     "monitorsRunning": 3,
     "bindingSessionsActive": 0
+  },
+  "metrics": {                        // 可观测性摘要（task-29，新增字段；旧字段不变）
+    "uptimeMs": 123456,
+    "memory": { "rss": 73400320, "heapUsed": 31457280 },
+    "gauges": {
+      "monitorRunningAccounts": 3,
+      "mediaInboundActive": 0,
+      "mediaInboundQueued": 0,
+      "outboxQueued": 0,
+      "outboxSending": 0
+    },
+    "counters": {
+      "dispatcherSent": 12, "dispatcherFailed": 1, "dispatcherRetried": 2,
+      "dispatcherRateLimited": 0, "mediaDownloaded": 4, "mediaDownloadFailed": 0
+    },
+    "appRules24h": { "matched": 0, "success": 8, "failed": 1, "skipped": 0, "total": 9 },
+    "scheduledTasks24h": { "success": 2, "failed": 0, "skipped": 0, "total": 2 }
   }
 }
 ```
@@ -260,6 +277,55 @@ GET /api/admin/config
 
 > 运行期可改参数的完整列表与生效方式（含 `restartRequired`）以
 > `GET /api/admin/settings` 与 [`docs/SETTINGS.md`](SETTINGS.md) 为准；本接口只返回脱敏摘要。
+
+### 2.8 可观测性指标（只读）
+
+```
+GET /api/admin/metrics          # 需要管理后台 Cookie 会话（401 未登录）
+→ 200 {
+  "serverTime": 1760000000000,
+  "version": "2.1.0",
+  "pid": 12345,
+  "node": "v24.20.0",
+  "uptimeMs": 123456,             // 进程运行时长
+  "memory": { "rss": 73400320, "heapTotal": 41943040, "heapUsed": 31457280,
+              "external": 1048576, "arrayBuffers": 524288 },
+  "heap": { "totalBytes": 41943040, "usedBytes": 31457280, "usedPercent": 75 },
+  "counters": {                   // 进程内单调递增计数（重启清零）
+    "monitor.poll.total": 120, "monitor.poll.errors.total": 1,
+    "monitor.stale_token.total": 0, "monitor.inbound_save_retry.total": 0,
+    "dispatcher.sent.total": 12, "dispatcher.failed.total": 1,
+    "dispatcher.retry.total": 2, "dispatcher.rate_limited.total": 0,
+    "dispatcher.stale_token.total": 0,
+    "media.inbound.downloaded.total": 4, "media.inbound.failed.total": 0,
+    "media.inbound.gate_rejected.total": 0
+  },
+  "gauges": {                     // 瞬时值：静态 + 动态 provider 求值
+    "monitor.running_accounts": 3, "monitor.last_poll_at": 1760000000000,
+    "media.inbound.active": 0, "media.inbound.queued": 0,
+    "media.inbound.accepted": 4, "media.inbound.completed": 4,
+    "media.inbound.rejected": 0, "media.inbound.timedOut": 0,
+    "media.inbound.maxConcurrent": 4, "media.inbound.maxQueue": 64
+  },
+  "histograms": {                 // 延迟分布（桶为累计计数，最后一项=count）
+    "dispatcher.send_latency_ms": { "count": 12, "sum": 840.5, "min": 12.3,
+      "max": 320.1, "avg": 70.04,
+      "buckets": [ { "le": 5, "count": 0 }, { "le": 10, "count": 0 }, { "le": 25, "count": 3 }, "…" ] }
+  },
+  "aggregates": {                 // 从 SQLite 现有表聚合（不新增埋点）
+    "outbox": { "queued": 0, "sending": 0, "sent": 12, "failed": 1, "total": 13 },
+    "appRules24h": { "matched": 0, "success": 8, "failed": 1, "skipped": 0, "total": 9 },
+    "scheduledTasks24h": { "success": 2, "failed": 0, "skipped": 0, "total": 2 }
+  }
+}
+```
+
+- 仅管理端 Cookie 会话可读（`auth.requireAdmin`）；只读接口，不写库、不回传用户 id/token/消息正文。
+- 指标为**进程内内存态**：重启清零、不做持久化与多副本聚合（单进程部署）。
+- `counters` 为累积值，`gauges` 为快照时求值（如 monitor 运行账号数、媒体闸门排队数）；
+  `histograms` 的桶为累计计数（`le` 上界包含），最后一个桶应等于 `count`。
+- `aggregates` 依赖数据库：DB 不可用的瞬间对应分组可能为 `null`，接口本身仍返回 200。
+- `GET /api/admin/overview` 也会附带紧凑 `metrics` 摘要（见 §2.2），旧字段保持向后兼容。
 
 ## 3. 对外推送 API（API Key）
 

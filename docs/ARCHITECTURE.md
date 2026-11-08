@@ -18,14 +18,14 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
 
 | 路径 | 内容 |
 | --- | --- |
-| `server/src/config.js` / `logger.js` / `errors.js` / `crypto.js` / `db.js` / `rate-limiter.js` / `index.js` | 基础层：环境变量与默认值、结构化日志与脱敏、错误类型与错误码、AES-GCM/会话签名、SQLite 初始化与 schema 校验、限流器、进程入口与生命周期（含优雅退出/维护任务接线） |
+| `server/src/config.js` / `logger.js` / `errors.js` / `crypto.js` / `db.js` / `rate-limiter.js` / `metrics.js` / `index.js` | 基础层：环境变量与默认值、结构化日志与脱敏、错误类型与错误码、AES-GCM/会话签名、SQLite 初始化与 schema 校验、限流器、进程内可观测性指标（counter/gauge/histogram + 24h 日志聚合，见 §20）、进程入口与生命周期（含优雅退出/维护任务接线） |
 | `server/src/ilink.js` / `media.js` | 协议层：微信 ClawBot 协议客户端；媒体加解密、MIME、CDN 上下行（出站上传/入站有界并发+流式下载解密） |
 | `server/src/store.js` | 数据层 façade：`export *` 重导出 `data/**`，保持既有导出名与调用方零改动 |
 | `server/src/data/` | 数据层按域实现：`users.js`、`groups.js`、`keepalive.js`、`rules.js`、`scheduled.js`、`attachments.js`、`outbox.js`、`inbound.js`、`messages.js`、`events.js`、`stats.js` + `mappers.js`/`helpers.js` |
 | `server/src/shared/` | 领域共享层：`http-client.js`（SSRF/传输/钉 IP/响应读取）、`template.js`（模板引擎）、`response.js`（响应解析）、`http-execute.js`（渲染→HTTP→解析→渲染回复管线） |
 | `server/src/binding.js` / `monitor.js` / `dispatcher.js` / `keepalive.js` / `app-rules.js` / `scheduler.js` / `settings.js` / `auth.js` / `maintenance.js` | 领域层：扫码绑定状态机、入站长轮询、出站队列 drain、会话保活、接口应用规则引擎（656 行，依赖 `shared/**`）、定时通知（依赖 `shared/**`，独立 HTTP 限制配置）、运行配置与机密管理（`settings.js` 32 行 façade + `settings/{schema,validate,apply,secrets,persistence}.js`；`auth.js` 只依赖 secrets）、认证与限流、数据生命周期维护（孤儿附件/日志保留 GC） |
 | `server/src/http/` | HTTP 支撑层：`middleware.js`（安全头/body 解析/404/统一错误处理）、`helpers.js`、`views.js`、`validators.js`、`app-rule-validators.js`、`scheduled-validators.js`、`media-handlers.js`、`queue-service.js` |
-| `server/src/routes/` | 路由层：`public.js`（健康检查/扫码绑定）、`admin-auth.js`、`admin-users.js`、`admin-groups.js`、`admin-rules.js`、`admin-scheduled.js`、`admin-settings.js`、`admin-messages.js`、`v1.js`、`webhook.js`、`pages.js` |
+| `server/src/routes/` | 路由层：`public.js`（健康检查/扫码绑定）、`admin-auth.js`、`admin-users.js`、`admin-groups.js`、`admin-rules.js`、`admin-scheduled.js`、`admin-settings.js`、`admin-messages.js`、`admin-metrics.js`（只读指标快照）、`v1.js`、`webhook.js`、`pages.js` |
 | `server/src/api.js` | Express 组合根：仅装配中间件顺序与挂载路由（`createApp()`） |
 | `web/*.html` + `web/assets/style.css` | 零构建前端页面（绑定页 / 管理后台 / API 文档页）与全站样式（WCAG AA 对比度 token、统一断点） |
 | `web/assets/common.js` / `bind.js` / `docs.js` | 公共能力（fetch/上传/DOM/格式化/toast/modal 焦点陷阱/轮询/抽屉）与两个页面入口 |
@@ -35,8 +35,9 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
 | `mock/**` | 零依赖微信 iLink 模拟器 + 控制面 + 自测（26 项，含 `/mock-bind` 占位页） |
 | `tests/unit/**` | 进程内单测 + 前端静态/模块/纯函数测试 + 生命周期/错误/维护等针对性测试 |
 | `tests/e2e/**` | 真实 app + mock 双进程、随机端口、临时 DATA_DIR 的全 HTTP 黑盒测试（子进程 env 白名单、稳定等待断言、mock 违规统一断言） |
-| `tests/helpers/e2e-env.mjs` | e2e 环境管理、断言助手、外部 HTTP mock、媒体工具、优雅退出/清理 |
-| `scripts/**` | `demo.ps1`/`demo.sh` 一键演示；`frontend-smoke.mjs` 浏览器冒烟（`npm run test:ui`）；`screenshots.mjs` 演示数据 WebP 截图；`e2e-stability.mjs` e2e 连跑稳定性；`doc-lint.mjs` 文档值级一致性检查 |
+| `tests/helpers/e2e-env.mjs` | e2e 聚合入口（`startE2E` + 统一导出）；拆分后子模块：`process-env.mjs`（子进程/env 白名单/PORT=0 端口回传/终止清理）、`e2e-client.mjs`（E2E HTTP/断言助手）、`mock-api.mjs`（外部 HTTP mock）、`media-crypto.mjs`（媒体加解密测试工具） |
+| `tests/helpers/unit-env.mjs` | 单测统一初始化（临时 DATA_DIR + APP_SECRET/LOG_LEVEL + cleanup），33 个 backend 单测共用 |
+| `scripts/**` | `demo.ps1`/`demo.sh` 一键演示；`frontend-smoke.mjs` 浏览器冒烟（`npm run test:ui`）；`screenshots.mjs` 演示数据 WebP 截图；`e2e-stability.mjs` e2e 连跑稳定性；`doc-lint.mjs` 文档值级一致性；`rotate-app-secret.mjs` APP_SECRET 轮换工具 |
 | `docs/**` | 协议与设计契约（PROTOCOL / API / ARCHITECTURE / MEDIA / GROUPS_AND_INBOUND / KEEPALIVE / API_RULES / SCHEDULED_TASKS / SETTINGS / UPGRADE / CODE_REVIEW） |
 | `Dockerfile` / `docker-compose*.yml` / `.github/workflows/**` | 构建、部署与 CI（PR：lint + coverage 门禁；main 发布前同样先跑测试，镜像带 provenance/SBOM） |
 | `eslint.config.js` / `.editorconfig` / `.gitattributes` | 静态检查与跨平台编辑器/换行约定 |
@@ -352,10 +353,10 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
   Console/未捕获异常；无浏览器环境自动跳过（exit 0）。
 - 测试要求：确定性（禁用真实网络）；用 `waitFor(fn, timeout)` 轮询代替固定 sleep；
   每个测试独立临时目录；失败时打印服务端日志；全部测试在 90s 内跑完。
-- 规模基线（2026-11）：`npm test` 464 项（unit 373 + e2e 91；462 通过 + 2 项 POSIX-only 在 Windows 跳过）约 35s；
-  mock 自测 26 项；`npm run lint` 0 告警；`npm run doc:lint` 6/6；`npm run e2e:stability` 串行 3 次全绿；
-  `npm run coverage` 输出 in-process 覆盖率（排除 `web/**` 与 `tests/**`，服务端源码 line 约 94.0%、
-  branch 约 77.1%、funcs 约 93.8%；CI 强制阈值 line 90 / branch 70 / funcs 85）。
+- 规模基线（2026-11）：`npm test` 481 项（unit 390 + e2e 91；479 通过 + 2 项 POSIX-only 在 Windows 跳过）约 35s；
+  mock 自测 26 项；`npm run lint` 0 告警；`npm run doc:lint` 6/6；`npm run e2e:stability` 串行连跑 3/3；
+  `npm run coverage` 输出 in-process 覆盖率（排除 `web/**` 与 `tests/**`，服务端源码 line 约 93.8%、
+  branch 约 76.8%、funcs 约 93.9%；CI 强制阈值 line 90 / branch 70 / funcs 85）。
 - `npm test` 必须同时跑 unit + e2e；`npm run test:unit` / `npm run test:e2e` 可单独跑。
 
 ## 11. Docker 约定（infra-dev）
@@ -584,9 +585,9 @@ admin.js（entry：事件绑定 + 视图/数据加载器注册 + init()）
 
 ### 18.4 后续优化建议（尚未实施，收益递减项）
 
-- `scheduler.js`：计划计算（calc）与执行（tick）可再拆分；`app-rules.js` 引擎可再拆 match/extract。
-- 前端：`views/app-rules` / `views/schedules` 的 editor/test/logs 子模块化；可选动态 `import()` 懒加载非默认视图。
-- `tests/helpers/e2e-env.mjs` 拆分（进程管理 / HTTP 客户端 / 外部 mock / 媒体工具）。
+- `tests/helpers/e2e-client.mjs`（994 行，E2E 单一 API 面）可继续按“mock 控制面 / 媒体方法 mixin”压缩；
+- `views/app-rules` / `views/schedules` 的 editor/test/logs 可再拆子模块（当前编辑器已通过 `integrations/**` 共享）；
+- `app-rules` 引擎与 `scheduler` 执行器可进一步拆细（当前 façade + 子模块合计已 ≤430/700 行）；
 - 详见 `docs/CODE_REVIEW.md` 第 6 节路线图。
 
 ## 19. 数据生命周期维护（maintenance.js，BA-18）
@@ -602,6 +603,28 @@ admin.js（entry：事件绑定 + 视图/数据加载器注册 + init()）
 - 每批 `MAINTENANCE_BATCH_SIZE` 条 + 单事务；每轮输出清理计数日志；可选 `PRAGMA optimize` 与
   `wal_checkpoint(TRUNCATE)`；`start()/stop()` 幂等，`index.js` 在 `closeDb()` 前停止。
 - 维护参数当前仅由 env 管理（后台运行配置暂未暴露，后续可并入 `SETTINGS_SCHEMA`）。
+
+## 20. 可观测性（metrics.js，task-29）
+
+零依赖的进程内指标模块（`server/src/metrics.js`），用于管理端排查“卡在哪一步”，不引入 Prometheus 等外部依赖：
+
+- **三类指标**：`counter`（单调递增，如 `dispatcher.sent.total`）、`gauge`（瞬时值，支持动态 provider 求值，
+  如 `monitor.running_accounts`、`media.inbound.active`）、`histogram`（延迟分布，默认桶
+  `5/10/25/50/100/250/500/1000/2500/5000/10000/30000ms`，如 `dispatcher.send_latency_ms`）。
+- **覆盖范围**：
+  - 入站监控：运行账号数、最近轮询时间（gauge）、轮询/错误/`-14` 失效/可重试落库失败计数；
+  - 出站队列：`outbox` 各状态数量（从 DB 聚合）、发送成功/失败/重试/限流推迟计数、最近发送延迟直方图；
+  - 媒体：入站下载闸门的 active/queued/accepted/completed/rejected/timedOut（gauge，直接暴露 media 闸门快照）、
+    下载成功/失败/闸门拒绝计数；
+  - 规则/定时：不做进程内埋点，直接从 `app_rule_logs` / `scheduled_task_logs` 按最近 24h 聚合
+    （`success/failed/skipped/matched`），避免与引擎实现耦合；
+  - 进程：`uptimeMs`、`memory`（rss/heapTotal/heapUsed/external/arrayBuffers）与 `heap.usedPercent`。
+- **接口**：`GET /api/admin/metrics`（仅 Cookie 会话 + `auth.requireAdmin`，只读）返回完整快照；
+  `GET /api/admin/overview` 额外附带紧凑 `metrics` 摘要（旧字段保持不变，向后兼容）。契约见 `docs/API.md` §2.8。
+- **约束**：进程内内存态、重启清零、不做持久化/多副本聚合（单进程部署）；指标名点分命名；
+  快照只含数值/对象，不含 userId/token/消息正文；业务模块只加最小计数调用，不改原有逻辑。
+- **测试**：`tests/unit/backend-metrics.test.js` 覆盖注册/快照结构、动态 gauge、DB 聚合、dispatcher 钩子、
+  接口鉴权与 overview 字段兼容。
 
 
 

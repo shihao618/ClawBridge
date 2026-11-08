@@ -28,7 +28,7 @@
 - **工程化**：ESLint flat config（0 error / 0 warning）、CI 覆盖率门禁（line 90 / branch 70 / funcs 85）
   与测试 + mock + 浏览器冒烟门禁、e2e 稳定性改造、`.editorconfig` / Dependabot、
   `docs/UPGRADE.md` / `docs/RELEASE.md`、compose demo 加固、GHCR 发布 provenance/SBOM。
-- **测试**：**362 → 464** 用例（unit + e2e + 前端/生命周期/维护等新增），mock 协议自测 26/26。
+- **测试**：**362 → 481** 用例（unit + e2e + 前端/生命周期/维护/可观测性/轮换等新增），mock 协议自测 26/26。
 - **部署验证**：本机 `docker compose build` 新镜像后部署验证通过——`/health` 200（version 2.1.0）、
   `/` `/admin` `/docs` 均 200、安全响应头完整；旧数据卷 `clawbridge-data` 与绑定用户保留
   （详见 [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) 部署记录）。
@@ -53,6 +53,34 @@
 
 对全仓完成一轮只读审计（`backend` / `frontend` / `infra` 三份报告，含逐条问题与修复建议），
 并落地以下变更（新 → 旧）：
+
+### 第五轮收尾（2026-11-08，发布前最终批次）
+
+- **可观测性**：新增 `server/src/metrics.js`（零依赖进程内 counter/gauge/histogram + 进程/队列/监控/媒体指标，
+  规则与定时 24h 统计由 DB 聚合）与只读接口 `GET /api/admin/metrics`；`GET /api/admin/overview` 新增
+  `metrics` 摘要（旧字段不变）。契约见 `docs/API.md` §2.8，架构见 `docs/ARCHITECTURE.md` §20。
+- **前端性能**：管理后台非默认视图改为**动态 `import()` 懒加载**（首屏只加载壳层 + 概览；并发去重、
+  失败 toast 可重试，入口由 202 行降至 77 行）；DOM/文案/接口不变。
+- **模块化收尾**：`settings.js` 762→32 行 façade + `settings/{schema,validate,apply,secrets,persistence}`，
+  `auth.js` 只依赖 secrets；`scheduler.js` 701→40 行 façade + `scheduler/{calc,index}`；
+  `app-rules.js` 656→33 行 façade + `app-rules/{match,engine,index}`；`admin/state.js` 140→26 行 + `state/**` 8 模块；
+  公开导出面与行为逐项核对零变化（测试零改动）。
+- **测试基建**：`tests/helpers/e2e-env.mjs`（~1700 行）拆为 `process-env / e2e-client / mock-api / media-crypto`
+  （聚合导出与 import 路径不变）；新增 `tests/helpers/unit-env.mjs` 统一 33 个单测初始化样板；
+  `npm run e2e:stability` 串行连跑脚本与 CI 门禁。
+- **安全/隐私/供应链**：新增 `scripts/rotate-app-secret.mjs`（APP_SECRET 轮换工具，自动备份/事务/可回滚，
+  `npm run rotate-secret`）与 `docs/ROTATE_APP_SECRET.md`；新增 `docs/PRIVACY.md`（数据分类、加密边界、
+  截图规范、发布检查清单）并加固 `.gitignore`/`.dockerignore`；
+  `overrides.minimatch@^11` 修复 dev 链 CVE；Node 基础镜像固定 manifest-list digest；GitHub Actions 全部 pin 到 commit SHA。
+- **测试/验收**：全量 **481** 项（479 通过 + 2 项 POSIX-only 跳过）、覆盖率 93.79%/76.79%/93.93%、
+  ESLint 0 告警、`doc:lint` 6/6、e2e 连跑 3/3、mock 26/26、`test:ui` 全过。
+
+### 第四轮收尾（2026-11-08，v2.1.0 发布准备）
+
+- 版本号 2.1.0（package/lock/README/API/UPGRADE/mock）、`CHANGELOG [2.1.0]`、新增 `docs/RELEASE.md` 发布流程。
+- e2e：`index.js` 输出实际监听端口 + e2e `PORT=0` 回传（消除 getFreePort TOCTOU）；新增 `e2e:stability`。
+- 文档门禁：新增 `scripts/doc-lint.mjs`（版本/环境变量/设置字段/API 端点/相对链接/质量表命令 6 项双向校验，
+  接入 CI）；前端截图重生成 **WebP**（23 张 2429KB→1231KB，−49.3%，v2.1.0 UI、假名演示数据）。
 
 ### 第三轮加固（2026-11-08，可维护性/数据生命周期/工程化）
 

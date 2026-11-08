@@ -12,21 +12,23 @@
  * 因此既有 v10 数据卷在升级后也会自动获得这些索引。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-db-indexes-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'db-indexes-secret-0123456789abcdef0123456789abcdef';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-db-indexes-',
+  env: {
+    APP_SECRET: 'db-indexes-secret-0123456789abcdef0123456789abcdef',
+    LOG_LEVEL: 'silent',
+  },
+});
+const dataDir = unitEnv.dataDir;
 
-const { openDatabase, closeDb } = await import('../../server/src/db.js');
+const { openDatabase } = await import('../../server/src/db.js');
 
-test.after(() => {
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 /** 查询计划文本拼接（sqlite 的 EXPLAIN QUERY PLAN 返回多行）。 */

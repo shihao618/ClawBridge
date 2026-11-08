@@ -15,6 +15,7 @@ import * as appRules from './app-rules.js';
 import * as ilink from './ilink.js';
 import { logger } from './logger.js';
 import * as media from './media.js';
+import * as metrics from './metrics.js';
 import * as store from './store.js';
 
 const log = logger.child({ mod: 'monitor' });
@@ -43,6 +44,14 @@ export function cursorPersistDue({
 
 /** @type {Map<string, {controller: AbortController, promise: Promise<void>, startedAt: number}>} */
 const workers = new Map();
+
+// 可观测性（task-29）：动态仪表在快照时求值，轮询热路径只做计数，不额外写库。
+metrics.registerGaugeProvider('monitor.running_accounts', () => workers.size);
+metrics.registerGaugeProvider('monitor.last_poll_at', () => {
+  let latest = 0;
+  for (const worker of workers.values()) latest = Math.max(latest, Number(worker.lastPollAt) || 0);
+  return latest;
+});
 
 function toUserId(userOrId) {
   if (!userOrId) return '';
@@ -242,7 +251,12 @@ async function downloadInboundMediaItems({ userId, inboundMessageId, wechatMessa
         size: saved.size,
         mime: saved.mime ?? mime,
       });
+      metrics.incCounter('media.inbound.downloaded.total');
     } catch (err) {
+      metrics.incCounter('media.inbound.failed.total');
+      if (/队列已满|排队超时/.test(String(err?.message ?? ''))) {
+        metrics.incCounter('media.inbound.gate_rejected.total');
+      }
       if (staged) await media.discardInboundTempMedia(staged);
       log.warn('入站媒体下载/解密失败（记录 failed，不影响消息）', {
         userId,
@@ -464,6 +478,7 @@ async function runLoop(row, token, controller, worker) {
       return;
     }
     maybePersistCursor();
+    metrics.incCounter('monitor.poll.total');
     let resp;
     try {
       resp = await ilink.getUpdates({
@@ -480,9 +495,12 @@ async function runLoop(row, token, controller, worker) {
         return;
       }
       if (isStaleTokenLike(err)) {
+        metrics.incCounter('monitor.poll.errors.total');
+        metrics.incCounter('monitor.stale_token.total');
         pauseForStaleToken(userId, err.message, isCurrentCredential);
         return;
       }
+      metrics.incCounter('monitor.poll.errors.total');
       consecutiveFailures += 1;
       const delayMs =
         consecutiveFailures >= config.monitor.maxConsecutiveFailures
@@ -509,10 +527,13 @@ async function runLoop(row, token, controller, worker) {
     const ret = Number(resp?.ret ?? 0);
     const errcode = Number(resp?.errcode ?? 0);
     if (ret === -14 || errcode === -14) {
+      metrics.incCounter('monitor.poll.errors.total');
+      metrics.incCounter('monitor.stale_token.total');
       pauseForStaleToken(userId, resp?.errmsg || 'getupdates 返回 -14', isCurrentCredential);
       return;
     }
     if (ret !== 0 || errcode !== 0) {
+      metrics.incCounter('monitor.poll.errors.total');
       consecutiveFailures += 1;
       const delayMs =
         consecutiveFailures >= config.monitor.maxConsecutiveFailures
@@ -547,6 +568,8 @@ async function runLoop(row, token, controller, worker) {
     }
     if (inboundOutcome?.retryable) {
       // BA-15：可重试的落库失败不推进游标，下一轮 getUpdates 用旧 buf 重放同一批消息。
+      metrics.incCounter('monitor.poll.errors.total');
+      metrics.incCounter('monitor.inbound_save_retry.total');
       consecutiveFailures += 1;
       const delayMs =
         consecutiveFailures >= config.monitor.maxConsecutiveFailures

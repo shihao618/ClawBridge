@@ -3,26 +3,26 @@
  * 直接调用 scan(now) 验证：触发一次/同窗口不重复/用户回复后新窗口/模板/maxPerTick/失败不崩/全局开关。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-keepalive-scheduler-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'keepalive-scheduler-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'keepalive-scheduler-password';
-process.env.API_TOKEN = 'keepalive-scheduler-token';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-keepalive-scheduler-',
+  env: {
+    APP_SECRET: 'keepalive-scheduler-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'keepalive-scheduler-password',
+    API_TOKEN: 'keepalive-scheduler-token',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const keepalive = await import('../../server/src/keepalive.js');
 const store = await import('../../server/src/store.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 
-test.after(() => {
+test.after(async () => {
   keepalive.stop();
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

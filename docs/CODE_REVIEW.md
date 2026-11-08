@@ -18,7 +18,7 @@
 
 **总体结论：这是一套工程质量明显高于同规模项目的系统，但仍存在 4 个 P1 级问题（其中 2 个已在本轮修复）、24 个 P2 级问题，以及两个"巨石模块"造成的可维护性瓶颈。**
 
-验证侧：审查基线 362 项测试（unit 271 + e2e 91）全部通过；四轮修复/重构/加固后 **464 项（462 通过 + 2 项 POSIX-only 在 Windows 跳过，约 35s）**，源码 in-process 覆盖率 line 94.05% / branch 77.10% / funcs 93.82%（排除 `web/**` 与 `tests/**`，CI 强制阈值）；`npm run lint` 0 告警、`npm run doc:lint` 6 项值级一致性全过、`npm run e2e:stability` 连跑 3/3 通过；mock 协议自测 26/26；Docker 镜像/容器健康、GHCR 多架构发布链路实测可用；生产依赖仅 `express` + `qrcode`，`npm audit --omit=dev` 0 漏洞；机密管理（`.env`/`backups` 未入库、AES-GCM 凭证、scrypt、常量时间比较、CSP/CSRF）扎实。本次额外补上了此前缺失的**真实浏览器冒烟测试**（16 项）、**可复现 WebP 截图脚本**与**文档值级一致性门禁**，使前端行为、文档截图与文档数值都可复现验证。
+验证侧：审查基线 362 项测试（unit 271 + e2e 91）全部通过；五轮修复/重构/加固后 **481 项（479 通过 + 2 项 POSIX-only 在 Windows 跳过，约 35s）**，源码 in-process 覆盖率 line 93.79% / branch 76.79% / funcs 93.93%（排除 `web/**` 与 `tests/**`，CI 强制阈值）；`npm run lint` 0 告警、`npm run doc:lint` 6 项值级一致性全过、`npm run e2e:stability` 连跑 3/3 通过；mock 协议自测 26/26；Docker 镜像/容器健康、GHCR 多架构发布链路实测可用；生产依赖仅 `express` + `qrcode`，`npm audit`（含 dev）0 漏洞；机密管理（`.env`/`backups` 未入库、AES-GCM 凭证、scrypt、常量时间比较、CSP/CSRF）扎实。本次额外补上了此前缺失的**真实浏览器冒烟测试**（16 项）、**可复现 WebP 截图脚本**、**文档值级一致性门禁**、**可观测性指标接口**与**APP_SECRET 轮换工具**，使前端行为、文档数值、运行指标与密钥轮换都可复现验证。
 
 结构侧：重构前 `server/src/api.js`（1895 行/1 个导出/69 个路由 + 全部校验与媒体 IO）、`web/assets/admin.js`（5895 行/171 个函数/7 个视图）是两个典型"上帝模块"。本轮已完成等价拆分：
 
@@ -60,10 +60,10 @@
 
 | 验证项 | 结果 |
 | --- | --- |
-| `npm test` | 重构前 **362/362 pass**（33.3s）→ 三轮修复/重构/加固后 **464 项：462 通过 + 2 项 POSIX-only 跳过**（约 35s） |
-| `npm run test:unit` | 271 → **373**（371 通过 + 2 项 Windows 跳过；新增前端 modules/lib/弹窗/焦点、后端 logger、调度器/分发器生命周期、数据库索引、SSRF、媒体闸门、维护 GC、错误映射、shared 管线等测试） |
-| `npm run test:e2e` | 91/91（真实 app + mock 双进程、随机端口、临时 DATA_DIR 黑盒；子进程 env 白名单、稳定等待断言、mock 违规统一断言） |
-| 覆盖率（`npm run coverage`，in-process，排除 web/tests，CI 强制阈值 90/70/85） | line **94.05%** / branch **77.10%** / funcs **93.82%**；最低集中在 dispatcher/monitor 等异步生命周期模块（本轮已补生命周期测试；`index.js` 由子进程运行不计入） |
+| `npm test` | 重构前 **362/362 pass**（33.3s）→ 五轮修复/重构/加固后 **481 项：479 通过 + 2 项 POSIX-only 跳过**（约 35s） |
+| `npm run test:unit` | 271 → **390**（388 通过 + 2 项 Windows 跳过；新增前端 modules/lib/弹窗、后端 logger、调度器/分发器生命周期、数据库索引、SSRF、媒体闸门、维护 GC、错误映射、shared 管线、可观测性指标、APP_SECRET 轮换等测试） |
+| `npm run test:e2e` | 91/91（真实 app + mock 双进程、随机端口、临时 DATA_DIR 黑盒；子进程 env 白名单、PORT=0 端口回传、稳定等待断言、mock 违规统一断言） |
+| 覆盖率（`npm run coverage`，in-process，排除 web/tests，CI 强制阈值 90/70/85） | line **93.79%** / branch **76.79%** / funcs **93.93%**；最低集中在 dispatcher/monitor 等异步生命周期模块（本轮已补生命周期测试；`index.js` 由子进程运行不计入） |
 | `npm run lint`（ESLint flat config，CI `--max-warnings=0`） | **0 error / 0 warning** |
 | `npm run doc:lint`（文档值级一致性，CI 门禁） | **6/6 项通过**（版本号、环境变量、设置字段、API 端点、相对链接、质量表命令） |
 | `npm run e2e:stability`（串行连跑 3 次，CI 门禁） | **3/3 次通过**（每次 91 项，单次约 127s；Linux CI 预计更快） |
@@ -250,6 +250,18 @@
 
 **最终发布状态**：`package.json` v2.1.0，git tag `v2.1.0`，镜像重建并部署（验证见 §2.1 部署记录）。
 
+### 5.7 第五轮收尾（发布前最终批次，全部带测试）
+
+| 项 | 内容 | 验证 |
+| --- | --- | --- |
+| 可观测性 | 新增 `server/src/metrics.js`（零依赖 counter/gauge/histogram；进程/队列/监控/媒体指标 + 规则·定时 24h DB 聚合）与 `GET /api/admin/metrics`（requireAdmin）；overview 新增 `metrics` 摘要（旧字段不变）；`docs/API.md` §2.8 + `ARCHITECTURE.md` §20 | 新增 `backend-metrics.test.js` 6/6；e2e push-flow/media-flow 全绿；lint 0 |
+| 前端视图懒加载 | `admin/core.js` 视图注册表改惰性工厂（缓存 Promise、失败可重试）；`admin.js` 202→**77 行**，仅静态导入 overview，其余视图首次切换时动态 `import()`；各视图事件下沉 `initXView()`；DOM/文案/接口不变 | CDP 实测首屏仅 overview；切换视图按需加载；失败 toast+重试验证；前端测试 91/91、`test:ui` 全过 |
+| 模块化收尾 | `scheduler.js` 701→**40 行 façade** + `scheduler/{calc,index}.js`；`app-rules.js` 656→**33 行 façade** + `app-rules/{match,engine,index}.js`；导出面/行为/日志逐项核对零变化 | 相关单测 73/73；e2e app-rules/scheduled-tasks 20/20；导出集 26/26、28/28；import 图无环 |
+| 测试基建 | `tests/helpers/e2e-env.mjs`（~1700 行）拆为 `process-env/e2e-client/mock-api/media-crypto`（聚合导出零改动）；新增 `tests/helpers/unit-env.mjs` 统一 33 个单测样板并迁移 `backend-test-secrets.js` | e2e 91/91；`e2e:stability` 2/2；单测 390 全绿；逐文件对照 HEAD 零语义变化 |
+| 安全/隐私/供应链 | 新增 `scripts/rotate-app-secret.mjs`（`npm run rotate-secret`：备份/事务/dry-run/可回滚，覆盖 5 类密文）+ `docs/ROTATE_APP_SECRET.md`；新增 `docs/PRIVACY.md` + `.gitignore`/`.dockerignore` 加固；`overrides.minimatch@^11` 修复 dev 链 CVE；Node 基础镜像 digest pin；GitHub Actions 7 处 SHA pin | 轮换 9/9 测试（真实库轮换/dry-run/错误密钥/备份回滚）；`npm audit`（含 dev）0；`docker build` + 容器 health 2.1.0；YAML/compose 校验 |
+
+**最终发布状态**：`package.json` v2.1.0；本地 tag `v2.1.0`；镜像重建并部署（验证见 §2.1 部署记录）；`git push` 后由 CI 发布 GHCR（见 §2.4 发布记录）。
+
 ---
 
 ## 6. 建议与路线图（意见）
@@ -274,34 +286,38 @@
 16. **前端 state 按域拆分** ✅：`admin/state.js` 140 → 26 行组合入口 + `state/**` 8 文件；删除死状态 `viewLoaded`；`state.xxx`/`els.xxx` 路径不变。
 17. **e2e 端口与稳定性** ✅：真实端口回传（`PORT=0` + 启动日志解析，消除 TOCTOU）；`scripts/e2e-stability.mjs` 连跑 3 次全绿并接入 CI；生命周期用例 LOG_LEVEL 冲突修复。
 18. **doc-lint + v2.1.0 发布 + 截图 WebP** ✅：`scripts/doc-lint.mjs` 6 项值级门禁；版本 2.1.0、CHANGELOG/RELEASE 发布流程；23 张截图 WebP 化（−49.3%）。
+19. **可观测性** ✅：`metrics.js` + `GET /api/admin/metrics` + overview 摘要 + docs/测试。
+20. **前端视图懒加载** ✅：非默认视图动态 `import()`，首屏只加载壳层+overview，失败可重试。
+21. **scheduler/app-rules 模块化收尾** ✅：两个 façade + 5 子模块，导出面零变化。
+22. **测试基建** ✅：e2e-env 拆 5 模块（聚合导出不变）、unit-env 统一 33 个单测样板。
+23. **APP_SECRET 轮换工具 + 隐私文档** ✅：`npm run rotate-secret`（备份/事务/dry-run）+ `docs/ROTATE_APP_SECRET.md` + `docs/PRIVACY.md` + ignore 加固。
+24. **供应链收尾** ✅：`overrides.minimatch@^11`（`npm audit` 全 0）、基础镜像 digest pin、Actions SHA pin、`docs/RELEASE.md` 供应链维护流程。
 
 ### 6.2 短期（2–4 周，剩余事项）
 
-1. **进一步模块化（可选，收益递减）**：`scheduler.js` 计划计算与执行分离、`app-rules.js` 引擎再拆 match/extract（当前 656 行可接受）；`web/assets/admin/views/app-rules|schedules` 再拆 editor/test/logs 子模块。
-2. **前端视图懒加载**：当前 `/admin` 首屏加载全部视图模块；可对非默认视图使用动态 `import()` 降低首屏解析量（零构建约束下可行）。
-3. **测试工具链整理（INF-18/19）**：抽 `tests/helpers/unit-env.mjs` 统一单测 mkdtemp/env/cleanup；拆 `e2e-env.mjs`（进程管理 / HTTP 客户端 / 外部 API mock / 媒体工具）；mock 协议 golden 对照。
-4. **可观测性**：overview 统计改单条聚合或 5–10s 缓存；补队列长度、规则执行耗时/失败率、媒体下载并发/内存等指标与结构化事件；IM 级告警。
-5. **依赖与发布**：处理 dependabot PR（Node 镜像 digest、actions SHA、npm devDeps）；推送 v2.1.0 tag 触发 GHCR 发布并建 GitHub Release（见 `docs/RELEASE.md`）。
-6. **截图体验**：当前为整视口（detail 类下滚 118px 区分），如需更聚焦可做内容裁剪/局部高亮（非功能项）。
-7. **doc-lint 扩展**：可覆盖 docs.html 文案与 docs/*.md 的语义级一致性（当前为端点/默认值/链接级）。
+1. **收益递减的进一步模块化（可选）**：`tests/helpers/e2e-client.mjs`（994 行，E2E 单一 API 面）可继续按 mixin 拆分；`views/app-rules|schedules` 可再拆 editor/test/logs 子模块；`app-rules` 引擎/`scheduler` 执行器可再细化。
+2. **可观测性深化**：当前 `/api/admin/metrics` 已提供进程内指标与 DB 聚合；后续可加 Prometheus 导出（可选）、慢查询日志、DB 体积/WAL 监控、IM/Webhook 告警。
+3. **依赖与发布**：观察 dependabot PR（npm/actions/docker 三类），按 `docs/RELEASE.md` §5 供应链流程合并；GitHub Release 可用 release 工具自动化。
+4. **doc-lint 扩展**：可从“值级”扩展到 docs.html 文案与 docs/*.md 的语义级一致性；由代码生成文档表格片段。
+5. **截图体验**：当前为整视口（detail 类下滚 118px 区分），如需更聚焦可做内容裁剪/局部高亮（非功能项）。
+6. **mock 协议 golden 对照**：e2e 已统一断言 mock 违规为空，可进一步建立协议响应 golden 快照。
 
 ### 6.3 中期（1–2 月，可持续）
 
-1. **文档单一来源**：由代码/契约生成默认值表与端点表（当前 doc-lint 已做值级校验，可进一步生成 docs 表格片段）。
-2. **发布与仓库卫生**：GitHub Release 自动化（release-please 或 release 脚本）；历史提交中的旧 PNG 截图（含旧演示昵称）如需彻底清理需评估重写公开历史的风险。
+1. **文档单一来源**：由代码/契约生成默认值表与端点表（doc-lint 已守住值级一致性）。
+2. **发布与仓库卫生**：GitHub Release 自动化；历史提交中的旧 PNG 截图（含旧演示昵称）如需彻底清理需评估重写公开历史的风险（当前工作区截图已脱敏）。
 3. **可观测性与性能基准**：性能基准脚本（消息/队列/媒体吞吐）、慢查询日志、DB 体积与 WAL 监控。
 4. **schema 演进工具**：当前"拒绝旧库、只能空库重建"是明确取舍；若用户规模增长，设计一次性导出/导入工具（旧库 → 新库）。
-5. **安全纵深**：依赖与镜像定期扫描（SBOM 已产出）、密钥轮换流程文档化、审计日志导出；生产接入 HTTPS/反向代理并启用 `TRUST_PROXY`/`COOKIE_SECURE`。
+5. **安全纵深**：依赖与镜像定期扫描（SBOM 已产出、Actions SHA/digest 已 pin）、密钥轮换流程已文档化（`docs/ROTATE_APP_SECRET.md`）、审计日志导出；生产接入 HTTPS/反向代理并启用 `TRUST_PROXY`/`COOKIE_SECURE`。
 
 ### 6.4 需要 Owner 决策的事项
 
 1. **新规则/定时任务默认启用语义**：已按文档契约改为"默认停用"（前端新建立即不勾选、API 未传 `enabled` 时 false）。如果实际产品意图是"默认启用"，应反向统一文档/页面文案并给出显著提示。
 2. **入站媒体默认上限**：资源加固后默认仍为 100MB/文件（未下调以避免行为变更）；若部署实例内存有限，建议下调或明确按"并发 2 × 单文件"估算内存模型。
 3. **schema 版本策略**：当前"拒绝旧库、只能空库重建"是明确取舍；本轮新增查询索引通过 `CREATE INDEX IF NOT EXISTS` 启动幂等补齐、未改 schema 版本。若后续需要加列/改表，需先决定是否恢复可迁移路径。
-4. **APP_SECRET 轮换**：当前运行实例曾出现 `data/admin-password.txt` 缺失告警（旧卷升级场景）；若曾打包/分享过工作区，建议轮换 `APP_SECRET`（代价：已绑定用户需重新扫码）。
-5. **公开仓库历史隐私**：截图已用假名演示数据重新生成（当前工作区无真实昵称），但旧截图仍存在于 git 历史中；若确认为真实用户数据，需按隐私事件处理（重写历史或归档仓库）。
-6. **是否推送 v2.1.0 tag / 发布 GHCR 镜像**：本地已建 tag `v2.1.0`；推送 tag 会触发 GitHub Actions 多架构构建并发布 `ghcr.io/shihao618/clawbridge:v2.1.0`（需确认 GitHub 凭据与镜像仓库策略后由 Owner 执行 `git push origin v2.1.0`）。
-7. **是否引入 Prettier / Playwright 等开发期依赖**：ESLint 已引入并零告警；格式化与浏览器 E2E 是否需要增加 devDependencies 与 CI 时间，由 Owner 决定。
+4. **是否轮换生产 APP_SECRET**：工具与手册已就绪（`npm run rotate-secret` / `docs/ROTATE_APP_SECRET.md`）；是否执行由 Owner 决定（轮换后所有已绑定用户需重新扫码，代价明确）。
+5. **公开仓库历史隐私**：当前工作区截图已全部为假名演示数据；旧截图仍存在于 git 历史中，若确认为真实用户数据，需按 `docs/PRIVACY.md` §7 处置建议重写历史或归档。
+6. **是否引入 Prettier / Playwright 等开发期依赖**：ESLint 已引入并零告警；格式化与浏览器 E2E 是否需要增加 devDependencies 与 CI 时间，由 Owner 决定。
 
 ---
 
@@ -309,13 +325,13 @@
 
 | 风险 | 建议跟踪方式 |
 | --- | --- |
-| 进一步模块化/懒加载（收益递减项） | 下一轮可选重构，按 `docs/review/*.md` 的分步迁移方案执行，每步跑全量测试 |
+| 收益递减的进一步模块化/懒加载优化 | 下一轮可选重构，按 `docs/review/*.md` 的分步迁移方案执行，每步跑全量测试 |
 | CI 长期稳定性 | 已接入 e2e 连跑脚本（本地 3/3）；推送到 GitHub 后观察 CI 运行结果，必要时固定 runner/超时 |
 | 旧库升级路径 | `docs/UPGRADE.md` 已给出备份→空库重建→重新绑定与回滚步骤；如未来需要原地升级再设计导出/导入工具 |
 | 入站媒体 100MB 默认上限 × 并发 2 的内存模型 | 部署前按实例内存评估，必要时下调 `INBOUND_MEDIA_MAX_BYTES` |
-| 公开仓库历史中的旧截图（旧演示昵称） | 当前工作区截图已脱敏；旧提交内容若确认为真实数据需重写公开 git 历史或归档 |
-| v2.1.0 tag/GHCR 发布 | 本地 tag 已创建；推送 `git push origin v2.1.0` 后由 workflow 发布镜像（Owner 确认凭据后执行） |
-| 生产部署 | 已部署 v2.1.0（compose 容器 healthy，数据卷保留；见 §2.1 部署记录） |
+| 公开仓库历史中的旧截图（旧演示昵称） | 当前工作区截图已脱敏；旧提交内容若确认为真实数据需重写公开 git 历史或归档（见 `docs/PRIVACY.md` §7） |
+| 生产 APP_SECRET 轮换 | 工具/手册已就绪，是否执行由 Owner 决定；执行前务必备份并按手册验证/回滚 |
+| 生产部署与 GHCR 发布 | 本地已部署 v2.1.0（healthy、数据保留）；`git push` 后由 CI 发布 GHCR，观察 Actions 结果（见 §2.4 发布记录） |
 
 ---
 
@@ -325,8 +341,8 @@
 
 ```bash
 npm ci
-npm test                 # 464 项（unit + e2e，462 通过 + 2 项 POSIX-only 跳过），约 35s
-npm run test:unit        # 需要快速回归时（373 项）
+npm test                 # 481 项（unit + e2e，479 通过 + 2 项 POSIX-only 跳过），约 35s
+npm run test:unit        # 需要快速回归时（390 项）
 npm run test:e2e
 npm run e2e:stability    # e2e 串行连跑 3 次并汇总（CI 门禁）
 npm run test:ui          # 浏览器冒烟（需本机 Edge/Chrome，无则跳过）
@@ -334,6 +350,7 @@ npm run coverage         # in-process 覆盖率 + CI 阈值（line 90 / branch 7
 npm run lint             # ESLint（CI --max-warnings=0）
 npm run doc:lint         # 文档值级一致性（版本/env/设置字段/端点/链接/质量表命令）
 npm run screenshots      # 用演示数据重新生成 README WebP 截图（可选，需浏览器）
+npm run rotate-secret    # APP_SECRET 轮换（停机执行；先 --dry-run 核对）
 node mock/selftest.mjs   # mock 协议自测 26 项
 docker compose config    # 校验 3 份 compose（demo 需 --profile demo）
 ```

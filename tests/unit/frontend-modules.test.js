@@ -247,3 +247,45 @@ test('视图模块只依赖允许的基础层：不得 import admin.js 入口', 
     }
   }
 });
+
+test('视图懒加载：entry 仅静态导入 overview，其余视图通过动态 import 首次访问时加载（F-03）', async () => {
+  const entry = await readAsset(ENTRY);
+  const staticSpecs = [...entry.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
+  const staticViewSpecs = staticSpecs.filter((spec) => spec.includes('/views/'));
+  assert.deepEqual(
+    staticViewSpecs,
+    ['./admin/views/overview.js'],
+    `入口只应静态导入默认视图 overview：${staticViewSpecs.join(', ')}`,
+  );
+  const dynamicSpecs = [...entry.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)].map((match) => match[1]);
+  for (const view of ['groups', 'users', 'messages', 'broadcast', 'app-rules', 'settings']) {
+    assert.ok(dynamicSpecs.includes(`./admin/views/${view}.js`), `入口应以动态 import 懒加载视图模块：${view}`);
+  }
+  // 惰性工厂形式：动态 import 后取对应加载函数（首次切换该视图时才请求模块）
+  assert.match(entry, /import\('\.\/admin\/views\/users\.js'\)\.then\(/, '用户视图应通过惰性工厂加载');
+  assert.match(entry, /import\('\.\/admin\/views\/broadcast\.js'\)\.then\(/, '广播视图应通过惰性工厂加载');
+  assert.match(
+    entry,
+    /const lazyOverview = \(\) => Promise\.resolve\(loadOverview\)/,
+    '默认视图 overview 应静态导入并直接注册',
+  );
+});
+
+test('core.js 惰性加载契约：缓存成功 Promise、失败清缓存可重试、视图与写后刷新均走工厂（F-03）', async () => {
+  const core = await readAsset('admin/core.js');
+  for (const token of [
+    'const loaderCache = new Map()',
+    'function resolveLazyLoader(factory)',
+    'loaderCache.set(factory, promise)',
+    'loaderCache.delete(factory)',
+    'async function runLazyLoader(factory)',
+    'await resolveLazyLoader(factory)',
+    'factories.map((factory) => runLazyLoader(factory))',
+    'tasks.push(runLazyLoader(factory))',
+  ]) {
+    assert.ok(core.includes(token), `core.js 应实现惰性加载契约：${token}`);
+  }
+  assert.match(core, /registerViewLoaders\(viewId, factories\)/, '视图注册表应保存惰性工厂');
+  assert.match(core, /registerDataLoader\(key, factory\)/, '写后刷新注册表应保存惰性工厂');
+  assert.match(core, /toastError\(failed\.reason, '加载视图数据失败'\)/, '视图首次加载失败应有 toast 提示');
+});

@@ -2,26 +2,25 @@
  * 单元测试：定时通知 store + 计划计算纯函数（docs/SCHEDULED_TASKS.md §1/§3/§5）。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-scheduled-store-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'scheduled-store-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'scheduled-store-password';
-process.env.API_TOKEN = 'scheduled-store-token';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-scheduled-store-',
+  env: {
+    APP_SECRET: 'scheduled-store-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'scheduled-store-password',
+    API_TOKEN: 'scheduled-store-token',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const store = await import('../../server/src/store.js');
 const scheduler = await import('../../server/src/scheduler.js');
 const { encryptSecret } = await import('../../server/src/crypto.js');
-const { closeDb } = await import('../../server/src/db.js');
 
-test.after(() => {
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

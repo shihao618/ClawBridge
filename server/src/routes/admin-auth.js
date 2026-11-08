@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { AppError, ErrorCodes, badRequest } from '../errors.js';
 import { requireJsonBody } from '../http/helpers.js';
 import * as binding from '../binding.js';
+import * as metrics from '../metrics.js';
 import * as monitor from '../monitor.js';
 import * as store from '../store.js';
 
@@ -41,7 +42,7 @@ export function registerAdminAuthRoutes(app) {
     res.json({ authenticated: true, expiresAt: session.exp });
   });
 
-  app.get('/api/admin/overview', auth.requireAdmin, (req, res) => {
+  app.get('/api/admin/overview', auth.requireAdmin, async (req, res) => {
     const stats = store.getStats();
     res.json({
       stats: {
@@ -71,6 +72,8 @@ export function registerAdminAuthRoutes(app) {
         monitorsRunning: monitor.runningCount(),
         bindingSessionsActive: binding.getActiveSessionCount(),
       },
+      // 可观测性摘要（task-29）：仅新增字段，旧字段保持向后兼容。
+      metrics: await metrics.overviewSummary(),
     });
   });
 }

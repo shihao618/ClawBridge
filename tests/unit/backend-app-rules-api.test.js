@@ -4,24 +4,25 @@
  */
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after, before } from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-app-rules-api-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'app-rules-api-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'app-rules-api-admin-password';
-process.env.API_TOKEN = 'app-rules-api-token-123456';
-process.env.ILINK_LOGIN_BASE_URL = 'http://127.0.0.1:9';
-process.env.ILINK_BASE_URL = 'http://127.0.0.1:9';
-process.env.LOG_LEVEL = 'silent';
-process.env.APP_RULES_ALLOWED_HOSTS = '127.0.0.1';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-app-rules-api-',
+  env: {
+    APP_SECRET: 'app-rules-api-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'app-rules-api-admin-password',
+    API_TOKEN: 'app-rules-api-token-123456',
+    ILINK_LOGIN_BASE_URL: 'http://127.0.0.1:9',
+    ILINK_BASE_URL: 'http://127.0.0.1:9',
+    LOG_LEVEL: 'silent',
+    APP_RULES_ALLOWED_HOSTS: '127.0.0.1',
+  },
+});
 
 const { createApp } = await import('../../server/src/api.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 const store = await import('../../server/src/store.js');
 
 let server;
@@ -32,7 +33,7 @@ let cookie = '';
 const CSRF = { 'x-requested-with': 'ClawBridge-Admin' };
 
 before(async () => {
-  const { seedTestAdminSecrets } = await import('./backend-test-secrets.js');
+  const { seedTestAdminSecrets } = await import('../helpers/backend-test-secrets.js');
   seedTestAdminSecrets();
   apiServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${apiPort}`);
@@ -57,8 +58,7 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
   if (apiServer) await new Promise((resolve) => apiServer.close(resolve));
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 async function request(method, pathName, { body, headers = {} } = {}) {

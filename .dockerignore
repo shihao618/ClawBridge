@@ -10,9 +10,15 @@ npm-debug.log*
 
 # 运行时数据 / SQLite / 本地密钥（绝不能进镜像）
 data
+backups
+media
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
+*.key
+admin-password.txt
+api-token.txt
 
 # 本地环境变量（真实 .env 不进镜像）
 .env

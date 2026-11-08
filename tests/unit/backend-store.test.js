@@ -5,26 +5,25 @@
  * outbox 生命周期、入站消息去重、混合消息分页、events、统计、解绑清理。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-// config.js 在模块加载时求值：必须先设置环境变量，再动态 import 业务模块。
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-store-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'store-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'store-test-admin-password';
-process.env.API_TOKEN = 'store-test-api-token-123456';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-store-',
+  env: {
+    APP_SECRET: 'store-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'store-test-admin-password',
+    API_TOKEN: 'store-test-api-token-123456',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const store = await import('../../server/src/store.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 const { decryptSecret } = await import('../../server/src/crypto.js');
 
-test.after(() => {
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

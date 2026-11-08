@@ -213,13 +213,14 @@ async function showView(viewId) {
 }
 
 /**
- * 按视图数据加载注册表懒加载（core 不 import views，由 admin.js 入口注册）。
+ * 按视图数据加载注册表懒加载（core 不 import views，由 admin.js 入口注册惰性工厂）。
  * 行为与拆分前一致：并行加载该视图依赖数据，silent 时不上报 toast，401 交给全局钩子。
+ * 非默认视图的模块在首次调用对应工厂时才动态 import；成功缓存 Promise（并发不重复），
+ * 失败清缓存以便下次切换视图/手动刷新/轮询时自动重试，非 silent 时 toast 提示。
  */
 async function loadView(viewId, { silent = false } = {}) {
-  const loaders = viewLoaders.get(viewId) || [];
-  const tasks = loaders.map((loader) => loader());
-  const results = await Promise.allSettled(tasks);
+  const factories = viewLoaders.get(viewId) || [];
+  const results = await Promise.allSettled(factories.map((factory) => runLazyLoader(factory)));
   if (!silent) {
     const failed = results.find((result) => result.status === 'rejected');
     if (failed && failed.reason && failed.reason.status !== 401) {
@@ -276,13 +277,13 @@ function stopAutoRefresh() {
   }
 }
 
-/** 写操作后按域刷新数据（loader 由 admin.js 入口注册，顺序与拆分前一致）。 */
+/** 写操作后按域刷新数据（惰性工厂由 admin.js 入口注册，顺序与拆分前一致）。 */
 export async function refreshAfterWrite(parts = {}) {
   const tasks = [];
   for (const key of REFRESH_LOADER_KEYS) {
     if (!parts[key]) continue;
-    const loader = dataLoaders.get(key);
-    if (loader) tasks.push(loader());
+    const factory = dataLoaders.get(key);
+    if (factory) tasks.push(runLazyLoader(factory));
   }
   const results = await Promise.allSettled(tasks);
   const failed = results.find((result) => result.status === 'rejected');
@@ -308,19 +309,49 @@ export function loadErrorHandler(fallbackMessage) {
   };
 }
 
-/** 视图数据加载器注册表（core 不 import views，由 admin.js 入口注册）。 */
+/**
+ * 视图数据加载器注册表（core 不 import views，由 admin.js 入口注册惰性工厂）。
+ * 每个注册项为工厂函数：() => Promise<loader>。首次调用工厂时才动态 import 视图模块，
+ * 成功后缓存 Promise（并发切换不会重复加载），失败时删除缓存以便重试。
+ */
 const viewLoaders = new Map();
 const dataLoaders = new Map();
+const loaderCache = new Map();
 const REFRESH_LOADER_KEYS = ['groups', 'appRules', 'overview', 'users', 'messages', 'config'];
 
-/** 注册某个菜单视图的初始数据加载函数（可多个）。 */
-export function registerViewLoaders(viewId, loaders) {
-  viewLoaders.set(viewId, Array.isArray(loaders) ? loaders.slice() : []);
+/** 解析惰性加载器工厂：成功缓存 Promise<loader>，失败清缓存（允许重试）。 */
+function resolveLazyLoader(factory) {
+  if (typeof factory !== 'function') return Promise.reject(new Error('视图加载器工厂无效'));
+  if (!loaderCache.has(factory)) {
+    const promise = Promise.resolve()
+      .then(() => factory())
+      .then((loader) => {
+        if (typeof loader !== 'function') throw new Error('视图加载器工厂未返回加载函数');
+        return loader;
+      })
+      .catch((error) => {
+        loaderCache.delete(factory);
+        throw error;
+      });
+    loaderCache.set(factory, promise);
+  }
+  return loaderCache.get(factory);
 }
 
-/** 注册写操作后按域刷新使用的加载函数。 */
-export function registerDataLoader(key, loader) {
-  dataLoaders.set(key, loader);
+/** 解析工厂并执行加载函数（视图首次加载/写后刷新共用）。 */
+async function runLazyLoader(factory) {
+  const loader = await resolveLazyLoader(factory);
+  return loader();
+}
+
+/** 注册某个菜单视图的初始数据加载器（惰性工厂：() => Promise<loader>，可多个）。 */
+export function registerViewLoaders(viewId, factories) {
+  viewLoaders.set(viewId, Array.isArray(factories) ? factories.slice() : []);
+}
+
+/** 注册写操作后按域刷新使用的加载器（惰性工厂：() => Promise<loader>）。 */
+export function registerDataLoader(key, factory) {
+  dataLoaders.set(key, factory);
 }
 
 /** 由入口注入共享侧栏抽屉实例（common.js 的 initSidebarDrawer 返回值）。 */

@@ -2,25 +2,25 @@
  * 单元测试：settings.js 运行配置（docs/SETTINGS.md §2/§6）。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-settings-core-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'settings-core-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'settings-core-admin-password';
-process.env.API_TOKEN = 'settings-core-api-token-123456';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-settings-core-',
+  env: {
+    APP_SECRET: 'settings-core-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'settings-core-admin-password',
+    API_TOKEN: 'settings-core-api-token-123456',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const settings = await import('../../server/src/settings.js');
 const { config } = await import('../../server/src/config.js');
-const { all, get, run, closeDb } = await import('../../server/src/db.js');
+const { all, get, run } = await import('../../server/src/db.js');
 
-test.after(() => {
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 function defaultOf(groupKey, fieldKey) {

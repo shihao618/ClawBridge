@@ -8,13 +8,9 @@
  * 使用本地假 iLink 服务（可控挂起 getupdates）+ 临时 DATA_DIR，无真实网络。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after } from 'node:test';
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-monitor-'));
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
 // ---------------------------------------------------------------------------
 // 假 iLink 服务
@@ -93,18 +89,22 @@ await new Promise((resolve, reject) => {
 const fakeBase = `http://127.0.0.1:${fake.address().port}`;
 
 // 必须在 import 业务模块前设置（config 加载即求值）
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'monitor-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'monitor-test-password';
-process.env.API_TOKEN = 'monitor-test-api-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.ILINK_LOGIN_BASE_URL = fakeBase;
-process.env.ILINK_BASE_URL = fakeBase;
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-monitor-',
+  env: {
+    APP_SECRET: 'monitor-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'monitor-test-password',
+    API_TOKEN: 'monitor-test-api-token',
+    LOG_LEVEL: 'silent',
+    ILINK_LOGIN_BASE_URL: fakeBase,
+    ILINK_BASE_URL: fakeBase,
+  },
+});
 
 const monitor = await import('../../server/src/monitor.js');
 const store = await import('../../server/src/store.js');
 const { config } = await import('../../server/src/config.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 const { decryptSecret } = await import('../../server/src/crypto.js');
 
 test('游标落库时机：消息后 15 分钟静默 / 无消息 6 小时兜底', () => {
@@ -130,10 +130,9 @@ test('游标落库时机：消息后 15 分钟静默 / 无消息 6 小时兜底'
 
 after(async () => {
   await monitor.stopAll({ notify: false }).catch(() => {});
-  closeDb();
   fake.closeAllConnections?.();
   await new Promise((resolve) => fake.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 async function waitFor(fn, timeoutMs = 12000, intervalMs = 20) {

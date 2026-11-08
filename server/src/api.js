@@ -30,6 +30,7 @@ import {
 import { registerAdminAuthRoutes } from './routes/admin-auth.js';
 import { registerAdminGroupsRoutes } from './routes/admin-groups.js';
 import { registerAdminMessagesRoutes } from './routes/admin-messages.js';
+import { registerAdminMetricsRoutes } from './routes/admin-metrics.js';
 import { registerAdminRulesRoutes } from './routes/admin-rules.js';
 import { registerAdminScheduledRoutes } from './routes/admin-scheduled.js';
 import { registerAdminSettingsRoutes } from './routes/admin-settings.js';
@@ -73,6 +74,7 @@ export function createApp() {
   registerAdminScheduledRoutes(app);
   registerAdminSettingsRoutes(app);
   registerAdminMessagesRoutes(app, { parseRawMediaBody });
+  registerAdminMetricsRoutes(app);
   registerWebhookRoutes(app);
   registerV1Routes(app, { parseRawMediaBody });
 

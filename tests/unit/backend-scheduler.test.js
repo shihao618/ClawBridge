@@ -3,23 +3,24 @@
  * 本地假 HTTP server；不触真实外网。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-scheduler-engine-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'scheduler-engine-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'scheduler-engine-password';
-process.env.API_TOKEN = 'scheduler-engine-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.APP_RULES_ALLOWED_HOSTS = '127.0.0.1';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-scheduler-engine-',
+  env: {
+    APP_SECRET: 'scheduler-engine-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'scheduler-engine-password',
+    API_TOKEN: 'scheduler-engine-token',
+    LOG_LEVEL: 'silent',
+    APP_RULES_ALLOWED_HOSTS: '127.0.0.1',
+  },
+});
 
 const scheduler = await import('../../server/src/scheduler.js');
 const store = await import('../../server/src/store.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 const { config } = await import('../../server/src/config.js');
 const { defaultHttpRequest } = await import('../../server/src/shared/http-client.js');
 
@@ -61,9 +62,8 @@ test.before(async () => {
 test.after(async () => {
   await scheduler.stop();
   scheduler.resetDependencies();
-  closeDb();
   if (server) await new Promise((resolve) => server.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

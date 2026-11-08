@@ -4,23 +4,23 @@
  */
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after, before } from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-groups-keepalive-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'groups-keepalive-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'groups-keepalive-password';
-process.env.API_TOKEN = 'groups-keepalive-token';
-process.env.ILINK_LOGIN_BASE_URL = 'http://127.0.0.1:9';
-process.env.ILINK_BASE_URL = 'http://127.0.0.1:9';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-groups-keepalive-',
+  env: {
+    APP_SECRET: 'groups-keepalive-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'groups-keepalive-password',
+    API_TOKEN: 'groups-keepalive-token',
+    ILINK_LOGIN_BASE_URL: 'http://127.0.0.1:9',
+    ILINK_BASE_URL: 'http://127.0.0.1:9',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const store = await import('../../server/src/store.js');
 const { createApp } = await import('../../server/src/api.js');
-const { closeDb } = await import('../../server/src/db.js');
 
 let server;
 let base = '';
@@ -28,7 +28,7 @@ let cookie = '';
 const CSRF = { 'x-requested-with': 'ClawBridge-Admin' };
 
 before(async () => {
-  const { seedTestAdminSecrets } = await import('./backend-test-secrets.js');
+  const { seedTestAdminSecrets } = await import('../helpers/backend-test-secrets.js');
   seedTestAdminSecrets();
   server = createApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -44,8 +44,7 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 async function request(method, pathName, { body, headers = {} } = {}) {

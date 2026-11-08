@@ -25,11 +25,13 @@ jobs:
         # 22.x：engines 下限（node:sqlite 免 flag 的最低大版本）；24.x：Docker 镜像同款
         node: ['22.x', '24.x']
     steps:
+      # actions 供应链固定（INF-10 / INF-21）：uses 固定到 commit SHA，行尾注释保留主版本；
+      # 升级时用 git ls-remote（annotated tag 取 ^{} 行）或 GitHub API 查询新 SHA。
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm

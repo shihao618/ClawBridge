@@ -5,7 +5,7 @@
 import { MESSAGE_DIRECTION_META, MESSAGE_STATUS_META, PAGE_SIZE } from '../constants.js';
 import { loadErrorHandler } from '../core.js';
 import { els, state } from '../state.js';
-import { buildAttachmentsNode, buildGroupBadges, buildSourceBadge, emptyRow, updatePagination } from '../ui.js';
+import { buildAttachmentsNode, buildGroupBadges, buildSourceBadge, emptyRow, setupTablist, updatePagination } from '../ui.js';
 import { $$, apiFetch, clearNode, el, formatDateTime, formatNumber, formatRelative } from '../../common.js';
 import { toCount } from '../../lib/media.js';
 
@@ -27,6 +27,7 @@ export function setMessageDirection(direction) {
 }
 
 export async function loadMessages() {
+  initMessagesView();
   const params = new URLSearchParams();
   params.set('direction', state.messages.direction);
   if (state.messages.groupId) params.set('groupId', state.messages.groupId);
@@ -131,4 +132,33 @@ function buildMessageRow(message) {
       text: message.error ? String(message.error) : '—',
     }),
   );
+}
+
+/** 消息记录视图事件绑定（首次进入该视图时加载，幂等）。 */
+let messagesViewBound = false;
+export function initMessagesView() {
+  if (messagesViewBound) return;
+  messagesViewBound = true;
+  els.messagesPrev.addEventListener('click', () => {
+    if (state.messages.offset <= 0) return;
+    state.messages.offset = Math.max(0, state.messages.offset - PAGE_SIZE);
+    loadMessages().catch(loadErrorHandler('加载消息记录失败'));
+  });
+  els.messagesNext.addEventListener('click', () => {
+    if (state.messages.offset + PAGE_SIZE >= state.messages.total) return;
+    state.messages.offset += PAGE_SIZE;
+    loadMessages().catch(loadErrorHandler('加载消息记录失败'));
+  });
+  els.messagesGroupFilter.addEventListener('change', () => {
+    state.messages.groupId = els.messagesGroupFilter.value || '';
+    state.messages.offset = 0;
+    loadMessages().catch(loadErrorHandler('加载消息记录失败'));
+  });
+  // 消息方向 Tab：点击 + 方向键/Home/End（roving tabindex，F-07）。
+  setupTablist({
+    tablist: els.messagesTabs,
+    tabSelector: 'button[data-direction]',
+    getValue: (tab) => tab.dataset.direction,
+    onChange: setMessageDirection,
+  });
 }

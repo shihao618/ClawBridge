@@ -4,34 +4,30 @@
  * 登录/API Key 内存限流、Cookie 解析。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-auth-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'auth-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'auth-test-password';
-process.env.API_TOKEN = 'auth-test-api-token-abcdef';
-process.env.API_RATE_LIMIT_PER_MINUTE = '60';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-auth-',
+  env: {
+    APP_SECRET: 'auth-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'auth-test-password',
+    API_TOKEN: 'auth-test-api-token-abcdef',
+    API_RATE_LIMIT_PER_MINUTE: '60',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const auth = await import('../../server/src/auth.js');
 const { signAdminSession, verifyAdminSession } = await import('../../server/src/crypto.js');
 
 // 机密仅 DB 管理：先验证“无 DB 哈希时一律 false”（env 密码不再回退），再把测试密码 seed 到 DB
 const noRecordResult = auth.verifyAdminPassword('auth-test-password');
-const { seedTestAdminSecrets } = await import('./backend-test-secrets.js');
+const { seedTestAdminSecrets } = await import('../helpers/backend-test-secrets.js');
 seedTestAdminSecrets();
 
-test.after(() => {
-  // auth 现在会读取 settings 的 DB 密码哈希（import settings 时打开数据库），先关闭再清理临时目录
-   
-  return import('../../server/src/db.js').then(({ closeDb }) => {
-    closeDb();
-    fs.rmSync(dataDir, { recursive: true, force: true });
-  });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 /** 构造伪造的 Express req（只实现中间件用到的字段）。 */

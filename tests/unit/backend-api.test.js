@@ -7,22 +7,23 @@
  */
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after, before } from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-api-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'api-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'api-test-admin-password';
-process.env.API_TOKEN = 'api-test-token-123456';
-process.env.ILINK_LOGIN_BASE_URL = 'http://127.0.0.1:9';
-process.env.ILINK_BASE_URL = 'http://127.0.0.1:9';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-api-',
+  env: {
+    APP_SECRET: 'api-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'api-test-admin-password',
+    API_TOKEN: 'api-test-token-123456',
+    ILINK_LOGIN_BASE_URL: 'http://127.0.0.1:9',
+    ILINK_BASE_URL: 'http://127.0.0.1:9',
+    LOG_LEVEL: 'silent',
+  },
+});
+const dataDir = unitEnv.dataDir;
 
 const { createApp } = await import('../../server/src/api.js');
-const { closeDb } = await import('../../server/src/db.js');
 const store = await import('../../server/src/store.js');
 
 /** @type {import('node:http').Server} */
@@ -31,7 +32,7 @@ let base = '';
 
 before(async () => {
   // 机密仅由 DB 管理：先把测试 env 密码/Token seed 到 DB（等价 bootstrap）
-  const { seedTestAdminSecrets } = await import('./backend-test-secrets.js');
+  const { seedTestAdminSecrets } = await import('../helpers/backend-test-secrets.js');
   seedTestAdminSecrets();
   server = createApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -40,8 +41,7 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 async function request(method, pathName, { body, rawBody, headers = {}, cookie } = {}) {

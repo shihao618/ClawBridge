@@ -62,6 +62,7 @@ function buildSettingsState(data) {
 }
 
 export async function loadSettings() {
+  initSettingsView();
   try {
     const data = await apiFetch('/api/admin/settings');
     const built = buildSettingsState(data || {});
@@ -772,4 +773,36 @@ export async function resetApiToken() {
   } finally {
     setButtonLoading(els.securityTokenResetButton, false);
   }
+}
+
+/** 运行配置/安全卡片事件绑定（首次进入运行配置视图时加载，幂等）。 */
+let settingsViewBound = false;
+export function initSettingsView() {
+  if (settingsViewBound) return;
+  settingsViewBound = true;
+  els.settingsSaveButton.addEventListener('click', () => {
+    saveSettings().catch(loadErrorHandler('保存运行配置失败'));
+  });
+  els.settingsGroups.addEventListener('input', handleSettingsInput);
+  els.settingsGroups.addEventListener('change', handleSettingsInput);
+  els.settingsGroups.addEventListener('click', handleSettingsClick);
+  els.settingsRestartContainerButton.addEventListener('click', () => {
+    restartContainer().catch(loadErrorHandler('重启容器失败'));
+  });
+  // 安全卡片：管理密码 / API Token / 推送 API 开关
+  els.securityPushToggle.addEventListener('click', () => {
+    toggleSecurityPushApi().catch(loadErrorHandler('更新推送 API 开关失败'));
+  });
+  els.securityTokenRotateButton.addEventListener('click', () => {
+    rotateApiToken().catch(loadErrorHandler('重新生成 Token 失败'));
+  });
+  els.securityTokenResetButton.addEventListener('click', () => {
+    resetApiToken().catch(loadErrorHandler('恢复 Token 失败'));
+  });
+  els.securityPasswordChangeButton.addEventListener('click', () => {
+    changeAdminPassword().catch(loadErrorHandler('修改密码失败'));
+  });
+  els.securityPasswordResetButton.addEventListener('click', () => {
+    resetAdminPassword().catch(loadErrorHandler('恢复密码失败'));
+  });
 }

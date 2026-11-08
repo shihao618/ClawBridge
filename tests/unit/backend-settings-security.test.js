@@ -5,26 +5,30 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-settings-security-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'settings-security-secret-0123456789abcdef0123456789abcdef';
 // 故意设置 env 机密：bootstrap 必须忽略它们（无 env 回退）
-process.env.ADMIN_PASSWORD = 'env-should-be-ignored-pass';
-process.env.API_TOKEN = 'env-should-be-ignored-token';
-process.env.ILINK_LOGIN_BASE_URL = 'http://127.0.0.1:9';
-process.env.ILINK_BASE_URL = 'http://127.0.0.1:9';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-settings-security-',
+  env: {
+    APP_SECRET: 'settings-security-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'env-should-be-ignored-pass',
+    API_TOKEN: 'env-should-be-ignored-token',
+    ILINK_LOGIN_BASE_URL: 'http://127.0.0.1:9',
+    ILINK_BASE_URL: 'http://127.0.0.1:9',
+    LOG_LEVEL: 'silent',
+  },
+});
+const dataDir = unitEnv.dataDir;
 
 const settings = await import('../../server/src/settings.js');
 const auth = await import('../../server/src/auth.js');
 const crypto = await import('../../server/src/crypto.js');
 const { config } = await import('../../server/src/config.js');
 const { logger, setLogLevel } = await import('../../server/src/logger.js');
-const { all, get, run, closeDb } = await import('../../server/src/db.js');
+const { all, get, run } = await import('../../server/src/db.js');
 const { createApp } = await import('../../server/src/api.js');
 
 const ENV_PASSWORD = 'env-should-be-ignored-pass';
@@ -51,8 +55,7 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 async function request(method, pathName, { body, headers = {} } = {}) {

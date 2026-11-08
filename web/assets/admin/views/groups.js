@@ -11,6 +11,7 @@ import { normalizeGroupColor } from '../../lib/parse.js';
 import { openSendMessageModal } from './send-message.js';
 
 export async function loadGroups() {
+  initGroupsView();
   const data = await apiFetch('/api/admin/groups');
   state.groups = data && Array.isArray(data.items) ? data.items : [];
   renderGroups();
@@ -279,4 +280,13 @@ async function deleteGroup(group) {
   } catch (error) {
     toastError(error, '删除分组失败');
   }
+}
+
+/** 用户分组视图事件绑定（首次进入该视图时加载，幂等）。 */
+let groupsViewBound = false;
+export function initGroupsView() {
+  if (groupsViewBound) return;
+  groupsViewBound = true;
+  els.createGroupButton.addEventListener('click', () => openGroupEditor(null));
+  els.groupTableBody.addEventListener('click', handleGroupTableClick);
 }

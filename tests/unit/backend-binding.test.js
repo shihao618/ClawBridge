@@ -11,13 +11,9 @@
  * - 断言下一次轮询确实携带 verify_code，并最终 confirmed。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after } from 'node:test';
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-binding-'));
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
 // ---------------------------------------------------------------------------
 // 假 iLink 服务（先启动拿端口，再设置 env，最后动态 import binding）
@@ -154,21 +150,24 @@ await new Promise((resolve, reject) => {
 const fakeBase = `http://127.0.0.1:${fake.address().port}`;
 
 // 必须在 import 业务模块前设置：config 模块加载即求值
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'binding-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'binding-test-password';
-process.env.API_TOKEN = 'binding-test-api-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.ILINK_LOGIN_BASE_URL = fakeBase;
-process.env.ILINK_BASE_URL = fakeBase;
-process.env.BINDING_POLL_GAP_MS = '0'; // 关键：0 间隔放大竞态窗口
-process.env.BINDING_MAX_ACTIVE = '10';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-binding-',
+  env: {
+    APP_SECRET: 'binding-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'binding-test-password',
+    API_TOKEN: 'binding-test-api-token',
+    LOG_LEVEL: 'silent',
+    ILINK_LOGIN_BASE_URL: fakeBase,
+    ILINK_BASE_URL: fakeBase,
+    BINDING_POLL_GAP_MS: '0', // 关键：0 间隔放大竞态窗口
+    BINDING_MAX_ACTIVE: '10',
+  },
+});
 
 const binding = await import('../../server/src/binding.js');
 const monitor = await import('../../server/src/monitor.js');
 const store = await import('../../server/src/store.js');
 const { config } = await import('../../server/src/config.js');
-const { closeDb } = await import('../../server/src/db.js');
 
 after(async () => {
   await monitor.stopAll({ notify: false }).catch(() => {});
@@ -177,10 +176,9 @@ after(async () => {
   } catch {
     /* ignore */
   }
-  closeDb();
   fake.closeAllConnections?.();
   await new Promise((resolve) => fake.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

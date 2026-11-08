@@ -53,7 +53,11 @@
 - **安全**：bot_token / context_token AES-256-GCM 加密落库；admin 密码登录（HttpOnly Cookie +
   CSRF 头校验）；**管理密码（scrypt 哈希）与 API Token（AES 加密）可在后台「安全」卡片修改/轮换**，
   Token 仅显示一次；API Key 常量时间比较；绑定会话 secret 只返回一次且仅存哈希；CSP 安全头；
-  日志脱敏；未配置密钥时自动生成并持久化到数据卷。
+  日志脱敏；未配置密钥时自动生成并持久化到数据卷；提供 **APP_SECRET 轮换工具**
+  （`npm run rotate-secret`，离线停机执行并自动备份，见 [`docs/ROTATE_APP_SECRET.md`](docs/ROTATE_APP_SECRET.md)）。
+- **可观测性与维护**：管理端只读指标接口 `GET /api/admin/metrics`（进程/队列/监控/媒体/规则·定时聚合）；
+  内置数据生命周期维护（孤儿媒体清理、日志保留期）；管理后台视图按需动态加载（首屏只加载概览）。
+  隐私与数据边界见 [`docs/PRIVACY.md`](docs/PRIVACY.md)。
 - **开箱即用**：单容器（Node 24 + Express 5 + 内置 SQLite，无外部数据库）、零构建前端、
   Docker healthcheck、数据持久化命名卷；附带**本地模拟微信 API**，无真实微信也能完整演示与测试。
 
@@ -465,6 +469,9 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 - **升级 / 回滚**：当前 schema **v10 不支持旧库原地升级**，需要备份后空库重建并重新绑定；
   完整步骤（备份、离线读 schema_version、v10 原地升级、旧镜像回滚、fnOS 固定版本）见
   [`docs/UPGRADE.md`](docs/UPGRADE.md)。每次启动会幂等补齐查询索引（无需 schema 变更）。
+- **APP_SECRET 轮换**：需要更换主密钥（如怀疑泄露）时，**停机后离线**用
+  [`scripts/rotate-app-secret.mjs`](scripts/rotate-app-secret.mjs) 重加密库内全部密文
+  （已绑定用户无需重新扫码；备份/验证/回滚步骤见 [`docs/ROTATE_APP_SECRET.md`](docs/ROTATE_APP_SECRET.md)）。
 
 ### 反向代理 / HTTPS
 
@@ -514,6 +521,7 @@ npm run coverage          # 单元 + e2e + 覆盖率报告（排除 web/tests；
 npm run lint              # ESLint 静态检查（含 CI；零告警）
 npm run doc:lint          # 文档值级一致性检查（版本/环境变量/设置字段/API 端点/链接/质量表命令）
 npm run screenshots       # 用演示数据重新生成 README 截图（WebP；headless Edge/Chrome，可选）
+npm run rotate-secret     # APP_SECRET 轮换（停机执行；自动备份 DB，先 --dry-run 核对）
 npm run mock              # 单独启动模拟微信 API（默认 127.0.0.1:3100）
 npm run smoke:mock        # mock 自身自测（26 项协议行为断言）
 ```
@@ -558,13 +566,14 @@ Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editor
 
 | 验证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端/核心单测（config、crypto、iLink 客户端、store 与拆分后的 data/**、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载与有界并发、入站下载 URL 白名单、schema 版本校验、数据库索引、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎与 SSRF IP 固定、shared 模板/响应管线、定时通知调度与生效时间段、优雅退出 drain、数据维护 GC、运行配置后台设置（第二批/密码与 API Token/系统重启）、后台菜单路由与初始化顺序、弹窗交互/焦点陷阱/Tab 语义、响应式布局、前端模块/纯函数/弹窗行为、日志脱敏、错误映射） | `npm run test:unit` | 373 项（371 通过 + 2 项 POSIX-only 在 Windows 跳过） |
+| 后端/核心单测（config、crypto、iLink 客户端、store 与拆分后的 data/**、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载与有界并发、入站下载 URL 白名单、schema 版本校验、数据库索引、用户分组、入站 API、会话保活调度、分组级保活继承、接口应用规则引擎与 SSRF IP 固定、shared 模板/响应管线、定时通知调度与生效时间段、优雅退出 drain、数据维护 GC、可观测性指标、APP_SECRET 轮换、运行配置后台设置、后台菜单路由与初始化顺序、视图懒加载/弹窗交互/焦点陷阱/Tab 语义、响应式布局、前端模块/纯函数/弹窗行为、日志脱敏、错误映射） | `npm run test:unit` | 390 项（388 通过 + 2 项 POSIX-only 在 Windows 跳过） |
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/定时通知/运行配置设置/密码与 API Token；子进程 env 白名单、稳定等待断言、mock 违规统一断言） | `npm run test:e2e` | 91 项通过（约 35s，确定性，连跑多次稳定） |
-| 全量测试（unit + e2e） | `npm test` | 464 项（462 通过 + 2 项 POSIX-only 跳过，约 35s） |
+| 全量测试（unit + e2e） | `npm test` | 481 项（479 通过 + 2 项 POSIX-only 跳过，约 35s） |
 | e2e 连跑稳定性（串行 3 次，CI 门禁） | `npm run e2e:stability` | 3/3 次通过（每次 91 项，单次约 127s） |
-| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line 94.05% / branch 77.10% / funcs 93.82% |
+| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line 93.79% / branch 76.79% / funcs 93.93% |
 | 静态检查（ESLint flat config，CI `--max-warnings=0`） | `npm run lint` | 0 error / 0 warning |
 | 文档值级一致性（版本/环境变量/设置字段/API 端点/相对链接/质量表命令） | `npm run doc:lint` | 6 项全部通过（CI 门禁） |
+| 可观测性指标（`GET /api/admin/metrics`、overview.metrics） | `npm run test:unit`（backend-metrics） | 契约与鉴权全覆盖 |
 | mock 自身协议自测 | `node mock/selftest.mjs` | 26 项通过 |
 | 浏览器人工回归（历史记录，不可复现；可复现基线见下一行） | 见历史交付说明 | 74 + 19 + 38 + 31 + 20 + 28 + 40 + 20 + 25 + 21 + 1 + 26 项累计检查 |
 | 浏览器冒烟测试（可复现的子集：登录、7 个菜单视图、新建/删除分组、规则/任务编辑器、登出、绑定页/文档页加载、Console 异常检查） | `npm run test:ui` | 16 项通过（无 Edge/Chrome 时自动跳过） |
@@ -637,6 +646,8 @@ fnOS 同理修改 `docker-compose.fnos.yml`。只改宿主机侧映射，容器�
 - 请遵守微信生态内容合规要求，仅向已明确同意接收消息的用户推送，勿用于骚扰/营销群发。
 - 单个 bot 账号的发送频率受微信服务端限制，ClawBridge 的队列和限流是保护措施，不能突破服务端上限。
 - 本项目为自托管工具，与腾讯/微信无隶属关系；"微信"、"ClawBot" 等商标归其所有者。
+- 用户数据分类、加密与访问边界、日志脱敏、备份及截图/演示数据规范见
+  [`docs/PRIVACY.md`](docs/PRIVACY.md)（自托管部署者与公开仓库维护者均建议阅读）。
 
 ## 参考与致谢
 

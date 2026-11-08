@@ -322,3 +322,4 @@ image: ghcr.io/shihao618/clawbridge:sha-<commit>
 - HTTP API 契约：[`docs/API.md`](API.md)
 - 版本变更摘要：[CHANGELOG.md](../CHANGELOG.md)
 - 发布流程（tag / GHCR / 发布检查清单 / 回滚）：[`docs/RELEASE.md`](RELEASE.md)
+- APP_SECRET 轮换（离线重加密，已绑定用户无需重新扫码）：[`docs/ROTATE_APP_SECRET.md`](ROTATE_APP_SECRET.md)

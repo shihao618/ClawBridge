@@ -18,6 +18,7 @@ import { isPrepareFailedError, isRateLimitError, isStaleTokenError } from './err
 import * as ilink from './ilink.js';
 import { logger } from './logger.js';
 import * as media from './media.js';
+import * as metrics from './metrics.js';
 import { TokenBucketLimiter } from './rate-limiter.js';
 import * as store from './store.js';
 
@@ -196,16 +197,19 @@ export async function processOne(now = Date.now()) {
   const user = store.getUserRow(candidate.user_id);
   if (!user) {
     store.markOutboxFailed(candidate.id, { error: '用户不存在', ts: now, incrementAttempts: false });
+    metrics.incCounter('dispatcher.failed.total');
     log.warn('消息投递失败：用户不存在', { outboxId: candidate.id });
     return true;
   }
   if (user.status !== 'active') {
     store.markOutboxFailed(candidate.id, { error: '用户未绑定（凭证已清除），消息未发送', ts: now, incrementAttempts: false });
+    metrics.incCounter('dispatcher.failed.total');
     log.warn('消息投递失败：用户未绑定', { outboxId: candidate.id, userId: user.id });
     return true;
   }
   if (Number(user.pause_until) > now) {
     store.markOutboxFailed(candidate.id, { error: '账号冷却中（bot token 失效），消息未发送', ts: now, incrementAttempts: false });
+    metrics.incCounter('dispatcher.failed.total');
     log.warn('消息投递失败：账号冷却中', { outboxId: candidate.id, userId: user.id });
     return true;
   }
@@ -216,6 +220,7 @@ export async function processOne(now = Date.now()) {
     attachment = store.getAttachment(candidate.media_id);
     if (!attachment || attachment.direction !== 'outbound' || attachment.status !== 'ready') {
       store.markOutboxFailed(candidate.id, { error: '媒体附件不存在或未就绪，无法发送', ts: now, incrementAttempts: false });
+      metrics.incCounter('dispatcher.failed.total');
       log.warn('消息投递失败：媒体附件缺失/未就绪', { outboxId: candidate.id, mediaId: candidate.media_id });
       return true;
     }
@@ -225,6 +230,7 @@ export async function processOne(now = Date.now()) {
   const secrets = store.getUserSecrets(user.id);
   if (!secrets?.token) {
     store.markOutboxFailed(candidate.id, { error: '缺少 bot_token，需要用户重新扫码绑定', ts: now, incrementAttempts: false });
+    metrics.incCounter('dispatcher.failed.total');
     return true;
   }
   const contextToken = secrets.contextToken || undefined;
@@ -261,6 +267,7 @@ export async function processOne(now = Date.now()) {
       return false;
     }
 
+    const sendStartedAt = Date.now();
     let resp;
     let sentKind = '';
     if (attachment) {
@@ -298,6 +305,8 @@ export async function processOne(now = Date.now()) {
       ts: Date.now(),
     });
     store.touchOutbound(user.id, Date.now());
+    metrics.incCounter('dispatcher.sent.total');
+    metrics.observeHistogram('dispatcher.send_latency_ms', Date.now() - sendStartedAt);
     log.info('消息投递完成', {
       outboxId: candidate.id,
       userId: user.id,
@@ -314,6 +323,7 @@ export async function processOne(now = Date.now()) {
     if (err?.permanent || err?.code === 'ENOENT') {
       const reason = err?.code === 'ENOENT' ? '媒体文件缺失（磁盘文件不存在），无法发送' : err?.message ?? '媒体发送失败';
       store.markOutboxFailed(candidate.id, { error: reason, ts: Date.now() });
+      metrics.incCounter('dispatcher.failed.total');
       log.warn('消息投递失败（不可重试）', { outboxId: candidate.id, userId: user.id, message: reason });
       return true;
     }
@@ -327,6 +337,7 @@ function deferForRateLimit(candidate, user, waitMs, now) {
   const nextAt = now + Math.max(1, waitMs);
   store.deferOutbox(candidate.id, nextAt, now);
   store.deferUserQueued(user.id, nextAt, now);
+  metrics.incCounter('dispatcher.rate_limited.total');
   log.debug('账号发送限流，队列推迟', {
     userId: user.id,
     outboxId: candidate.id,
@@ -388,6 +399,8 @@ function handleFailure({ candidate, user, err }) {
     const failedCount = store.failUserQueued(user.id, reason, now);
     store.setUserPaused(user.id, pauseUntil, reason, now);
     store.addEvent({ type: 'stale_token', userId: user.id, detail: 'sendmessage 返回 -14' });
+    metrics.incCounter('dispatcher.failed.total');
+    metrics.incCounter('dispatcher.stale_token.total');
     log.warn('消息投递失败：bot token 失效，账号进入 1 小时冷却', {
       outboxId: candidate.id,
       userId: user.id,
@@ -402,6 +415,7 @@ function handleFailure({ candidate, user, err }) {
     const reason =
       '消息发送失败：context_token 缺失或已失效，需要用户先给 bot 发一条消息刷新会话（iLink prepare failed）';
     store.markOutboxFailed(candidate.id, { error: reason, ts: now });
+    metrics.incCounter('dispatcher.failed.total');
     log.warn('消息投递失败：context_token 缺失/失效（prepare failed），不重试', {
       outboxId: candidate.id,
       userId: user.id,
@@ -412,6 +426,7 @@ function handleFailure({ candidate, user, err }) {
 
   if (attempts >= config.push.maxAttempts) {
     store.markOutboxFailed(candidate.id, { error: message, ts: now });
+    metrics.incCounter('dispatcher.failed.total');
     log.warn('消息投递失败（达到最大重试次数）', {
       outboxId: candidate.id,
       userId: user.id,
@@ -425,6 +440,8 @@ function handleFailure({ candidate, user, err }) {
   const delays = config.push.retryDelaysMs;
   const delayMs = delays[Math.min(attempts - 1, delays.length - 1)] ?? 5000;
   store.rescheduleOutbox(candidate.id, { nextAttemptAt: now + delayMs, error: message, ts: now });
+  metrics.incCounter('dispatcher.retry.total');
+  if (isRateLimitError(err)) metrics.incCounter('dispatcher.rate_limited.total');
   log.warn(isRateLimitError(err) ? '发送被微信限流（-2），退避后重试' : '消息发送失败，退避后重试', {
     outboxId: candidate.id,
     userId: user.id,

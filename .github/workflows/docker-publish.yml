@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # 发布门禁：镜像构建前先跑单元 + e2e 测试与 mock 自测，避免把未验证代码发布为 :latest
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
@@ -41,16 +41,17 @@ jobs:
         run: node mock/selftest.mjs
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
-      # actions 版本策略（INF-10）：统一使用主版本 tag（@v4/@v3/@v5/@v6），便于自动接收安全修复；
-      # 若需完全可复现的供应链，可改为 commit SHA pin —— .github/dependabot.yml 已配置
-      # github-actions 生态每周检查，改为 SHA 后仍能持续收到更新 PR。
+      # actions 供应链固定（INF-10 / INF-21）：所有 uses 固定到 commit SHA，并在行尾保留主版本注释；
+      # 升级方式：git ls-remote https://github.com/<org>/<repo> refs/tags/<tag>（annotated tag 取 ^{} 行）
+      # 或 GitHub API /repos/<org>/<repo>/git/ref/tags/<tag>，把新 SHA 与注释一起更新。
+      # .github/dependabot.yml 的 github-actions 生态每周检查并提 PR（SHA pin 后仍能收到更新）。
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -58,7 +59,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/clawbridge
           tags: |
@@ -67,7 +68,7 @@ jobs:
             type=ref,event=tag
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true

@@ -16,17 +16,19 @@
 # - USER node 运行；/app/data 由 compose 命名卷（或 fnOS 项目 data/）挂载并属于 node 用户。
 # - HEALTHCHECK 用内置 fetch 探测 /health（无需 curl/wget）。
 #
-# 可复现性（INF-10）：
-# - `node:24-alpine` 是浮动 tag：同一 Dockerfile 在不同时间构建可能拿到不同基础层。
-#   需要完全可复现/可审计的构建时，把 FROM 改为 `node:24-alpine@sha256:<digest>`；
-#   仓库已配置 Dependabot 的 docker 生态（.github/dependabot.yml）定期检查基础镜像更新，
-#   改为 digest 后仍会收到更新 PR。默认保留 tag 以持续获得上游安全修复。
+# 供应链固定（INF-10 / INF-21）：
+# - FROM 固定到 node:24-alpine 的 manifest-list digest（多架构 index，amd64/arm64 均可解析），
+#   同一 Dockerfile 在任何时间/机器构建都拿到同一基础层，可复现、可审计。
+# - 升级基础镜像：docker pull node:24-alpine
+#     && docker image inspect node:24-alpine --format '{{json .RepoDigests}}'
+#   取新的 sha256 digest 替换下方 FROM 行并同步注释；.github/dependabot.yml 的 docker 生态
+#   会定期检查基础镜像并提 PR（digest 固定后仍能收到更新）。
 # - 依赖确定：npm ci 严格按 package-lock.json（lockfileVersion 3）安装，版本可复现；
 #   当前依赖无需 native 编译，构建过程不依赖网络中的可变内容（npm registry 除外）。
 # - 发布镜像由 GHCR 工作流附加 SBOM 与 build provenance attestation（见
 #   .github/workflows/docker-publish.yml 的 provenance/sbom 参数）。
 # =============================================================================
-FROM node:24-alpine
+FROM node:24-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
 
 LABEL org.opencontainers.image.title="ClawBridge" \
       org.opencontainers.image.description="Multi-user WeChat ClawBot binding & messaging bridge" \

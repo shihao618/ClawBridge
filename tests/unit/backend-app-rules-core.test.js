@@ -3,23 +3,23 @@
  * 只访问本机假 HTTP server，不触真实外网。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 import zlib from 'node:zlib';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-app-rules-core-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'app-rules-core-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'app-rules-core-password';
-process.env.API_TOKEN = 'app-rules-core-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.APP_RULES_ALLOWED_HOSTS = '127.0.0.1,localhost';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-app-rules-core-',
+  env: {
+    APP_SECRET: 'app-rules-core-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'app-rules-core-password',
+    API_TOKEN: 'app-rules-core-token',
+    LOG_LEVEL: 'silent',
+    APP_RULES_ALLOWED_HOSTS: '127.0.0.1,localhost',
+  },
+});
 
 const appRules = await import('../../server/src/app-rules.js');
-const { closeDb } = await import('../../server/src/db.js');
 
 const baseRule = (overrides = {}) => ({
   id: 'rule_test',
@@ -106,10 +106,9 @@ test.before(async () => {
   port = server.address().port;
 });
 
-test.after(() => {
-  closeDb();
+test.after(async () => {
   server?.close();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 test('日志 URL 脱敏：敏感 query 参数值替换为 [redacted]，保留 origin+path 与非敏感参数', () => {

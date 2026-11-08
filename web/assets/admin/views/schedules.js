@@ -17,6 +17,7 @@ import { createFormError, createSaveAction, openEditorModal } from '../integrati
 import { loadPickerUsers } from './users.js';
 
 export async function loadScheduledTasks() {
+  initSchedulesView();
   const data = await apiFetch('/api/admin/scheduled-tasks');
   state.scheduled.items = data && Array.isArray(data.items) ? data.items : [];
   state.scheduled.loaded = true;
@@ -656,4 +657,13 @@ async function openScheduleLogsModal(task) {
     },
     errorFallback: '加载定时任务日志失败',
   });
+}
+
+/** 定时通知 Tab 事件绑定（首次切换到该 Tab 时加载，幂等）。 */
+let schedulesViewBound = false;
+export function initSchedulesView() {
+  if (schedulesViewBound) return;
+  schedulesViewBound = true;
+  els.createScheduleButton.addEventListener('click', () => openScheduleEditor(null));
+  els.scheduleTableBody.addEventListener('click', handleScheduleTableClick);
 }

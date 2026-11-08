@@ -9,13 +9,9 @@
  * 不会出现 notifyStart token B，本测试失败。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after } from 'node:test';
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-rebind-'));
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
 // ---------------------------------------------------------------------------
 // 假 iLink 服务：按二维码顺序返回预设的 confirmed 凭证（同 wechat_user_id）
@@ -109,20 +105,23 @@ await new Promise((resolve, reject) => {
 const fakeBase = `http://127.0.0.1:${fake.address().port}`;
 
 // 必须在 import 业务模块前设置
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'rebind-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'rebind-test-password';
-process.env.API_TOKEN = 'rebind-test-api-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.ILINK_LOGIN_BASE_URL = fakeBase;
-process.env.ILINK_BASE_URL = fakeBase;
-process.env.BINDING_POLL_GAP_MS = '50';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-rebind-',
+  env: {
+    APP_SECRET: 'rebind-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'rebind-test-password',
+    API_TOKEN: 'rebind-test-api-token',
+    LOG_LEVEL: 'silent',
+    ILINK_LOGIN_BASE_URL: fakeBase,
+    ILINK_BASE_URL: fakeBase,
+    BINDING_POLL_GAP_MS: '50',
+  },
+});
 
 const binding = await import('../../server/src/binding.js');
 const monitor = await import('../../server/src/monitor.js');
 const store = await import('../../server/src/store.js');
 const dispatcher = await import('../../server/src/dispatcher.js');
-const { closeDb } = await import('../../server/src/db.js');
 const { decryptSecret } = await import('../../server/src/crypto.js');
 
 after(async () => {
@@ -132,10 +131,9 @@ after(async () => {
   } catch {
     /* ignore */
   }
-  closeDb();
   fake.closeAllConnections?.();
   await new Promise((resolve) => fake.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 async function waitFor(fn, timeoutMs = 15000, intervalMs = 25) {

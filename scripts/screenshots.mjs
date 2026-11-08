@@ -536,7 +536,7 @@ const PRIVACY_CHECK_SCRIPT = `(() => {
   const leaks = [];
   const absolute = /(?:[A-Za-z]:[\\\\/]|\\/(?:Users|home|tmp|var\\/folders)\\/)/;
   if (absolute.test(text)) leaks.push('absolute-path');
-  for (const bad of ['杨星雨', '真实用户', 'DEMO_SECRET']) if (text.includes(bad)) leaks.push(bad);
+  for (const bad of ['真实用户', 'DEMO_SECRET']) if (text.includes(bad)) leaks.push(bad);
   return leaks;
 })()`;
 

@@ -473,6 +473,12 @@ curl -X POST http://localhost:10380/api/v1/messages \
                 </tr>
                 <tr>
                   <td><span class="method method-get">GET</span></td>
+                  <td><code class="endpoint-path">/api/admin/metrics</code></td>
+                  <td>可观测性指标快照（只读：counter/gauge/histogram + 24h 日志聚合）</td>
+                  <td>Cookie</td>
+                </tr>
+                <tr>
+                  <td><span class="method method-get">GET</span></td>
                   <td><code class="endpoint-path">/api/admin/groups</code></td>
                   <td>分组列表（按创建时间升序）</td>
                   <td>Cookie</td>

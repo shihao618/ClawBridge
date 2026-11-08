@@ -8,20 +8,21 @@
  *  - drain 超时且 markDbClosing() 后，在途发送完成不再写库（避免关库后写失败）。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after } from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-dispatcher-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'dispatcher-test-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'dispatcher-test-password';
-process.env.API_TOKEN = 'dispatcher-test-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.RATE_LIMIT_MAX = '50';
-process.env.RATE_LIMIT_WINDOW_MS = '300000';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-dispatcher-',
+  env: {
+    APP_SECRET: 'dispatcher-test-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'dispatcher-test-password',
+    API_TOKEN: 'dispatcher-test-token',
+    LOG_LEVEL: 'silent',
+    RATE_LIMIT_MAX: '50',
+    RATE_LIMIT_WINDOW_MS: '300000',
+  },
+});
 
 const state = { delayMs: 0, sendRequests: [] };
 const fake = http.createServer(async (req, res) => {
@@ -48,7 +49,7 @@ const fakeBase = `http://127.0.0.1:${fake.address().port}`;
 
 const store = await import('../../server/src/store.js');
 const dispatcher = await import('../../server/src/dispatcher.js');
-const { getDb, closeDb } = await import('../../server/src/db.js');
+const { getDb } = await import('../../server/src/db.js');
 
 after(async () => {
   try {
@@ -57,10 +58,9 @@ after(async () => {
     /* 忽略 */
   }
   dispatcher.markDbClosing();
-  closeDb();
   fake.closeAllConnections?.();
   await new Promise((resolve) => fake.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

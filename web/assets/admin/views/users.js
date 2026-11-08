@@ -4,10 +4,10 @@
  */
 
 import { MESSAGE_DIRECTION_META, MESSAGE_STATUS_META, PAGE_SIZE, UNGROUPED_FILTER, USER_STATUS_META } from '../constants.js';
-import { refreshAfterWrite } from '../core.js';
+import { loadErrorHandler, refreshAfterWrite } from '../core.js';
 import { els, state } from '../state.js';
 import { buildAttachmentsNode, buildColorDot, buildGroupBadges, buildSourceBadge, buildSwitch, createTableClickHandler, emptyRow, isGroupKeepaliveEnabled, openTrackedModal, rowActionButton, updateGroupFilterOptions, updatePagination } from '../ui.js';
-import { apiFetch, clearNode, confirmDialog, el, formatDateTime, formatDuration, formatNumber, formatRelative, toast, toastError } from '../../common.js';
+import { apiFetch, clearNode, confirmDialog, debounce, el, formatDateTime, formatDuration, formatNumber, formatRelative, toast, toastError } from '../../common.js';
 import { toCount } from '../../lib/media.js';
 import { renderGroups } from './groups.js';
 import { openSendMessageModal } from './send-message.js';
@@ -156,6 +156,7 @@ function buildUserGroupMapFromItems(items) {
 }
 
 export async function loadUsers() {
+  initUsersView();
   const params = new URLSearchParams();
   params.set('status', state.users.status || 'all');
   if (state.users.q) params.set('q', state.users.q);
@@ -506,4 +507,40 @@ function buildMiniMessageItem(message) {
   if (attachments) item.append(attachments);
   if (message.error) item.append(el('div', { class: 'mini-msg-error', text: String(message.error) }));
   return item;
+}
+
+/** 用户管理视图事件绑定（首次进入该视图时加载，幂等）。 */
+let usersViewBound = false;
+export function initUsersView() {
+  if (usersViewBound) return;
+  usersViewBound = true;
+  els.userSearch.addEventListener(
+    'input',
+    debounce(() => {
+      state.users.q = els.userSearch.value.trim();
+      state.users.offset = 0;
+      loadUsers().catch(loadErrorHandler('加载用户列表失败'));
+    }, 300),
+  );
+  els.userStatusFilter.addEventListener('change', () => {
+    state.users.status = els.userStatusFilter.value || 'all';
+    state.users.offset = 0;
+    loadUsers().catch(loadErrorHandler('加载用户列表失败'));
+  });
+  els.userGroupFilter.addEventListener('change', () => {
+    state.users.groupId = els.userGroupFilter.value || '';
+    state.users.offset = 0;
+    loadUsers().catch(loadErrorHandler('加载用户列表失败'));
+  });
+  els.usersPrev.addEventListener('click', () => {
+    if (state.users.offset <= 0) return;
+    state.users.offset = Math.max(0, state.users.offset - PAGE_SIZE);
+    loadUsers().catch(loadErrorHandler('加载用户列表失败'));
+  });
+  els.usersNext.addEventListener('click', () => {
+    if (state.users.offset + PAGE_SIZE >= state.users.total) return;
+    state.users.offset += PAGE_SIZE;
+    loadUsers().catch(loadErrorHandler('加载用户列表失败'));
+  });
+  els.userTableBody.addEventListener('click', handleUserTableClick);
 }

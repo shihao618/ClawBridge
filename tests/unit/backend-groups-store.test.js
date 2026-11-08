@@ -3,24 +3,24 @@
  * 临时 DATA_DIR + 真实 SQLite，无网络。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-groups-store-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'groups-store-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'groups-store-password';
-process.env.API_TOKEN = 'groups-store-token';
-process.env.LOG_LEVEL = 'silent';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-groups-store-',
+  env: {
+    APP_SECRET: 'groups-store-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'groups-store-password',
+    API_TOKEN: 'groups-store-token',
+    LOG_LEVEL: 'silent',
+  },
+});
 
 const store = await import('../../server/src/store.js');
-const { get, closeDb } = await import('../../server/src/db.js');
+const { get } = await import('../../server/src/db.js');
 
-test.after(() => {
-  closeDb();
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;

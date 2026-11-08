@@ -16,6 +16,7 @@ import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
 import { getUploadUrl, UploadMediaType } from './ilink.js';
 import { logger } from './logger.js';
+import * as metrics from './metrics.js';
 
 const log = logger.child({ mod: 'media' });
 
@@ -631,6 +632,10 @@ export function getInboundDownloadStats() {
   }
   return inboundDownloadGate.stats();
 }
+
+// 可观测性（task-29）：把入站下载闸门的实时状态暴露为 gauges（快照时求值，不在下载热路径写指标）。
+// metrics.js 不反向依赖 media.js，因此在这里注册 provider，避免循环 import。
+metrics.registerGaugeProvider('media.inbound', () => getInboundDownloadStats());
 
 /**
  * 在闸门内执行一个入站媒体下载任务（monitor 使用）。

@@ -42,3 +42,12 @@ export async function handleBroadcast(event) {
     setButtonLoading(els.broadcastButton, false);
   }
 }
+
+/** 广播消息视图事件绑定（首次进入该视图时加载，幂等）。 */
+let broadcastViewBound = false;
+export function initBroadcastView() {
+  if (broadcastViewBound) return;
+  broadcastViewBound = true;
+  els.broadcastForm.addEventListener('submit', handleBroadcast);
+  els.broadcastText.addEventListener('input', updateBroadcastCount);
+}

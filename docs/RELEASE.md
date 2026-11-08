@@ -31,7 +31,7 @@
    - `docs/UPGRADE.md` 的「适用版本」与 schema 说明。
 3. `npm ci`（以 lockfile 安装）。
 4. `npm test`（当前 **464** 用例，unit + e2e）。
-5. `npm run lint`（ESLint，`--max-warnings=0`，应 0 error / 0 warning）。
+5. `npm run lint`（ESLint，`--max-warnings=0`，应 0 error / 0 warning）；`npm audit --omit=dev`（生产依赖应 0 漏洞）。
 6. `npm run coverage`（CI 阈值：line 90 / branch 70 / funcs 85）。
 7. `node mock/selftest.mjs`（协议自测，当前 **26/26**）。
 8. `npm run e2e:stability -- --runs=3 --concurrency=1`（e2e 串行连跑稳定性，CI 同款）。
@@ -136,7 +136,30 @@ image: ghcr.io/shihao618/clawbridge:sha-<commit>
 升级 = 改 tag → `docker compose -f docker-compose.fnos.yml pull && ... up -d`；
 回滚 = 改回旧 tag。固定 tag 后仍可用 `docker buildx imagetools inspect` 核对 digest 与多架构。
 
-## 5. 相关文档
+## 5. 供应链维护（npm 依赖 / 基础镜像 digest / GitHub Actions SHA）
+
+发布前与每次合并 Dependabot PR 时维护三类可变供应链；任何升级后都要重跑 §1 的 lint/测试与镜像冒烟。
+
+1. **npm 依赖**（`package.json` / `package-lock.json`）：
+   - 检查：`npm outdated`、`npm audit --omit=dev`（生产依赖必须 0 漏洞）、`npm audit`；
+   - 升级：`npm update <pkg>` 或调整 version range 后 `npm install`；生产依赖升级必须跑 `npm test` 与镜像冒烟；
+   - 已知 dev 例外：`minimatch` 的 GHSA-g3hv-75wg-m249（eslint 10 经 `@eslint/config-array` 依赖 `^10.2.4`，
+     10.x 无修复版）已用 `package.json` 的 `overrides.minimatch = "^11.0.1"` 固定到已修复版本；
+     上游改用 `^11` 后删除该 override；
+   - 验证：`npm ci && npm run lint && npm audit --omit=dev`。
+2. **Docker 基础镜像 digest**（`Dockerfile` 的 `FROM`）：
+   - 已固定 `node:24-alpine@sha256:<manifest-list digest>`（多架构 index，amd64/arm64 共用同一 digest）；
+   - 升级：`docker pull node:24-alpine && docker image inspect node:24-alpine --format '{{json .RepoDigests}}'`，
+     用新 digest 替换 `FROM` 并同步注释；`docker build -t clawbridge:local .` 后按 §1.11 做 `/health` 冒烟；
+   - 可用 `docker pull --platform linux/arm64 node:24-alpine@sha256:<digest>` 验证 digest 确为多架构 index；
+   - Dependabot 的 `docker` 生态会定期提 PR。
+3. **GitHub Actions commit SHA pin**（`.github/workflows/ci.yml`、`docker-publish.yml`）：
+   - 所有 `uses:` 固定到 commit SHA，行尾保留 `# vX` 主版本注释；
+   - 升级：`git ls-remote https://github.com/<org>/<repo> refs/tags/<tag>`（annotated tag 取 `^{}` 行）或
+     `https://api.github.com/repos/<org>/<repo>/git/ref/tags/<tag>` 查询新 SHA，替换后保留注释；
+   - Dependabot 的 `github-actions` 生态每周检查提 PR；合并前确认 YAML 合法且工作流在 PR 上跑通。
+
+## 6. 相关文档
 
 - 升级 / 回滚（备份、空库重建、旧镜像回滚）：[`docs/UPGRADE.md`](UPGRADE.md)
 - 版本变更摘要：[CHANGELOG.md](../CHANGELOG.md)

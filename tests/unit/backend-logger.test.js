@@ -5,21 +5,22 @@
  * 会把明文 API Token 写入 error/debug 日志（logger 只按字段名脱敏，不处理 URL 值）。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-logger-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'logger-test-secret-0123456789abcdef0123456789abcdef';
-process.env.LOG_LEVEL = 'warn';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-logger-',
+  env: {
+    APP_SECRET: 'logger-test-secret-0123456789abcdef0123456789abcdef',
+    LOG_LEVEL: 'warn',
+  },
+});
 
 const { redactUrlQueryForLog } = await import('../../server/src/logger.js');
 const { errorHandler } = await import('../../server/src/http/middleware.js');
 
-test.after(() => {
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 test('redactUrlQueryForLog：token/key/api_key/authorization 等敏感 query 值替换为 [redacted]', () => {

@@ -3,23 +3,24 @@
  * 传输层端点行为由 lead 的 tests/unit/lead-core.test.mjs 用本地假服务覆盖。
  */
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-ilink-'));
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'ilink-test-app-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'ilink-test-password';
-process.env.API_TOKEN = 'ilink-test-api-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.BOT_AGENT = 'ClawBridge/1.0.0';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-ilink-',
+  env: {
+    APP_SECRET: 'ilink-test-app-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'ilink-test-password',
+    API_TOKEN: 'ilink-test-api-token',
+    LOG_LEVEL: 'silent',
+    BOT_AGENT: 'ClawBridge/1.0.0',
+  },
+});
 
 const ilink = await import('../../server/src/ilink.js');
 
-test.after(() => {
-  fs.rmSync(dataDir, { recursive: true, force: true });
+test.after(async () => {
+  await cleanupUnitEnv(unitEnv);
 });
 
 test('ilink.buildHeaders: 公共头 + 随机 X-WECHAT-UIN + 鉴权头', () => {

@@ -13,11 +13,8 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import test, { after } from 'node:test';
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbridge-media-dispatcher-'));
+import { cleanupUnitEnv, prepareUnitEnv } from '../helpers/unit-env.mjs';
 
 // ---------------------------------------------------------------------------
 // 假 iLink + 假 CDN 服务
@@ -107,21 +104,24 @@ await new Promise((resolve, reject) => {
 const fakeBase = `http://127.0.0.1:${fake.address().port}`;
 
 // 必须在 import 业务模块前设置
-process.env.DATA_DIR = dataDir;
-process.env.APP_SECRET = 'media-dispatcher-secret-0123456789abcdef0123456789abcdef';
-process.env.ADMIN_PASSWORD = 'media-dispatcher-password';
-process.env.API_TOKEN = 'media-dispatcher-token';
-process.env.LOG_LEVEL = 'silent';
-process.env.RATE_LIMIT_MAX = '7';
-process.env.RATE_LIMIT_WINDOW_MS = '300000';
-process.env.PUSH_RETRY_DELAYS_MS = '10';
-process.env.PUSH_MAX_ATTEMPTS = '5';
+const unitEnv = prepareUnitEnv({
+  prefix: 'clawbridge-media-dispatcher-',
+  env: {
+    APP_SECRET: 'media-dispatcher-secret-0123456789abcdef0123456789abcdef',
+    ADMIN_PASSWORD: 'media-dispatcher-password',
+    API_TOKEN: 'media-dispatcher-token',
+    LOG_LEVEL: 'silent',
+    RATE_LIMIT_MAX: '7',
+    RATE_LIMIT_WINDOW_MS: '300000',
+    PUSH_RETRY_DELAYS_MS: '10',
+    PUSH_MAX_ATTEMPTS: '5',
+  },
+});
 
 const store = await import('../../server/src/store.js');
 const media = await import('../../server/src/media.js');
 const dispatcher = await import('../../server/src/dispatcher.js');
 const { config } = await import('../../server/src/config.js');
-const { closeDb } = await import('../../server/src/db.js');
 
 test('限流器在 start/refresh 时应用运行配置（DB 覆盖后重启仍生效）', () => {
   const originalMax = config.push.rateLimitMax;
@@ -141,10 +141,9 @@ test('限流器在 start/refresh 时应用运行配置（DB 覆盖后重启仍�
 });
 
 after(async () => {
-  closeDb();
   fake.closeAllConnections?.();
   await new Promise((resolve) => fake.close(resolve));
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  await cleanupUnitEnv(unitEnv);
 });
 
 let seq = 0;
