@@ -1194,6 +1194,68 @@ function formField(label, control, hint, htmlFor, { span = 1, className = '' } =
   );
 }
 
+/** 新建规则 / 新建任务共用的「请求方法 + URL」行。 */
+function buildRequestRow({
+  prefix,
+  methodSelect,
+  urlInput,
+  urlLabel = '请求 URL（http/https）',
+  urlHint = null,
+}) {
+  return el(
+    'div',
+    { class: 'rule-form-grid' },
+    formField('请求方法', methodSelect, null, `${prefix}-request-method`, { span: 1 }),
+    formField(urlLabel, urlInput, urlHint, `${prefix}-request-url`, { span: 2 }),
+  );
+}
+
+/** 新建规则 / 新建任务共用的「响应类型 + JSON 路径」行。 */
+function buildResponseRow({
+  prefix,
+  responseTypeSelect,
+  responsePathInput,
+  pathLabel = 'JSON 路径',
+  pathHint = null,
+}) {
+  return el(
+    'div',
+    { class: 'rule-form-grid' },
+    formField('响应类型', responseTypeSelect, null, `${prefix}-response-type`, { span: 1 }),
+    formField(pathLabel, responsePathInput, pathHint, `${prefix}-response-path`, { span: 2 }),
+  );
+}
+
+/** 新建规则 / 新建任务共用的 Header 列表字段。 */
+function buildHeaderListField({ id, textarea, hintNode }) {
+  return el(
+    'div',
+    { class: 'form-field form-field--full' },
+    el('label', { class: 'form-label', for: id, text: 'Header 列表（每行 Name: Value）' }),
+    textarea,
+    hintNode,
+  );
+}
+
+/** 新建规则 / 新建任务共用的 Markdown 模板工具栏。 */
+function buildTemplateTools({ templateInput, responseTypeSelect, responsePathInput, fallbackInput, previewTitle }) {
+  return el(
+    'div',
+    { class: 'template-tools' },
+    buildTemplateSyntaxHelpButton(),
+    buildMarkdownPreviewButton(() => templateInput.value, 'Markdown 预览'),
+    buildTemplatePreviewButton(
+      () => ({
+        responseType: responseTypeSelect.value,
+        responsePath: responsePathInput.value.trim(),
+        template: templateInput.value,
+        fallbackText: fallbackInput.value,
+      }),
+      previewTitle,
+    ),
+  );
+}
+
 function parseKeywordsInput(text) {
   return String(text || '')
     .split(/[\n,，;；]+/)
@@ -1988,20 +2050,14 @@ function openAppRuleEditor(rule = null) {
   const requestDetailsBox = el(
     'div',
     {},
-    el(
-      'div',
-      { class: 'rule-form-grid' },
-      formField('请求方法', methodSelect, null, 'rule-request-method', { span: 1 }),
-      formField('请求 URL（http/https）', urlInput, '不请求模式无需填写。', 'rule-request-url', { span: 2 }),
-    ),
+    buildRequestRow({
+      prefix: 'rule',
+      methodSelect,
+      urlInput,
+      urlHint: '不请求模式无需填写。',
+    }),
     headerModeField,
-    el(
-      'div',
-      { class: 'form-field form-field--full' },
-      el('label', { class: 'form-label', for: 'rule-headers', text: 'Header 列表（每行 Name: Value）' }),
-      headersTextarea,
-      headerHintNode,
-    ),
+    buildHeaderListField({ id: 'rule-headers', textarea: headersTextarea, hintNode: headerHintNode }),
     bodyField,
   );
   const requestModeField = formField(
@@ -2016,12 +2072,13 @@ function openAppRuleEditor(rule = null) {
     'URL / Header / Body 支持 {变量} 占位；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
     requestDetailsBox,
   );
-  const responseGrid = el(
-    'div',
-    { class: 'rule-form-grid' },
-    formField('响应类型', responseTypeSelect, null, 'rule-response-type', { span: 1 }),
-    formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path', { span: 2 }),
-  );
+  const responseGrid = buildResponseRow({
+    prefix: 'rule',
+    responseTypeSelect,
+    responsePathInput,
+    pathLabel: 'JSON 路径（response.type=json）',
+    pathHint: '例如 data.answer；为空时优先取 reply 字段。',
+  });
   const fallbackField = formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback', { span: 2 });
   const timeoutField = formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout', { span: 1 });
   function syncRuleRequestMode() {
@@ -2101,16 +2158,13 @@ function openAppRuleEditor(rule = null) {
       formField('回复模板（Markdown / 默认文本）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；请求模式可用 {{变量}}，不请求模式直接作为默认回复文本。', 'rule-reply-template', { span: 3 }),
       el('div', { class: 'form-row-between' },
         el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看变量与 Markdown 规则。' }),
-        el('div', { class: 'template-tools' },
-          buildTemplateSyntaxHelpButton(),
-          buildMarkdownPreviewButton(() => replyTemplateInput.value, 'Markdown 预览'),
-          buildTemplatePreviewButton(() => ({
-            responseType: responseTypeSelect.value,
-            responsePath: responsePathInput.value.trim(),
-            template: replyTemplateInput.value,
-            fallbackText: fallbackInput.value,
-          }), '预览规则回复'),
-        ),
+        buildTemplateTools({
+          templateInput: replyTemplateInput,
+          responseTypeSelect,
+          responsePathInput,
+          fallbackInput,
+          previewTitle: '预览规则回复',
+        }),
       ),
       el(
         'div',
@@ -3227,42 +3281,37 @@ async function openScheduleEditor(task = null) {
     formSection(
       '请求',
       'URL / Header / Body 支持内置变量 {now}/{date}/{time}/{taskName}；GET 参数写在 URL 查询串，POST 可用 URL 查询参数 + Body（Body 可留空）。默认拒绝内网/本机（SSRF 防护）。',
-      el('div', { class: 'rule-form-grid' },
-        formField('请求方法', methodSelect, null, 'schedule-request-method', { span: 1 }),
-        formField('请求 URL（必填，http/https）', urlInput, null, 'schedule-request-url', { span: 2 }),
-      ),
+      buildRequestRow({
+        prefix: 'schedule',
+        methodSelect,
+        urlInput,
+        urlLabel: '请求 URL（必填，http/https）',
+      }),
       isEdit && headerNames.length > 0
         ? el('div', { class: 'form-field form-field--full' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
         : null,
-      el(
-        'div',
-        { class: 'form-field form-field--full' },
-        el('label', { class: 'form-label', for: 'schedule-headers', text: 'Header 列表（每行 Name: Value）' }),
-        headersTextarea,
-        headerHintNode,
-      ),
+      buildHeaderListField({ id: 'schedule-headers', textarea: headersTextarea, hintNode: headerHintNode }),
       bodyField,
     ),
     formSection(
       '响应与通知',
       null,
-      el('div', { class: 'rule-form-grid' },
-        formField('响应类型', responseTypeSelect, null, 'schedule-response-type', { span: 1 }),
-        formField('JSON 路径', responsePathInput, 'response.type=json 时按点路径取值。', 'schedule-response-path', { span: 2 }),
-      ),
+      buildResponseRow({
+        prefix: 'schedule',
+        responseTypeSelect,
+        responsePathInput,
+        pathHint: 'response.type=json 时按点路径取值。',
+      }),
       formField('通知模板（Markdown）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；可混用 {{变量}}。', 'schedule-reply-template', { span: 3 }),
       el('div', { class: 'form-row-between' },
         el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看变量与 Markdown 规则。' }),
-        el('div', { class: 'template-tools' },
-          buildTemplateSyntaxHelpButton(),
-          buildMarkdownPreviewButton(() => replyTemplateInput.value, 'Markdown 预览'),
-          buildTemplatePreviewButton(() => ({
-            responseType: responseTypeSelect.value,
-            responsePath: responsePathInput.value.trim(),
-            template: replyTemplateInput.value,
-            fallbackText: fallbackInput.value,
-          }), '预览通知'),
-        ),
+        buildTemplateTools({
+          templateInput: replyTemplateInput,
+          responseTypeSelect,
+          responsePathInput,
+          fallbackInput,
+          previewTitle: '预览通知',
+        }),
       ),
       el('div', { class: 'rule-form-grid' },
         formField('兜底文案', fallbackInput, '接口失败/解析失败时发给全部目标；为空则不发送。', 'schedule-fallback', { span: 2 }),

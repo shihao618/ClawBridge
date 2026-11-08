@@ -903,6 +903,14 @@ test('菜单模式：hash 路由、懒加载与移动抽屉实现', async () => 
 test('定时通知：后台脚本实现任务 CRUD、表单、测试运行、立即执行与日志', async () => {
   const admin = await readAsset('admin.js');
   for (const token of [
+    'buildRequestRow',
+    'buildResponseRow',
+    'buildHeaderListField',
+    'buildTemplateTools',
+  ]) {
+    assert.ok(admin.includes(token), `新建规则/任务应共用表单模块：${token}`);
+  }
+  for (const token of [
     '/api/admin/scheduled-tasks',
     '/api/admin/scheduled-task-logs',
     'loadScheduledTasks',
