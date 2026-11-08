@@ -306,6 +306,26 @@ export function createClientId() {
 }
 
 /** 构造单条文本消息（SendMessageReq.msg）。 */
+export function formatWeixinText(text) {
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  let inFence = false;
+  return lines
+    .map((line, index) => {
+      const isFence = /^```/.test(line.trim());
+      if (isFence) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence || index === lines.length - 1) return line;
+      if (line.trim() === '' || lines[index + 1].trim() === '') return line;
+      // WeChat 客户端按 Markdown 渲染文本时，单换行是 soft break（显示为空格）；
+      // 行尾两个空格构成 hard break，可稳定保留单行换行。
+      return / {2}$/.test(line) ? line : `${line}  `;
+    })
+    .join('\n');
+}
+
+/** 构造单条文本消息（SendMessageReq.msg）。 */
 export function buildTextMessage({ toUserId, text, contextToken, clientId = createClientId() } = {}) {
   return {
     from_user_id: '',
@@ -313,7 +333,7 @@ export function buildTextMessage({ toUserId, text, contextToken, clientId = crea
     client_id: clientId,
     message_type: MessageType.BOT,
     message_state: MessageState.FINISH,
-    item_list: [{ type: MessageItemType.TEXT, text_item: { text: String(text) } }],
+    item_list: [{ type: MessageItemType.TEXT, text_item: { text: formatWeixinText(text) } }],
     ...(contextToken ? { context_token: contextToken } : {}),
   };
 }

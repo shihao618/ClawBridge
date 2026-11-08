@@ -82,6 +82,20 @@ test('ilink.buildTextMessage: 文本消息结构与官方一致', () => {
   assert.equal('context_token' in withoutContext, false, '无 context_token 时不应携带该字段');
 });
 
+test('ilink.formatWeixinText: 单换行转 Markdown hard break，空行/代码块保持', () => {
+  assert.equal(ilink.formatWeixinText('第一行\n第二行'), '第一行  \n第二行');
+  assert.equal(ilink.formatWeixinText('第一段\n\n第二段'), '第一段\n\n第二段', '空行段落不额外加空格');
+  assert.equal(ilink.formatWeixinText('已含两空格  \n下一行'), '已含两空格  \n下一行');
+  assert.equal(
+    ilink.formatWeixinText('```\ncode1\ncode2\n```')
+      .split('\n')[1],
+    'code1',
+    '代码块内不添加行尾空格',
+  );
+  const message = ilink.buildTextMessage({ toUserId: 'wx_user', text: 'A\nB' });
+  assert.equal(message.item_list[0].text_item.text, 'A  \nB');
+});
+
 test('ilink.sanitizeBotAgent / createClientId', () => {
   assert.equal(ilink.sanitizeBotAgent('OpenClaw'), 'OpenClaw');
   assert.equal(ilink.sanitizeBotAgent('bad agent!!'), 'OpenClaw');

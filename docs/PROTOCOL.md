@@ -156,6 +156,10 @@ Body:
 }
 ```
 
+> 文本换行：ClawBridge 出站前会把单个 `\n` 规范为 Markdown hard break（行尾补两个空格），
+> 空行与代码块保持不变。微信客户端按 Markdown soft break 渲染单换行时（显示为空格），
+> hard break 仍能保留换行效果。
+
 服务端挂起至多约 35 秒。Resp：
 
 ```json
