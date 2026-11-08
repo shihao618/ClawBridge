@@ -1479,7 +1479,7 @@ main {
 
 .rule-picker-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 5px 8px;
   border-radius: var(--radius-sm);
@@ -1499,14 +1499,19 @@ main {
 }
 
 .rule-picker-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .rule-picker-meta {
+  flex: 0 1 auto;
+  max-width: 45%;
   color: var(--text-muted);
   font-size: 11px;
   overflow: hidden;
