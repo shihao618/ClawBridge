@@ -1372,11 +1372,31 @@ main {
   font-weight: 700;
 }
 
-.rule-form-grid {
+.rule-form-grid,
+.schedule-plan-main-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px 14px;
   align-items: start;
+}
+
+.form-field {
+  min-width: 0;
+}
+
+.form-field--wide {
+  grid-column: span 2;
+}
+
+.form-field--full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1023px) {
+  .rule-form-grid,
+  .schedule-plan-main-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* 表单行内的窄输入框跟随列宽，2 个字段等宽占满、3 个字段也等宽均分 */
@@ -2888,8 +2908,14 @@ body.modal-open {
   }
 
   .rule-form-grid,
-  .rule-test-grid {
+  .rule-test-grid,
+  .schedule-plan-main-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-field--wide,
+  .form-field--full {
+    grid-column: 1 / -1;
   }
 
   .input-narrow {
@@ -3380,8 +3406,27 @@ body.admin-authed .admin-main {
 
 .settings-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px 18px;
+}
+
+.settings-field--wide {
+  grid-column: span 2;
+}
+
+.settings-field--full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1023px) {
+  .settings-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-field--wide,
+  .settings-field--full {
+    grid-column: 1 / -1;
+  }
 }
 
 .settings-field {
@@ -3562,7 +3607,7 @@ body.admin-authed .admin-main {
 /* 定时任务：计划类型与间隔/每日时间同一行（窄屏自动换行） */
 .schedule-plan-main-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px 14px;
   align-items: start;
 }

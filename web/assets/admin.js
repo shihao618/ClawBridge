@@ -1175,10 +1175,11 @@ function formSection(title, hint, ...children) {
   );
 }
 
-function formField(label, control, hint, htmlFor) {
+function formField(label, control, hint, htmlFor, { span = 1, className = '' } = {}) {
+  const spanClass = span >= 3 ? 'form-field--full' : span === 2 ? 'form-field--wide' : '';
   return el(
     'div',
-    { class: 'form-field' },
+    { class: `form-field${spanClass ? ` ${spanClass}` : ''}${className ? ` ${className}` : ''}` },
     label ? el('label', { class: 'form-label', for: htmlFor || undefined, text: label }) : null,
     control,
     hint ? el('p', { class: 'form-hint', text: hint }) : null,
@@ -1671,8 +1672,8 @@ function openAppRuleEditor(rule = null) {
     placeholder: '例如：^查天气\\s*(?<city>\\S+)$',
     value: trigger.regexPattern || '',
   });
-  const matchKeywordField = formField('关键词', keywordsInput, '匹配方式为「包含 / 全等」时使用，大小写不敏感。', 'rule-keywords');
-  const matchRegexField = formField('正则表达式', regexInput, '匹配方式为「正则」时使用（u flag，保存时校验合法性）。', 'rule-regex');
+  const matchKeywordField = formField('关键词', keywordsInput, '匹配方式为「包含 / 全等」时使用，大小写不敏感。', 'rule-keywords', { span: 2 });
+  const matchRegexField = formField('正则表达式', regexInput, '匹配方式为「正则」时使用（u flag，保存时校验合法性）。', 'rule-regex', { span: 2 });
   function syncMatchVisibility() {
     const isRegex = matchModeSelect.value === 'regex';
     setHidden(matchKeywordField, isRegex);
@@ -1909,7 +1910,7 @@ function openAppRuleEditor(rule = null) {
     placeholder: 'POST 请求体模板，可插入 {参数}；GET 请求忽略该字段',
     value: request.bodyTemplate || '',
   });
-  const bodyField = formField('Body 模板（POST）', bodyTemplateInput, null, 'rule-body');
+  const bodyField = formField('Body 模板（POST）', bodyTemplateInput, null, 'rule-body', { span: 3 });
   function syncRuleRequestFields() {
     setHidden(bodyField, methodSelect.value !== 'POST');
   }
@@ -1959,7 +1960,7 @@ function openAppRuleEditor(rule = null) {
 
   const extractionConfigField = el(
     'div',
-    { class: 'form-field' },
+    { class: 'form-field form-field--wide' },
     el('span', { class: 'form-label', text: '提取配置' }),
     extractionConfigBox,
   );
@@ -1974,7 +1975,7 @@ function openAppRuleEditor(rule = null) {
     ),
   );
   const headerModeField = isEdit && headerNames.length > 0
-    ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
+    ? el('div', { class: 'form-field form-field--full' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
     : null;
   const requestDetailsBox = el(
     'div',
@@ -1982,13 +1983,13 @@ function openAppRuleEditor(rule = null) {
     el(
       'div',
       { class: 'rule-form-grid' },
-      formField('请求方法', methodSelect, null, 'rule-request-method'),
-      formField('请求 URL（http/https）', urlInput, '不请求模式无需填写。', 'rule-request-url'),
+      formField('请求方法', methodSelect, null, 'rule-request-method', { span: 1 }),
+      formField('请求 URL（http/https）', urlInput, '不请求模式无需填写。', 'rule-request-url', { span: 2 }),
     ),
     headerModeField,
     el(
       'div',
-      { class: 'form-field' },
+      { class: 'form-field form-field--full' },
       el('label', { class: 'form-label', for: 'rule-headers', text: 'Header 列表（每行 Name: Value）' }),
       headersTextarea,
       headerHintNode,
@@ -2000,6 +2001,7 @@ function openAppRuleEditor(rule = null) {
     requestModeGroup,
     '不请求：关键词命中后直接回复默认文本，不访问外部接口。',
     'rule-request-mode',
+    { span: 3 },
   );
   const requestSection = formSection(
     '请求',
@@ -2009,17 +2011,17 @@ function openAppRuleEditor(rule = null) {
   const responseGrid = el(
     'div',
     { class: 'rule-form-grid' },
-    formField('响应类型', responseTypeSelect, null, 'rule-response-type'),
-    formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path'),
+    formField('响应类型', responseTypeSelect, null, 'rule-response-type', { span: 1 }),
+    formField('JSON 路径（response.type=json）', responsePathInput, '例如 data.answer；为空时优先取 reply 字段。', 'rule-response-path', { span: 2 }),
   );
-  const fallbackField = formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback');
+  const fallbackField = formField('兜底文案', fallbackInput, '接口失败 / 缺参 / 空回复时发送（可为空）。', 'rule-fallback', { span: 2 });
   const timeoutSection = formSection(
     '请求超时',
     '调用频率统一由微信默认发送限流控制（默认 7 条 / 5 分钟 / 账号），规则不再单独设置冷却或每小时上限；同一条消息对同一规则仍只执行一次。',
     el(
       'div',
       { class: 'rule-form-grid' },
-      formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout'),
+      formField('超时（ms，1000-30000）', timeoutInput, null, 'rule-timeout', { span: 1 }),
     ),
   );
   function syncRuleRequestMode() {
@@ -2055,10 +2057,10 @@ function openAppRuleEditor(rule = null) {
       el(
         'div',
         { class: 'rule-form-grid' },
-        formField('规则名称', nameInput, '必填，1-60 字符', 'rule-name-input'),
+        formField('规则名称', nameInput, '必填，1-60 字符', 'rule-name-input', { span: 2 }),
         el(
           'div',
-          { class: 'form-field' },
+          { class: 'form-field form-field--full' },
           el('span', { class: 'form-label', text: '启用规则' }),
           el(
             'label',
@@ -2067,7 +2069,7 @@ function openAppRuleEditor(rule = null) {
             el('span', { text: '启用' }),
           ),
         ),
-        formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input'),
+        formField('优先级', priorityInput, '数字越小越先', 'rule-priority-input', { span: 1 }),
       ),
       errorNode,
     ),
@@ -2081,10 +2083,14 @@ function openAppRuleEditor(rule = null) {
     formSection(
       '触发条件',
       '一消息最多命中一条规则；多规则命中时按优先级取第一条。',
-      el('div', { class: 'rule-form-grid' }, formField('匹配方式', matchModeSelect, null, 'rule-match-mode')),
-      matchKeywordField,
-      matchRegexField,
-      requestModeField,
+      el(
+        'div',
+        { class: 'rule-form-grid' },
+        formField('匹配方式', matchModeSelect, null, 'rule-match-mode', { span: 1 }),
+        matchKeywordField,
+        matchRegexField,
+        requestModeField,
+      ),
     ),
     extractionSection,
     requestSection,
@@ -2092,7 +2098,7 @@ function openAppRuleEditor(rule = null) {
       '响应解析与回复',
       '请求模式按响应类型/路径解析后渲染回复模板；不请求模式直接使用「回复模板 / 默认文本」。',
       responseGrid,
-      formField('回复模板（Markdown / 默认文本）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；请求模式可用 {{变量}}，不请求模式直接作为默认回复文本。', 'rule-reply-template'),
+      formField('回复模板（Markdown / 默认文本）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；请求模式可用 {{变量}}，不请求模式直接作为默认回复文本。', 'rule-reply-template', { span: 3 }),
       el('div', { class: 'form-row-between' },
         el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看变量与 Markdown 规则。' }),
         el('div', { class: 'template-tools' },
@@ -2321,8 +2327,12 @@ async function openAppRuleTestModal(rule) {
     size: 'wide',
     content: [
       el('p', { class: 'form-hint', text: '测试运行仅模拟一次触发，不会向微信用户发送消息、不写运行日志。请求模式会真实调用外部接口；不请求模式直接渲染默认文本。' }),
-      formField('示例消息（必填）', messageInput, null, 'rule-test-message'),
-      formField('模拟用户（可选，用于范围匹配）', userSelect, null, 'rule-test-user'),
+      el(
+        'div',
+        { class: 'rule-form-grid' },
+        formField('示例消息（必填）', messageInput, null, 'rule-test-message', { span: 2 }),
+        formField('模拟用户（可选，用于范围匹配）', userSelect, null, 'rule-test-user', { span: 1 }),
+      ),
       resultBox,
     ],
     actions: [
@@ -3119,7 +3129,7 @@ async function openScheduleEditor(task = null) {
     placeholder: 'POST 请求体模板（支持 {now}/{date}/{time}/{taskName}）；仅 POST 显示，GET 参数请写在 URL 中',
     value: request.bodyTemplate || '',
   });
-  const bodyField = formField('Body 模板（POST）', bodyTemplateInput, null, 'schedule-body');
+  const bodyField = formField('Body 模板（POST）', bodyTemplateInput, null, 'schedule-body', { span: 3 });
   function syncScheduleRequestFields() {
     setHidden(bodyField, methodSelect.value !== 'POST');
   }
@@ -3176,8 +3186,12 @@ async function openScheduleEditor(task = null) {
     formSection(
       '基本信息',
       null,
-      formField('任务名称（必填，1-60 字符）', nameInput, null, 'schedule-name-input'),
-      el('label', { class: 'check-field' }, enabledInput, el('span', { class: 'check-field-text' }, el('strong', { text: '启用任务' }), el('span', { class: 'form-hint', text: '停用后调度器不再自动执行，也可手动「立即执行」。' }))),
+      el(
+        'div',
+        { class: 'rule-form-grid' },
+        formField('任务名称（必填，1-60 字符）', nameInput, null, 'schedule-name-input', { span: 2 }),
+        el('label', { class: 'check-field form-field--full' }, enabledInput, el('span', { class: 'check-field-text' }, el('strong', { text: '启用任务' }), el('span', { class: 'form-hint', text: '停用后调度器不再自动执行，也可手动「立即执行」。' }))),
+      ),
       errorNode,
     ),
     formSection(
@@ -3204,15 +3218,15 @@ async function openScheduleEditor(task = null) {
       '请求',
       'URL / Header / Body 支持内置变量 {now}/{date}/{time}/{taskName}；GET 参数写在 URL 查询串，POST 可用 URL 查询参数 + Body（Body 可留空）。默认拒绝内网/本机（SSRF 防护）。',
       el('div', { class: 'rule-form-grid' },
-        formField('请求方法', methodSelect, null, 'schedule-request-method'),
-        formField('请求 URL（必填，http/https）', urlInput, null, 'schedule-request-url'),
+        formField('请求方法', methodSelect, null, 'schedule-request-method', { span: 1 }),
+        formField('请求 URL（必填，http/https）', urlInput, null, 'schedule-request-url', { span: 2 }),
       ),
       isEdit && headerNames.length > 0
-        ? el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
+        ? el('div', { class: 'form-field form-field--full' }, el('span', { class: 'form-label', text: 'Header 处理' }), el('div', { class: 'radio-list rule-radio-row' }, ...headerModeRadios))
         : null,
       el(
         'div',
-        { class: 'form-field' },
+        { class: 'form-field form-field--full' },
         el('label', { class: 'form-label', for: 'schedule-headers', text: 'Header 列表（每行 Name: Value）' }),
         headersTextarea,
         headerHintNode,
@@ -3223,10 +3237,10 @@ async function openScheduleEditor(task = null) {
       '响应与通知',
       null,
       el('div', { class: 'rule-form-grid' },
-        formField('响应类型', responseTypeSelect, null, 'schedule-response-type'),
-        formField('JSON 路径', responsePathInput, 'response.type=json 时按点路径取值。', 'schedule-response-path'),
+        formField('响应类型', responseTypeSelect, null, 'schedule-response-type', { span: 1 }),
+        formField('JSON 路径', responsePathInput, 'response.type=json 时按点路径取值。', 'schedule-response-path', { span: 2 }),
       ),
-      formField('通知模板（Markdown）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；可混用 {{变量}}。', 'schedule-reply-template'),
+      formField('通知模板（Markdown）', replyTemplateInput, '按 Markdown 发送：支持标题、粗体、列表、代码块、表格；可混用 {{变量}}。', 'schedule-reply-template', { span: 3 }),
       el('div', { class: 'form-row-between' },
         el('span', { class: 'form-hint', text: '可粘贴示例响应离线预览；点击「模板语法」查看变量与 Markdown 规则。' }),
         el('div', { class: 'template-tools' },
@@ -3240,8 +3254,10 @@ async function openScheduleEditor(task = null) {
           }), '预览通知'),
         ),
       ),
-      formField('兜底文案', fallbackInput, '接口失败/解析失败时发给全部目标；为空则不发送。', 'schedule-fallback'),
-      formField('超时（ms，1000-30000）', timeoutInput, null, 'schedule-timeout'),
+      el('div', { class: 'rule-form-grid' },
+        formField('兜底文案', fallbackInput, '接口失败/解析失败时发给全部目标；为空则不发送。', 'schedule-fallback', { span: 2 }),
+        formField('超时（ms，1000-30000）', timeoutInput, null, 'schedule-timeout', { span: 1 }),
+      ),
     ),
   ];
 
@@ -3654,17 +3670,21 @@ function openGroupEditor(group = null) {
   const content = [
     el(
       'div',
-      { class: 'form-field' },
-      el('label', { class: 'form-label', for: 'group-name-input', text: '分组名称（必填，1-40 字符）' }),
-      nameInput,
+      { class: 'rule-form-grid' },
+      el(
+        'div',
+        { class: 'form-field form-field--wide' },
+        el('label', { class: 'form-label', for: 'group-name-input', text: '分组名称（必填，1-40 字符）' }),
+        nameInput,
+      ),
+      el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: '颜色（可选）' }), palette),
+      el(
+        'div',
+        { class: 'form-field form-field--full' },
+        el('label', { class: 'form-label', for: 'group-desc-input', text: '描述（可选，≤200 字符）' }),
+        descInput,
+      ),
     ),
-    el(
-      'div',
-      { class: 'form-field' },
-      el('label', { class: 'form-label', for: 'group-desc-input', text: '描述（可选，≤200 字符）' }),
-      descInput,
-    ),
-    el('div', { class: 'form-field' }, el('span', { class: 'form-label', text: '颜色（可选）' }), palette),
     el('p', {
       class: 'form-hint',
       text: '分组保活开关在分组列表行内操作（「保活」开关）：会同步当前成员，并让之后加入该分组的成员自动开启保活。',
@@ -5127,6 +5147,11 @@ function renderSettings() {
       // 推送 API 开关在「安全」卡片中单独管理（走 PATCH settings security.pushApiEnabled）
       if (group.key === 'security' && field.key === 'pushApiEnabled') continue;
       const control = buildSettingControl(group, field, meta.type, state.settings.draft.get(key));
+      const settingsSpanClass = meta.type === 'array'
+        ? ' settings-field--full'
+        : ['string', 'url', 'enum', 'text'].includes(meta.type)
+          ? ' settings-field--wide'
+          : '';
       const minMax =
         field.min !== undefined && field.min !== null || field.max !== undefined && field.max !== null
           ? `范围：${field.min ?? '—'} ~ ${field.max ?? '—'}`
@@ -5134,7 +5159,7 @@ function renderSettings() {
       fieldsBox.append(
         el(
           'div',
-          { class: 'settings-field', dataset: { settingField: key } },
+          { class: `settings-field${settingsSpanClass}`, dataset: { settingField: key } },
           el(
             'div',
             { class: 'settings-field-head' },
