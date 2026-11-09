@@ -260,11 +260,14 @@ POST {baseUrl}/ilink/bot/sendtyping   Body: {"ilink_user_id": "...", "typing_tic
   → {"ret":0, "errmsg": ""}         // 1=正在输入 2=取消
 ```
 
-- `typing_ticket` 按用户内存缓存 **10 分钟**（过期或失败时按需重取）；`getconfig`/`sendtyping` 单次超时
-  上限 `min(3000ms, ILINK_REQUEST_TIMEOUT_MS)`，避免拖慢规则请求。
-- 显示期间默认每 `APP_RULE_TYPING_REFRESH_MS`（4000ms，范围 1000–30000）重发 `status=1`，避免微信侧
-  提前消失；**取消时机在回复入队（或明确不回复）之后**，发送 `status=2`。同一用户并发多个规则请求按
-  **引用计数**合并，最后一个结束时才取消。
+- `typing_ticket` 按用户内存缓存，**24 小时内随机刷新**（成功后 `nextFetchAt = now + random × 24h`，对齐官方
+  `api/config-cache.js` 语义）；获取失败从 **2s 起指数退避（×2，最大 1h）**；缓存值可为空 ticket
+  （空 ticket 时静默跳过 `sendtyping`，等同官方无 typing_ticket 时的行为）。
+- 请求超时：`getconfig`/`sendtyping` 使用 **3s 安全上限**（`min(3000ms, ILINK_REQUEST_TIMEOUT_MS)`）；
+  官方插件默认 10s，这里**有意缩短**以避免拖慢规则执行（差异说明，功能语义不受影响）。
+- 显示期间默认每 `APP_RULE_TYPING_REFRESH_MS`（**5000ms = 5s**，对齐官方 `keepaliveIntervalMs: 5000`；
+  范围 1000–30000，后台可改）重发 `status=1`，避免微信侧提前消失；**取消时机在回复入队（或明确不回复）
+  之后**，发送 `status=2`。同一用户并发多个规则请求按**引用计数**合并，最后一个结束时才取消。
 - **最小可见时长约 500ms**：整个显示时长不足约 500ms 时（如直接回复的短流程），延迟到约 500ms 再发送
   `status=2`，避免用户看不到状态；延迟仅由内部定时器处理，**不阻塞规则执行与回复入队**。等待取消期间
   该用户再次命中规则会复用会话，最终只取消一次（500ms 为内部固定值，不是运行配置项）。

@@ -3,6 +3,20 @@
 ClawBridge 采用自托管单仓库发布（Docker 镜像 + 源码），版本号以 `package.json` 为准。
 本文件从 **1.0.0 全新基线**开始记录；更早的开发历史保留在 git 标签/历史中，不再写入本文件。
 
+## [1.0.4] - 2026-11-09
+
+### 调整
+
+- **「正在输入」参数按官方微信插件对齐**（`@tencent-weixin/openclaw-weixin`）：
+  - 续期（刷新）间隔默认 **5000ms（5s）**（对齐官方 `keepaliveIntervalMs: 5000`；范围 1000–30000，后台可改）。
+  - `typing_ticket` 缓存由固定 10 分钟改为 **24 小时内随机刷新**（成功后 `nextFetchAt = now + random × 24h`）；
+    获取失败从 **2s 起指数退避（×2，最大 1h）**；未到刷新时间复用缓存，缓存为空 ticket 时静默跳过
+    `sendtyping`，旧 ticket 刷新失败时保留旧值；失败不阻塞规则。
+  - `getconfig`/`sendtyping` 请求保留 **3s 安全上限**（官方默认 10s；为避免拖慢规则执行有意缩短，属差异说明）。
+  - 保留「最小可见时长约 500ms」（内部固定值；官方无此概念，用于让直接回复规则也能看到状态）。
+- 环境变量/运行配置字段名不变（`APP_RULE_TYPING_REFRESH_MS` 默认 5000、
+  `appRules.typingRefreshMs` 默认 5000）；无 API/数据库 schema 变更，可直接原地升级。
+
 ## [1.0.3] - 2026-11-09
 
 ### 调整

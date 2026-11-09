@@ -199,10 +199,12 @@ typingIndicator, typingRefreshMs }`。
   直接回复规则也能看到短暂「正在输入」；延迟由内部定时器处理，**不阻塞规则执行与回复入队**；等待取消期间
   同一用户再次命中规则会复用会话，最终只取消一次。
 - 默认**开启**；后台「运行配置 → 接口应用」可关闭（`appRules.typingIndicator`），或调整刷新间隔
-  （`appRules.typingRefreshMs`，默认 4000ms、范围 1000–30000，即时生效）。
+  （`appRules.typingRefreshMs`，默认 **5000ms（5s，对齐官方插件 keepalive 间隔）**、范围 1000–30000，即时生效）。
 - **best-effort**：开关关闭 / 用户无 token / `getconfig`/`sendtyping` 失败或超时均静默跳过（仅 debug 日志），
-  **不影响规则执行**；`typing_ticket` 内存缓存 10 分钟；同一用户并发多个规则请求按引用计数只取消一次；
-  日志不记录 ticket/token。协议细节见 [`docs/PROTOCOL.md`](PROTOCOL.md) §5.6。
+  **不影响规则执行**；`typing_ticket` 缓存 **24 小时内随机刷新**（获取失败 2s 起指数退避，×2、最大 1h；
+  空 ticket 静默跳过 `sendtyping`）；同一用户并发多个规则请求按引用计数只取消一次；日志不记录 ticket/token。
+  请求超时使用 **3s 安全上限**（官方默认 10s，有意缩短以免拖慢规则）；协议细节见
+  [`docs/PROTOCOL.md`](PROTOCOL.md) §5.6。
 
 ## 5. 响应解析与回复
 

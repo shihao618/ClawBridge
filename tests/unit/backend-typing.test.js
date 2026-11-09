@@ -1,9 +1,13 @@
 /**
- * 单元测试：typing.js —— 规则请求外部接口期间的微信「正在输入」状态（docs/PROTOCOL.md §5.6）。
+ * 单元测试：typing.js —— 规则命中期间的微信「正在输入」状态（docs/PROTOCOL.md §5.6）。
  *
- * 注入 fake getConfig/sendTyping（不触真实网络），覆盖：
+ * 参数对齐官方微信插件（v1.0.4）：5s 续期、typing_ticket 24h 随机刷新 + 失败 2s 起指数退避（最大 1h）、
+ * getconfig/sendtyping 官方 10s 超时（本实现保留 3s 安全上限）；另保留最小可见 500ms（官方无此概念）。
+ *
+ * 注入 fake getConfig/sendTyping/now（不触真实网络/不等真实时间），覆盖：
  * 开启→status1 / 结束→status2、刷新定时、实时开关、无 token/无 wechatUserId 静默、
- * getconfig/sendtyping 失败不影响、引用计数、ticket 缓存、未知/重复 handle 安全。
+ * getconfig/sendtyping 失败不影响、引用计数、ticket 24h 缓存、失败指数退避（含 1h 上限）、
+ * 空 ticket 不 sendTyping、最小可见时长、等待取消期间复用。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -18,7 +22,7 @@ const unitEnv = prepareUnitEnv({
     LOG_LEVEL: 'silent',
     // 本文件显式开启；其余单测默认关闭（tests/helpers/unit-env.mjs）
     APP_RULE_TYPING_INDICATOR: '1',
-    APP_RULE_TYPING_REFRESH_MS: '4000',
+    APP_RULE_TYPING_REFRESH_MS: '5000',
   },
 });
 
@@ -42,11 +46,16 @@ const calls = {
 
 let failGetConfig = false;
 let failSendTyping = false;
+let emptyTicket = false;
+/** 可注入时钟（仅缓存/退避判定用）；null 表示用真实 Date.now。 */
+let fakeNow = null;
+
+const fakeNowFn = () => (fakeNow ?? Date.now());
 
 function fakeGetConfig(options) {
   calls.getConfig.push(options);
   if (failGetConfig) throw new Error('getconfig boom');
-  return Promise.resolve({ ret: 0, typing_ticket: `ticket-${options.ilinkUserId}` });
+  return Promise.resolve({ ret: 0, typing_ticket: emptyTicket ? '' : `ticket-${options.ilinkUserId}` });
 }
 
 function fakeSendTyping(options) {
@@ -55,11 +64,14 @@ function fakeSendTyping(options) {
   return Promise.resolve({ ret: 0 });
 }
 
-typing.configureTypingDependencies({ getConfig: fakeGetConfig, sendTyping: fakeSendTyping });
-
 /** 重新注入 fake 依赖（minVisibleMs 默认 0：保持既有用例即时 status=2 语义）。 */
 function configureFake(minVisibleMs = 0) {
-  typing.configureTypingDependencies({ getConfig: fakeGetConfig, sendTyping: fakeSendTyping, minVisibleMs });
+  typing.configureTypingDependencies({
+    getConfig: fakeGetConfig,
+    sendTyping: fakeSendTyping,
+    minVisibleMs,
+    now: fakeNowFn,
+  });
 }
 
 configureFake(0);
@@ -71,8 +83,10 @@ function resetState() {
   calls.sendTyping.length = 0;
   failGetConfig = false;
   failSendTyping = false;
+  emptyTicket = false;
+  fakeNow = null;
   config.appRules.typingIndicator = true;
-  config.appRules.typingRefreshMs = 4000;
+  config.appRules.typingRefreshMs = 5000;
 }
 
 let seq = 0;
@@ -173,15 +187,99 @@ test('引用计数：同一用户并发请求只在最后一个结束时取消�
   assert.deepEqual(statuses(), [1, 2], '最后一个引用结束才取消');
 });
 
-test('ticket 缓存 10 分钟：同用户再次请求不重复 getconfig', async () => {
+test('ticket 缓存 24h 随机刷新：同用户再次请求不重复 getconfig（官方 config-cache 语义）', async () => {
   resetState();
+  const originalRandom = Math.random;
+  Math.random = () => 0.5; // nextFetchAt ≈ now + 12h
+  try {
+    const user = createUser();
+    const h1 = await typing.beginTyping(user);
+    await typing.endTyping(h1);
+    const h2 = await typing.beginTyping(user);
+    await typing.endTyping(h2);
+    assert.equal(calls.getConfig.length, 1, '24h 随机刷新窗口内复用缓存 ticket，不重复 getconfig');
+    assert.deepEqual(statuses(), [1, 2, 1, 2]);
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 官方 config-cache 语义：失败 2s 起指数退避（x2，最大 1h）、空 ticket 只缓存不 sendTyping
+// ---------------------------------------------------------------------------
+
+test('getconfig 失败指数退避：2s 内不重试、退避翻倍（注入时钟）', async () => {
+  resetState();
+  fakeNow = 1_000_000;
+  failGetConfig = true;
   const user = createUser();
-  const h1 = await typing.beginTyping(user);
-  await typing.endTyping(h1);
-  const h2 = await typing.beginTyping(user);
-  await typing.endTyping(h2);
-  assert.equal(calls.getConfig.length, 1, '10 分钟内复用缓存的 typing_ticket');
-  assert.deepEqual(statuses(), [1, 2, 1, 2]);
+
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, 1, '首次失败应记录空 ticket 缓存');
+
+  fakeNow += 1999;
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, 1, '失败后 2s 内不应重试 getconfig');
+
+  fakeNow += 1;
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, 2, '到 2s 后应重试一次（第二次失败 → 退避 4s）');
+
+  fakeNow += 3999;
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, 2, '退避翻倍后 4s 内不应重试');
+
+  fakeNow += 1;
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, 3, '4s 到期后再次重试（退避继续翻倍）');
+});
+
+test('退避上限 1h：连续失败后重试间隔不超过 1h', async () => {
+  resetState();
+  fakeNow = 5_000_000;
+  failGetConfig = true;
+  const user = createUser();
+  const MAX_RETRY_MS = 60 * 60 * 1000;
+
+  await typing.endTyping(await typing.beginTyping(user)); // 首次失败：2s 后重试
+  let delay = 2000;
+  for (let index = 0; index < 20 && delay < MAX_RETRY_MS; index += 1) {
+    fakeNow += delay;
+    const before = calls.getConfig.length;
+    await typing.endTyping(await typing.beginTyping(user));
+    assert.equal(calls.getConfig.length, before + 1, `退避 ${delay}ms 到期应重试`);
+    delay = Math.min(delay * 2, MAX_RETRY_MS);
+  }
+  assert.equal(delay, MAX_RETRY_MS, '退避应达到 1h 上限');
+
+  const beforeCap = calls.getConfig.length;
+  fakeNow += MAX_RETRY_MS - 1;
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, beforeCap, '1h 退避内不应重试');
+  fakeNow += 1;
+  await typing.endTyping(await typing.beginTyping(user));
+  assert.equal(calls.getConfig.length, beforeCap + 1, '1h 到期后应重试');
+});
+
+test('空 typing_ticket：只缓存不 sendTyping（官方 hasTypingTicket=false 语义）', async () => {
+  resetState();
+  emptyTicket = true;
+  const originalRandom = Math.random;
+  Math.random = () => 0.5; // nextFetchAt ≈ now + 12h
+  try {
+    const user = createUser();
+    const h1 = await typing.beginTyping(user);
+    await typing.endTyping(h1);
+    assert.equal(calls.getConfig.length, 1);
+    assert.equal(calls.sendTyping.length, 0, '空 ticket 不应发送 sendtyping(1)/(2)');
+
+    const h2 = await typing.beginTyping(user);
+    await typing.endTyping(h2);
+    assert.equal(calls.getConfig.length, 1, '空 ticket 也在 24h 缓存窗口内，不重复 getconfig');
+    assert.equal(calls.sendTyping.length, 0, '空 ticket 期间始终静默跳过 sendtyping');
+  } finally {
+    Math.random = originalRandom;
+  }
 });
 
 test('刷新定时：按 typingRefreshMs 重发 status=1，结束后清理定时器', async () => {
