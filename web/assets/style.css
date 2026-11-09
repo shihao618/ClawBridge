@@ -4166,6 +4166,19 @@ body.admin-authed .admin-main {
   align-items: center;
 }
 
+/* 凭据名称/备注两列：标签换行行数不同时，输入框仍需底部对齐 */
+.credential-meta-grid {
+  align-items: stretch;
+}
+
+.credential-meta-grid .form-field {
+  height: 100%;
+}
+
+.credential-meta-grid .form-field > .input {
+  margin-top: auto;
+}
+
 .credential-editor-actions {
   display: flex;
   gap: 8px;

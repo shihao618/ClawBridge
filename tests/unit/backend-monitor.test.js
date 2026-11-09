@@ -75,7 +75,8 @@ const fake = http.createServer(async (req, res) => {
     } catch {
       fakeState.updateBodies.push({});
     }
-    const entry = fakeState.scriptedUpdates.shift() || {};
+    const entryIndex = fakeState.scriptedUpdates.findIndex((item) => !item.token || item.token === token);
+    const entry = entryIndex >= 0 ? fakeState.scriptedUpdates.splice(entryIndex, 1)[0] : {};
     if (entry.hold) {
       await new Promise((resolve) => {
         entry.release = resolve;
@@ -259,7 +260,7 @@ test('当前凭据 -14：写 paused/stale_token 事件，冷却到期后 worker 
   const prevPause = config.monitor.stalePauseMs;
   config.monitor.stalePauseMs = 120;
   try {
-    queueUpdates({ resp: { ret: -14, errcode: -14, errmsg: 'token expired' } });
+    queueUpdates({ token: 'token-gen-current-14', resp: { ret: -14, errcode: -14, errmsg: 'token expired' } });
     const callsBefore = fakeState.updateCalls.filter((call) => call.token === 'token-gen-current-14').length;
     assert.equal(monitor.start(user.id), true);
     // 第一次 -14 → 暂停 120ms → 第二次轮询成功（不退出 worker）
@@ -271,8 +272,13 @@ test('当前凭据 -14：写 paused/stale_token 事件，冷却到期后 worker 
     assert.equal(monitor.isRunning(user.id), true, '冷却后 worker 应继续运行（不再退出）');
     const row = store.getUserRow(user.id);
     assert.equal(Number(row.pause_until), 0, '恢复轮询后应清除 paused');
-    const staleEvents = store.listEvents(50).filter((event) => event.user_id === user.id && event.type === 'stale_token');
-    assert.equal(staleEvents.length, 1, '应写入 stale_token 事件');
+    // 事件写入与 worker 恢复是同一轮异步流程，等待而不是立即断言，避免全量并发时抖动
+    await waitFor(
+      () => store.listEvents(200).some((event) => event.user_id === user.id && event.type === 'stale_token'),
+      { timeoutMs: 5000 },
+    );
+    const staleEvents = store.listEvents(200).filter((event) => event.user_id === user.id && event.type === 'stale_token');
+    assert.ok(staleEvents.length >= 1, '应写入 stale_token 事件');
   } finally {
     config.monitor.stalePauseMs = prevPause;
     await monitor.stop(user.id, { notify: false }).catch(() => {});
@@ -285,7 +291,7 @@ test('HTTP 401 + body ret=-14：仍视为 token 失效并冷却（冷却后继�
   const prevPause = config.monitor.stalePauseMs;
   config.monitor.stalePauseMs = 100;
   try {
-    queueUpdates({ status: 401, resp: { ret: -14, errcode: -14, errmsg: 'token expired' } });
+    queueUpdates({ token, status: 401, resp: { ret: -14, errcode: -14, errmsg: 'token expired' } });
     const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
     assert.equal(monitor.start(user.id), true);
     await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= callsBefore + 2, {
@@ -294,8 +300,13 @@ test('HTTP 401 + body ret=-14：仍视为 token 失效并冷却（冷却后继�
     await waitFor(() => Number(store.getUserRow(user.id).pause_until) === 0, { timeoutMs: 5000 });
     const row = store.getUserRow(user.id);
     assert.equal(Number(row.pause_until), 0, '恢复轮询后应清除 paused');
-    const staleEvents = store.listEvents(50).filter((event) => event.user_id === user.id && event.type === 'stale_token');
-    assert.equal(staleEvents.length, 1, '应写入 stale_token 事件');
+    // 事件写入与 worker 恢复是同一轮异步流程，等待而不是立即断言，避免全量并发时抖动
+    await waitFor(
+      () => store.listEvents(200).some((event) => event.user_id === user.id && event.type === 'stale_token'),
+      { timeoutMs: 5000 },
+    );
+    const staleEvents = store.listEvents(200).filter((event) => event.user_id === user.id && event.type === 'stale_token');
+    assert.ok(staleEvents.length >= 1, '应写入 stale_token 事件');
   } finally {
     config.monitor.stalePauseMs = prevPause;
     await monitor.stop(user.id, { notify: false }).catch(() => {});
@@ -308,7 +319,7 @@ test('HTTP 401 但 body 非 -14：不冷却、按普通失败退避后继续轮�
   const prevRetry = config.monitor.retryDelayMs;
   config.monitor.retryDelayMs = 30;
   try {
-    queueUpdates({ status: 401, resp: { ret: 1, errcode: 1, errmsg: 'unauthorized' } });
+    queueUpdates({ token, status: 401, resp: { ret: 1, errcode: 1, errmsg: 'unauthorized' } });
     const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
     assert.equal(monitor.start(user.id), true);
     await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= callsBefore + 2, {

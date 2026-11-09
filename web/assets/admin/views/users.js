@@ -774,14 +774,14 @@ async function openUserSecretsModal(user) {
       el('p', {
         class: 'form-hint',
         text: isEdit
-          ? '凭据值不会回显：请重新输入全部字段值（字段名可调整）；保存后替换原凭据。'
-          : '每条凭据可包含多个字段；字段名用于规则里的 {credential:名称.字段} 引用。',
+          ? '凭据值不会回显：请重新输入全部字段值（字段名可调整）；保存后替换原凭据。名称 1-32 位字母/数字/下划线/连字符；备注 ≤200 字符。'
+          : '每条凭据可包含多个字段；字段名用于规则里的 {credential:名称.字段} 引用。名称 1-32 位字母/数字/下划线/连字符；备注 ≤200 字符。',
       }),
       el(
         'div',
-        { class: 'form-grid-2' },
-        formField('凭据名称（必填，1-32 位字母/数字/下划线/连字符）', nameInput, null, 'credential-name-input'),
-        formField('备注（可选，≤200 字符）', labelInput, null, 'credential-label-input'),
+        { class: 'form-grid-2 credential-meta-grid' },
+        formField('凭据名称（必填）', nameInput, null, 'credential-name-input'),
+        formField('备注（可选）', labelInput, null, 'credential-label-input'),
       ),
       el('span', { class: 'form-label', text: '字段（字段名 + 值，值不会回显）' }),
       rowsBox,
