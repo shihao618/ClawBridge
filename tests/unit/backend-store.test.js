@@ -142,8 +142,38 @@ test('users: 列表筛选（active/paused/unbound/all）、搜索与分页', () 
   assert.equal(store.listUsers({ status: 'all', q: '不存在的关键词' }).total, 0);
 });
 
-test('users: 推送状态按 context_token 失效标记/最近失败推导，入站刷新后恢复', () => {
-  const { user } = createUser({ wechatUserId: 'wx_push_state', botToken: 'push-state-token' });
+test('userView: API 视图保留 contextTokenStale / pushable / lastError', async () => {
+  const { userView } = await import('../../server/src/http/views.js');
+  const base = {
+    id: 'u_view',
+    displayName: '视图',
+    wechatUserId: 'wx_view',
+    ilinkBotId: null,
+    status: 'active',
+    boundAt: 1,
+    updatedAt: 2,
+    lastInboundAt: 0,
+    lastOutboundAt: 0,
+    hasContextToken: true,
+    contextTokenStale: true,
+    pushable: false,
+    lastError: 'context_token 已失效',
+    queuedCount: 0,
+    sentCount: 0,
+    failedCount: 1,
+    pauseUntil: 0,
+    note: '',
+    groups: [],
+    keepaliveEnabled: false,
+    keepaliveLastSentAt: 0,
+  };
+  const view = userView(base);
+  assert.equal(view.contextTokenStale, true);
+  assert.equal(view.pushable, false);
+  assert.match(view.lastError, /context_token/);
+});
+
+test('users: 推送状态按 context_token 失效标记/最近失败推导，入站刷新后恢复', () => {  const { user } = createUser({ wechatUserId: 'wx_push_state', botToken: 'push-state-token' });
   store.updateContextToken(user.id, 'ctx-push-state', Date.now() - 60_000);
   assert.equal(store.getUserWithCounts(user.id).pushable, true);
 

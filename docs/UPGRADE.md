@@ -1,6 +1,6 @@
 # 部署、升级与回滚（Upgrade / Rollback）
 
-> 适用版本：**ClawBridge 1.1.9（数据库 schema v1，全新数据基线）**。
+> 适用版本：**ClawBridge 1.1.10（数据库 schema v1，全新数据基线）**。
 > 本文说明全新部署、从旧版本数据卷切换到 1.0.0、备份与回滚的实操步骤；
 > 配置字段见 [`docs/SETTINGS.md`](SETTINGS.md)，发布流程见 [`docs/RELEASE.md`](RELEASE.md)，
 > APP_SECRET 轮换见 [`docs/ROTATE_APP_SECRET.md`](ROTATE_APP_SECRET.md)。
