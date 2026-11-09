@@ -671,3 +671,45 @@ test('「正在输入」：规则调外部接口期间 getconfig/sendtyping(1)�
   const account = (state.accounts ?? []).find((row) => row.botId === accountA.botId);
   assert.equal(account.lastTypingStatus, 2, '规则请求结束后应取消「正在输入」');
 });
+
+test('「正在输入」：不请求模式规则（直接回复）同样显示，回复入队后取消', async () => {
+  await e2e.ensureAdmin();
+  const beforeState = await e2e.mockState();
+  const beforeSendTyping = Number(beforeState.pollCounts?.sendTyping ?? 0);
+
+  await createRuleOrFail({
+    ...RULE_BASE(),
+    name: '不请求正在输入规则',
+    scope: { type: 'users', ids: [userA.id] },
+    keywords: ['不请求输入测试'],
+    // 不请求模式：request.mode=none → 命中后直接回复默认文本（不发外部请求）
+    request: { mode: 'none' },
+    response: { type: 'text', path: '', template: 'NOHTTP-TYPING-REPLY', fallbackText: '' },
+    timeoutMs: 3000,
+  });
+
+  await injectInbound(userA, accountA, uniqueText('不请求输入测试'));
+  const reply = await e2e.waitMockSentMessageContaining('NOHTTP-TYPING-REPLY', {
+    toUserId: userA.wechatUserId,
+    label: '用户 A 收到不请求模式规则的直接回复',
+  });
+  assert.ok(reply.text.includes('NOHTTP-TYPING-REPLY'));
+
+  // 不请求接口也应有 typing 生命周期（getconfig/sendtyping 1→2；最小可见时长后取消）
+  const state = await waitFor(
+    async () => {
+      const current = await e2e.mockState();
+      const account = (current.accounts ?? []).find((row) => row.botId === accountA.botId);
+      const sendTypingCount = Number(current.pollCounts?.sendTyping ?? 0);
+      return sendTypingCount >= beforeSendTyping + 2 && account?.lastTypingStatus === 2 ? current : null;
+    },
+    { timeoutMs: 10000, label: '不请求模式规则 mock 收到 sendtyping(1)→(2)' },
+  );
+  const sendTypingCount = Number(state.pollCounts.sendTyping);
+  assert.ok(
+    sendTypingCount >= beforeSendTyping + 2,
+    `不请求模式规则 sendtyping 至少 2 次（1 开始 + 2 取消）：${sendTypingCount}`,
+  );
+  const account = (state.accounts ?? []).find((row) => row.botId === accountA.botId);
+  assert.equal(account.lastTypingStatus, 2, '直接回复入队后应取消「正在输入」');
+});

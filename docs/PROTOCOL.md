@@ -249,8 +249,9 @@ Resp 200:
 
 ### 5.6 「正在输入」状态（getconfig / sendtyping）
 
-规则命中且需要调用外部 HTTP 接口时，ClawBridge 会向**触发用户**显示微信「正在输入」状态，
-请求结束（成功/失败/超时/`{{noreply}}`）后取消；该能力为 **best-effort**，不影响规则执行。
+规则命中时（**包括不请求模式、直接回复默认文本的规则**），ClawBridge 会向**触发用户**显示微信
+「正在输入」状态；回复处理结束（回复已入队 / 明确不回复 `{{noreply}}` / 失败）后取消；
+该能力为 **best-effort**，不影响规则执行。
 
 ```
 POST {baseUrl}/ilink/bot/getconfig    Body: {"ilink_user_id": "...", "context_token": "...", "base_info": {...}}
@@ -262,10 +263,15 @@ POST {baseUrl}/ilink/bot/sendtyping   Body: {"ilink_user_id": "...", "typing_tic
 - `typing_ticket` 按用户内存缓存 **10 分钟**（过期或失败时按需重取）；`getconfig`/`sendtyping` 单次超时
   上限 `min(3000ms, ILINK_REQUEST_TIMEOUT_MS)`，避免拖慢规则请求。
 - 显示期间默认每 `APP_RULE_TYPING_REFRESH_MS`（4000ms，范围 1000–30000）重发 `status=1`，避免微信侧
-  提前消失；请求结束发送 `status=2`。同一用户并发多个规则请求按**引用计数**合并，最后一个结束时才取消。
+  提前消失；**取消时机在回复入队（或明确不回复）之后**，发送 `status=2`。同一用户并发多个规则请求按
+  **引用计数**合并，最后一个结束时才取消。
+- **最小可见时长约 500ms**：整个显示时长不足约 500ms 时（如直接回复的短流程），延迟到约 500ms 再发送
+  `status=2`，避免用户看不到状态；延迟仅由内部定时器处理，**不阻塞规则执行与回复入队**。等待取消期间
+  该用户再次命中规则会复用会话，最终只取消一次（500ms 为内部固定值，不是运行配置项）。
 - **失败忽略**：开关关闭 / 用户无 token / 接口报错（`ret!==0`/网络/超时）均静默跳过（仅 debug 日志），
   不影响规则执行；日志不记录 `typing_ticket` / token。
-- 仅**外部 HTTP 请求模式**（`request.url` 非空）显示；`request.mode=none`（直接默认文本回复）不显示。
+- 适用于**所有规则命中**：`request.mode=http`（外部请求期间按刷新间隔持续显示）与 `request.mode=none`
+  （直接回复默认文本，最短约 500ms）均显示。
 
 > 该端点由 `server/src/ilink.js`（`getConfig`/`sendTyping`）+ `server/src/typing.js` 实现，
 > mock 模拟器已支持（`/__mock/state` 可观察 `sendTyping` 计数）。

@@ -131,78 +131,78 @@ async function processInboundJob(job) {
     return;
   }
 
-  // 请求外部接口期间显示微信「正在输入」（best-effort：失败/无凭据时静默返回 null，不影响规则）
-  // 直接回复默认文本（request.url 为空）的规则不显示。
-  const typingHandle = rule.request?.url ? await beginTyping(user) : null;
-  let result;
+  // 命中规则即显示微信「正在输入」（含不请求模式直接回复：发送文字/入队同样需要时间）。
+  // best-effort：失败/无凭据时静默返回 null，不影响规则；生命周期覆盖 HTTP → 预览 → 回复入队 → 日志。
+  const typingHandle = await beginTyping(user);
   try {
-    result = await executeRuleHttp(rule, {
+    const result = await executeRuleHttp(rule, {
       text,
       userId,
       displayName: user.displayName ?? '',
       now,
     });
-  } finally {
-    // 正常/失败/超时/异常路径都取消「正在输入」
-    await endTyping(typingHandle);
-  }
-  const previews = makePreviews({
-    params: result.params,
-    requestUrl: result.requestUrl,
-    method: rule.request.method,
-    responsePreview: result.responsePreview,
-  });
+    const previews = makePreviews({
+      params: result.params,
+      requestUrl: result.requestUrl,
+      method: rule.request.method,
+      responsePreview: result.responsePreview,
+    });
 
-  // 模板输出 {{noreply}}：命中规则但不回复（也不使用兜底文案）
-  if (result.noreply === true) {
+    // 模板输出 {{noreply}}：命中规则但不回复（也不使用兜底文案）
+    if (result.noreply === true) {
+      finalizeLog(logRow.id, {
+        status: 'success',
+        httpStatus: result.httpStatus,
+        latencyMs: result.latencyMs,
+        error: '',
+        ...previews,
+        replyOutboxId: null,
+      });
+      log.info('规则命中，但模板要求不回复（未使用兜底文案）', {
+        ruleId: rule.id,
+        userId,
+        httpStatus: result.httpStatus,
+        credentials: result.credentialNames,
+      });
+      return;
+    }
+
+    if (result.error) {
+      const replyOutboxId = result.replyText ? enqueueReply(userId, result.replyText) : null;
+      finalizeLog(logRow.id, {
+        status: 'failed',
+        httpStatus: result.httpStatus,
+        latencyMs: result.latencyMs,
+        error: result.error,
+        ...previews,
+        replyOutboxId,
+      });
+      // 日志只记凭据名称（值只存在于 executeRuleHttp 内部，且预览/错误已脱敏）
+      log.warn('规则执行失败', { ruleId: rule.id, userId, error: result.error, credentials: result.credentialNames });
+      return;
+    }
+
+    const replyOutboxId = enqueueReply(userId, result.replyText);
     finalizeLog(logRow.id, {
       status: 'success',
       httpStatus: result.httpStatus,
       latencyMs: result.latencyMs,
       error: '',
       ...previews,
-      replyOutboxId: null,
+      replyOutboxId,
     });
-    log.info('规则命中，但模板要求不回复（未使用兜底文案）', {
+    log.info('规则执行成功并已回复', {
       ruleId: rule.id,
       userId,
       httpStatus: result.httpStatus,
+      latencyMs: result.latencyMs,
       credentials: result.credentialNames,
     });
-    return;
+  } finally {
+    // 正常/失败/超时/异常/noreply 路径都在回复入队（或明确不回复）之后取消「正在输入」；
+    // endTyping 内部对「可见时长不足 minVisibleMs」只延迟调度，不阻塞本 worker。
+    await endTyping(typingHandle);
   }
-
-  if (result.error) {
-    const replyOutboxId = result.replyText ? enqueueReply(userId, result.replyText) : null;
-    finalizeLog(logRow.id, {
-      status: 'failed',
-      httpStatus: result.httpStatus,
-      latencyMs: result.latencyMs,
-      error: result.error,
-      ...previews,
-      replyOutboxId,
-    });
-    // 日志只记凭据名称（值只存在于 executeRuleHttp 内部，且预览/错误已脱敏）
-    log.warn('规则执行失败', { ruleId: rule.id, userId, error: result.error, credentials: result.credentialNames });
-    return;
-  }
-
-  const replyOutboxId = enqueueReply(userId, result.replyText);
-  finalizeLog(logRow.id, {
-    status: 'success',
-    httpStatus: result.httpStatus,
-    latencyMs: result.latencyMs,
-    error: '',
-    ...previews,
-    replyOutboxId,
-  });
-  log.info('规则执行成功并已回复', {
-    ruleId: rule.id,
-    userId,
-    httpStatus: result.httpStatus,
-    latencyMs: result.latencyMs,
-    credentials: result.credentialNames,
-  });
 }
 
 function pump() {

@@ -191,9 +191,13 @@ typingIndicator, typingRefreshMs }`。
 
 ### 4.1 请求期间显示「正在输入」（typing indicator）
 
-- 规则命中且 `request.url` 非空时，在外部 HTTP 请求前向**触发用户**显示微信「正在输入」状态
-  （`getconfig` 取 `typing_ticket` → `sendtyping status=1`）；请求结束（成功/失败/超时/`{{noreply}}`）
-  在 finally 中发送 `status=2` 取消。`request.mode=none`（直接默认文本回复）不显示。
+- **所有规则命中**都向**触发用户**显示微信「正在输入」状态（包括 `request.mode=none` 直接回复默认文本，
+  发送文字/入队同样需要时间）：命中 → 显示（`getconfig` 取 `typing_ticket` → `sendtyping status=1`）→
+  执行/预览/`{{noreply}}`/失败/成功 → 回复入队（或明确不回复）→ 在 finally 中 `sendtyping status=2` 取消；
+  **长请求期间按刷新间隔持续显示**。
+- **最小可见时长约 500ms**（内部固定值，非运行配置）：处理流程短于约 500ms 时延迟取消（status=2），
+  直接回复规则也能看到短暂「正在输入」；延迟由内部定时器处理，**不阻塞规则执行与回复入队**；等待取消期间
+  同一用户再次命中规则会复用会话，最终只取消一次。
 - 默认**开启**；后台「运行配置 → 接口应用」可关闭（`appRules.typingIndicator`），或调整刷新间隔
   （`appRules.typingRefreshMs`，默认 4000ms、范围 1000–30000，即时生效）。
 - **best-effort**：开关关闭 / 用户无 token / `getconfig`/`sendtyping` 失败或超时均静默跳过（仅 debug 日志），

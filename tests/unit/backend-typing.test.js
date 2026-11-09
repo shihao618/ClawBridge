@@ -57,8 +57,16 @@ function fakeSendTyping(options) {
 
 typing.configureTypingDependencies({ getConfig: fakeGetConfig, sendTyping: fakeSendTyping });
 
+/** 重新注入 fake 依赖（minVisibleMs 默认 0：保持既有用例即时 status=2 语义）。 */
+function configureFake(minVisibleMs = 0) {
+  typing.configureTypingDependencies({ getConfig: fakeGetConfig, sendTyping: fakeSendTyping, minVisibleMs });
+}
+
+configureFake(0);
+
 function resetState() {
   typing.clearTypingState();
+  configureFake(0);
   calls.getConfig.length = 0;
   calls.sendTyping.length = 0;
   failGetConfig = false;
@@ -201,4 +209,68 @@ test('未知/重复 handle 安全：endTyping 不抛错且不重复取消', asyn
   await typing.endTyping(null);
   await typing.endTyping({ userId: 'u_unknown' });
   assert.deepEqual(statuses(), [1, 2]);
+});
+
+// ---------------------------------------------------------------------------
+// 最小可见时长（v1.0.3）：直接回复规则也能短暂看到「正在输入」
+// ---------------------------------------------------------------------------
+
+test('最小可见时长：不足时不立即取消，到期后 status=2 且只取消一次', async () => {
+  resetState();
+  configureFake(80);
+  const user = createUser();
+  const handle = await typing.beginTyping(user);
+  assert.deepEqual(statuses(), [1]);
+  await typing.endTyping(handle);
+  assert.deepEqual(statuses(), [1], '可见时长不足时不得立即取消');
+
+  await sleep(30);
+  assert.deepEqual(statuses(), [1], '等待期间仍不取消');
+
+  await sleep(120);
+  assert.deepEqual(statuses(), [1, 2], '超过最小可见时长后应发送 status=2');
+
+  await sleep(60);
+  assert.deepEqual(statuses(), [1, 2], '取消只发送一次');
+});
+
+test('最小可见时长注入 0：endTyping 立即发送 status=2', async () => {
+  resetState();
+  configureFake(0);
+  const user = createUser();
+  const handle = await typing.beginTyping(user);
+  await typing.endTyping(handle);
+  assert.deepEqual(statuses(), [1, 2]);
+});
+
+test('默认最小可见时长为 500ms（未显式注入 minVisibleMs 时）', async () => {
+  resetState();
+  typing.configureTypingDependencies({ getConfig: fakeGetConfig, sendTyping: fakeSendTyping });
+  const user = createUser();
+  const handle = await typing.beginTyping(user);
+  await typing.endTyping(handle);
+  assert.deepEqual(statuses(), [1], '默认 500ms 内不应立即取消');
+  typing.clearTypingState();
+});
+
+test('等待取消期间再次 begin：复用会话、清除待取消定时器、最终只取消一次', async () => {
+  resetState();
+  configureFake(120);
+  const user = createUser();
+  const h1 = await typing.beginTyping(user);
+  const getConfigCalls = calls.getConfig.length;
+  await typing.endTyping(h1);
+  assert.deepEqual(statuses(), [1], '引用归零后进入最小可见等待');
+
+  const h2 = await typing.beginTyping(user); // 等待取消期间再次开始 → 复用会话
+  assert.deepEqual(statuses(), [1], '复用会话不重复 status=1');
+  assert.equal(calls.getConfig.length, getConfigCalls, '复用会话不重新 getconfig');
+
+  await sleep(180);
+  assert.deepEqual(statuses(), [1], '待取消定时器应被清除（等待期间不得取消）');
+
+  await typing.endTyping(h2);
+  assert.deepEqual(statuses(), [1, 2], '最终正常取消一次');
+  await sleep(80);
+  assert.deepEqual(statuses(), [1, 2], '不再重复取消');
 });
