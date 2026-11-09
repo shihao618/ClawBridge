@@ -123,7 +123,9 @@ perUserConcurrency, perUserMaxRecipients }`。
      日志记为 `success`、`replyPreview` 标注「不回复，未使用兜底」，不写 outbox。适合"没有数据就不打扰"的场景。
    - **模板根**：`response.path` 选中节点后，模板根即该节点，路径直接相对它写；空路径才用完整响应对象。
      例：`response.path="data.list"` → `{{count .}}` / `{{#each .}}{{字段}}{{/each}}`；
-     模板只按模板根/当前循环上下文查找路径；需要完整响应根时用 `{{@responseRoot.字段}}`。
+     **路径配置了但未命中**（如响应外层多一层 `ok/data`）时模板根为空、不回退完整响应对象，
+     `{{#if .}}` 会进入空数据分支；需要完整响应时用 `{{@responseRoot.字段}}`。
+     模板只按模板根/当前循环上下文查找路径。
    - **列表/多层循环**：`{{count . where 字段=值}}`、`{{#each . where 字段=值}}...{{/each}}`；
      `each` 可嵌套多层，内层用 `{{../字段}}` 取父级、`{{../@index}}`/`{{../@number}}` 取父循环、
      `{{@root.字段}}` 取模板根、`{{@responseRoot.字段}}` 取完整响应根（可访问选中节点的兄弟字段）；
@@ -160,6 +162,8 @@ perUserConcurrency, perUserMaxRecipients }`。
 2. 对每个用户解析请求 URL/Header/Body 模板中的 `{credential:凭据名.字段}`（读该用户的 `user_secrets`）；
    **缺凭据的用户跳过**（写事件，明细只含 userId/缺失凭据名，不含值），不使用兜底文案。
 3. 用「相同凭据字段值」把用户分组合并：**同一组只发起一次外部请求**，再按用户渲染通知模板
+   （模板根附加 `userName`/`userId`；**数组根保持数组语义**，空数组时 `{{#if .}}` 为假，可正常配合
+   `{{noreply}}` 静默，不会被按用户字段污染成对象后误发）。
    （模板可额外使用 `{{userName}}`/`{{userId}}`；`{{noreply}}` 对该用户不发送）。
 4. 并发池 `perUserConcurrency`（默认 2，范围 1-10）执行请求组；单任务总超时 30s；
    单用户失败只影响该用户（按配置使用兜底文案，为空则不发送）。

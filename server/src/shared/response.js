@@ -29,6 +29,7 @@ export function parseResponse({ responseType = 'json', responsePath = '', rawTex
   const root = parsed.value;
   const hasPath = String(responsePath).trim() !== '';
   let value;
+  let pathMatched = true;
   if (!hasPath) {
     if (root && typeof root === 'object' && !Array.isArray(root) && typeof root.reply === 'string' && root.reply.trim() !== '') {
       value = root.reply;
@@ -37,11 +38,14 @@ export function parseResponse({ responseType = 'json', responsePath = '', rawTex
     }
   } else {
     value = getByPath(root, responsePath);
+    pathMatched = value !== undefined;
   }
   const responseText = truncate(valueToText(value), maxReplyLength());
-  // JSON 路径命中时，模板根=选中节点（模板可直接相对引用）；空路径/路径无效时保持完整响应根。
-  const templateRoot = hasPath && value !== undefined ? value : root;
-  return { root, value, responseText, rawText: raw, templateRoot };
+  // JSON 路径命中时，模板根=选中节点（模板可直接相对引用）；空路径=完整响应根。
+  // 配置了路径但未命中时模板根为空，**不回退完整响应根**——否则 {{#if .}} 的空数据保护会因
+  // “完整响应对象恒为真”而误发空通知；需要完整响应时用 @responseRoot。
+  const templateRoot = hasPath ? (pathMatched ? value : undefined) : root;
+  return { root, value, responseText, rawText: raw, templateRoot, pathMatched };
 }
 
 /**

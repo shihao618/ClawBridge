@@ -405,6 +405,46 @@ test('parseResponse：json 路径 / 空路径 reply / 对象 stringify / text', 
 
   const arrayPath = appRules.parseResponse({ responseType: 'json', responsePath: 'data.0.answer', rawText: '{"data":[{"answer":"第一"}]}' });
   assert.equal(arrayPath.responseText, '第一');
+
+  // 配置了 response_path 但外层结构不匹配：模板根为空，不回退完整响应根（避免空数据误发）
+  const outerEnvelope = JSON.stringify({ ok: true, data: { code: 0, msg: 'ok', data: { total: 0, items: [] } } });
+  const pathMiss = appRules.parseResponse({ responseType: 'json', responsePath: 'data.items', rawText: outerEnvelope });
+  assert.equal(pathMiss.pathMatched, false);
+  assert.equal(pathMiss.templateRoot, undefined);
+  const pathMissPreview = appRules.previewReplyTemplate({
+    responseType: 'json',
+    responsePath: 'data.items',
+    template: '{{#if .}}有数据{{else}}{{noreply}}{{/if}}',
+    fallbackText: '兜底',
+    rawText: outerEnvelope,
+  });
+  assert.equal(pathMissPreview.noreply, true, '路径未命中时不应回退完整响应根而误发空通知');
+  assert.equal(pathMissPreview.replyText, '');
+});
+
+test('shared/http-execute：按用户模式数组根保留数组语义（空数组 noreply，非空可取 userName）', async () => {
+  const { buildResponseResult } = await import('../../server/src/shared/http-execute.js');
+  const response = {
+    type: 'json',
+    path: 'data.items',
+    template: '{{#if .}}有数据{{else}}{{noreply}}{{/if}}',
+    fallbackText: '兜底',
+  };
+  const empty = buildResponseResult({
+    fetched: { status: 200, text: '{"data":{"items":[]}}' },
+    response,
+    templateExtras: { userId: 'u1', userName: '张三' },
+  });
+  assert.equal(empty.noreply, true, '按用户模式空数组根应触发 noreply，而不是被扩展成对象后误发');
+  assert.equal(empty.replyText, '');
+
+  const one = buildResponseResult({
+    fetched: { status: 200, text: '{"data":{"items":[{"name":"甲"}]}}' },
+    response: { ...response, template: '{{#each .}}{{name}}-{{userName}};{{/each}}' },
+    templateExtras: { userId: 'u1', userName: '李四' },
+  });
+  assert.equal(one.noreply, false);
+  assert.equal(one.replyText, '甲-李四;', '数组附加按用户字段后可正常取 userName');
 });
 
 test('SSRF：私网/环回/保留地址拒绝、白名单放行、userinfo/协议拒绝、DNS 注入', async () => {

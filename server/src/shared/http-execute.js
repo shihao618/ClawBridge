@@ -102,7 +102,12 @@ export function buildResponseResult({ fetched, response = {}, templateExtras } =
     rawText: result.text,
   });
   result.parsed = parsed;
-  const root = templateExtras ? { ...(parsed.templateRoot ?? {}), ...templateExtras } : parsed.templateRoot;
+  // 按用户模式把 userName/userId 附加到模板根；数组根必须保留数组语义（否则空数组会被
+  // 扩展成对象、{{#if .}} 恒为真，导致空数据也发送通知）；路径未命中时也不附加，保持空根。
+  let root = parsed.templateRoot;
+  if (templateExtras && parsed.pathMatched !== false) {
+    root = mergeTemplateExtras(root, templateExtras);
+  }
   const rendered = renderReplyTemplate(response.template ?? '', {
     root,
     responseRoot: parsed.root,
@@ -118,6 +123,23 @@ export function buildResponseResult({ fetched, response = {}, templateExtras } =
   result.replyText = rendered.trim() === '' ? String(response.fallbackText ?? '') : rendered;
   if (result.replyText.trim() === '') result.error = 'empty reply';
   return result;
+}
+
+/**
+ * 合并模板附加字段（按用户模式的 userName/userId）：
+ * - 数组根保留 Array，字段以附加属性形式挂载，保证 {{#if .}}、{{#each .}}、count 仍按数组语义；
+ * - 对象根浅合并；
+ * - 原始类型/空根不强行包装，避免改变原有模板行为。
+ */
+function mergeTemplateExtras(root, extras) {
+  if (!extras || typeof extras !== 'object') return root;
+  if (Array.isArray(root)) {
+    Object.assign(root, extras);
+    return root;
+  }
+  if (root && typeof root === 'object') return { ...root, ...extras };
+  if (root === undefined || root === null) return { ...extras };
+  return root;
 }
 
 /**

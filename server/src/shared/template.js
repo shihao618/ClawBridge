@@ -44,8 +44,14 @@ export function getByPath(value, path) {
     if (current === null || current === undefined) return undefined;
     if (Array.isArray(current)) {
       const index = Number(part);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) return undefined;
-      current = current[index];
+      if (Number.isInteger(index) && index >= 0 && index < current.length) {
+        current = current[index];
+        continue;
+      }
+      // 数组允许读取自身附加属性（按用户模式模板根会挂载 userName/userId）；
+      // 仍禁止读取原型方法，避免模板访问 map/filter 等内置函数。
+      if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined;
+      current = current[part];
       continue;
     }
     if (typeof current !== 'object') return undefined;
