@@ -114,7 +114,7 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 > **例外（尚未并入后台运行配置）**：数据维护（`server/src/maintenance.js`：孤儿附件 / 日志保留 GC）
 > 的参数目前从 env 读取（`MAINTENANCE_*`，默认开启、每天一次），见 [`docs/UPGRADE.md`](UPGRADE.md) §8
 > 「数据维护」。另有 env-only 可选项 `ILINK_CONFIG_TIMEOUT_MS`（轻量 iLink API 超时，默认 10000），
-> `MONITOR_META_FLUSH_MS`（空闲轮询时游标/`last_poll_at` 落盘间隔，默认 21600000ms=6 小时、范围 1s–24h；0=空闲不写、仅消息/退出时落盘；有消息仍立即落盘），
+> MONITOR_META_FLUSH_MS 是首次启动默认值；该项已并入后台「运行配置 → 入站监控 → 空闲轮询落盘间隔」，后台修改即时生效（0=空闲不写、默认 6 小时）。
 > 未进运行配置；此类参数后续可并入 settings 分组。
 
 ### 7.2 新增设置分组/字段（全部 DB 可改）
@@ -127,7 +127,7 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 | server | `publicBaseUrl`(string，空/URL)、`trustProxy`(bool)、`cookieSecure`(bool)、`logLevel`(enum debug/info/warn/error/silent) | publicBaseUrl/cookieSecure/logLevel 即时；trustProxy restartRequired |
 | security | `sessionTtlMs`(number)、`pushApiEnabled`(bool) | 即时（登录/请求时读取） |
 | ilink | `loginBaseUrl`、`defaultBaseUrl`、`cdnBaseUrl`(URL)、`appId`、`channelVersion`、`botAgent`、`botType`、`routeTag`(string)、`clientVersion`、`requestTimeoutMs`、`qrPollTimeoutMs`、`longPollTimeoutMs`(number) | 即时（每次请求实时读取；已建立的绑定会话沿用原 Base URL） |
-| monitor | `longPollTimeoutMs`、`maxAccounts`(number) | restartRequired（监控账号/长轮询在启动时创建） |
+| monitor | `longPollTimeoutMs`、`maxAccounts`(number)、`metaFlushMs`(number，0=空闲不写/默认 21600000=6h) | 前两项 restartRequired；`metaFlushMs` 即时生效（每次空闲轮询动态读取） |
 | media | `maxBytes`、`inboundMaxBytes`、`downloadTimeoutMs`、`uploadTimeoutMs`、`inboundMaxConcurrent`、`inboundMaxQueue`、`allowedHosts`(数组/逗号分隔)、`allowInsecureHttp`(bool)、`allowedImageMime`、`allowedVideoMime`（数组/逗号串） | `maxBytes`、`inboundMaxConcurrent`、`inboundMaxQueue` restartRequired（body 解析器/下载信号量启动时创建）；其余即时 |
 | push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`apiRateLimitPerMinute`、`maxTextLength`、`retryDelaysMs`(逗号分隔)、`errorNoticeEnabled`(bool，默认 true) | `rateLimitMax`/`rateLimitWindowMs` restartRequired（令牌桶启动时创建）；`tickMs`（每轮实时读取）与 `apiRateLimitPerMinute`（每请求同步）即时；其余即时（`errorNoticeEnabled` 每次发送失败判定时实时读取） |
 | scheduler | `enabled`、`tickMs`、`timeoutMs`、`timezone`(IANA)、`maxRecipients`、`maxResponseBytes`、`allowedHosts`、`perUserConcurrency`、`perUserMaxRecipients` | 即时（引擎/定时器经 hook 重启）；`maxResponseBytes=0` / `allowedHosts` 为空时继承接口应用；`perUserConcurrency`/`perUserMaxRecipients` 在每次按用户模式执行时实时读取 |

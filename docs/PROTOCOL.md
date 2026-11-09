@@ -233,7 +233,7 @@ Body:
 - 客户端主动中止（长轮询超时）属正常控制流：视为空响应并立即重试。
 - `longpolling_timeout_ms`：服务端返回的合法值**原样使用**（仅 <=0/NaN 等无效值回退当前超时）。
 - 游标 `get_updates_buf`：**有消息的响应立即落库**；空闲轮询（无消息）时游标与 `last_poll_at`
-  最多每 `MONITOR_META_FLUSH_MS`（默认 6 小时，可调 1 秒–24 小时；设为 0 = 空闲完全不写，仅消息/退出时落盘）落盘一次，退出前补写一次。
+  最多每 `MONITOR_META_FLUSH_MS`（默认 6 小时，可调 1 秒–24 小时；设为 0 = 空闲完全不写，仅消息/退出时落盘）落盘一次，退出前补写一次。该值可在后台「运行配置 → 入站监控 → 空闲轮询落盘间隔」修改，即时生效。
   这是为降低 NAS/SD 卡等设备写入频率的有意差异：崩溃最多重放空响应，消息按 `wechat_message_id` 去重，不会重复回复。
 - `message_id`：顶层为空时回退遍历 `item_list[].msg_id`（官方 `getWeixinMessageId` 语义）。
 - `notifystart/notifystop` 响应 `ret != 0` 只记 warn，不抛错、不影响轮询。

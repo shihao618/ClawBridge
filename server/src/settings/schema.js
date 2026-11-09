@@ -139,6 +139,7 @@ export const GROUPS = [
     fields: [
       { key: 'longPollTimeoutMs', label: '长轮询超时（毫秒）', type: 'number', min: 1000, max: 300000, restartRequired: true, description: '入站监控长轮询超时（修改需重启）' },
       { key: 'maxAccounts', label: '最大监控账号数', type: 'number', min: 1, max: 1000, restartRequired: true, description: '同时监控账号上限（修改需重启）' },
+      { key: 'metaFlushMs', label: '空闲轮询落盘间隔（毫秒）', type: 'number', min: 0, max: 86400000, description: '有消息始终立即落盘；空闲时游标/最近轮询时间最多每 N 毫秒写一次盘。默认 21600000（6 小时）；0=空闲完全不写盘（仅消息/退出时落盘，最省盘；即时生效）' },
     ],
   },
 ];
@@ -158,6 +159,7 @@ const CONFIG_PATHS = {
   'ilink.cdnBaseUrl': ['ilink', 'cdnBaseUrl'],
   'monitor.longPollTimeoutMs': ['monitor', 'longPollTimeoutMs'],
   'monitor.maxAccounts': ['monitor', 'maxAccounts'],
+  'monitor.metaFlushMs': ['monitor', 'metaFlushMs'],
 };
 
 export const FIELD_BY_KEY = new Map();

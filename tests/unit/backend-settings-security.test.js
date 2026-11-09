@@ -232,7 +232,7 @@ test('新字段校验/映射/restartRequired + logLevel 即时生效', () => {
     server: { publicBaseUrl: 'https://bot.example.com/', trustProxy: true, cookieSecure: true, logLevel: 'error' },
     security: { sessionTtlMs: 3600000, pushApiEnabled: true },
     ilink: { loginBaseUrl: 'https://ilink.example.com/', appId: 'my-app', clientVersion: 42 },
-    monitor: { longPollTimeoutMs: 30000, maxAccounts: 100 },
+    monitor: { longPollTimeoutMs: 30000, maxAccounts: 100, metaFlushMs: 0 },
     media: { allowedImageMime: 'IMAGE/PNG, image/webp', downloadTimeoutMs: 30000 },
     push: { tickMs: 500 },
     binding: { networkErrorLimit: 7, pollGapMs: 500 },
@@ -246,6 +246,8 @@ test('新字段校验/映射/restartRequired + logLevel 即时生效', () => {
   assert.equal(config.publicBaseUrl, 'https://bot.example.com');
   assert.equal(config.ilink.appId, 'my-app');
   assert.equal(config.monitor.maxAccounts, 100);
+  assert.equal(config.monitor.metaFlushMs, 0, '后台可将空闲落盘设为 0（空闲不写）');
+  assert.equal(result.restartRequired.includes('monitor.metaFlushMs'), false, 'metaFlushMs 每轮实时读取，无需重启');
   assert.deepEqual(config.media.allowedImageMime, ['image/png', 'image/webp']);
   assert.equal(config.push.tickMs, 500);
   assert.equal(config.binding.networkErrorLimit, 7);
@@ -275,6 +277,8 @@ test('新字段校验/映射/restartRequired + logLevel 即时生效', () => {
     [{ server: { logLevel: 'verbose' } }, 'debug/info'],
     [{ ilink: { loginBaseUrl: 'not-a-url' } }, 'URL'],
     [{ monitor: { maxAccounts: 0 } }, '之间'],
+    [{ monitor: { metaFlushMs: -1 } }, '之间'],
+    [{ monitor: { metaFlushMs: 86400001 } }, '之间'],
     [{ media: { allowedImageMime: 'not-a-mime' } }, 'MIME'],
     [{ binding: { pollGapMs: -1 } }, '之间'],
   ]) {
