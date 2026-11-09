@@ -185,7 +185,7 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
   - 定时通知「按用户模式」：按**目标用户**解析凭据，相同凭据字段值合并一次外部请求。
 - **安全**：凭据值不进入任何 API 响应/日志/运行日志预览；用户删除时凭据级联删除。
 
-## 8. 接口应用规则引擎（`app-rules/`）
+## 8. 接口应用 · 规则列表 Tab 的规则引擎（`app-rules/`）
 
 - 命中条件：入站文本消息匹配规则（`contains`/`equals`/`regex`）+ scope（all/users/groups），
   多规则按 `priority` 升序只执行第一条；同一入站消息对同一规则最多执行一次（去重索引）。
@@ -205,7 +205,7 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
 - 执行队列：进程内 worker（`APP_RULES_WORKER_CONCURRENCY`）+ 有界队列（`APP_RULE_MAX_QUEUE`），
   失败只记录该次运行；运行日志写 `app_rule_logs`（参数/请求/响应预览均已脱敏，不含凭据值）。
 
-## 9. 定时通知（`scheduler/`）
+## 9. 接口应用 · 定时通知 Tab（`scheduler/`）
 
 - 计划：`interval`（每 N 分钟，60s–30d，可配每日生效时间段 `windowStart/windowEnd`，支持跨午夜）与
   `daily`（每天 HH:mm，时区 `SCHEDULER_TIMEZONE`）；服务重启对过期任务补跑一次。

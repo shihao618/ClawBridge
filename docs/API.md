@@ -140,7 +140,7 @@ GET /api/admin/overview
     "inboundLast24h": 8
   },
   "server": {
-    "version": "1.1.1",
+    "version": "1.1.2",
     "uptimeMs": 123456,
     "now": 1760000000000,
     "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
@@ -261,7 +261,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
 ```
 GET /api/admin/config
 → 200 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
@@ -284,7 +284,7 @@ GET /api/admin/config
 GET /api/admin/metrics          # 需要管理后台 Cookie 会话（401 未登录）
 → 200 {
   "serverTime": 1760000000000,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "pid": 12345,
   "node": "v24.20.0",
   "uptimeMs": 123456,             // 进程运行时长
@@ -787,7 +787,7 @@ RuleView 关键字段：`scope{type,ids,names}`、`trigger{matchMode,keywords,re
 | `APP_RULE_MAX_QUEUE` | `200` | 内存队列上限 |
 
 > 定时通知（§9.1）有独立白名单 `SCHEDULER_ALLOWED_HOSTS`（空=继承本表 `APP_RULES_ALLOWED_HOSTS`），
-> 因此「接口应用」与「定时通知」可分别放行内网主机。
+> 因此「接口应用（规则）」与「接口应用 → 定时通知」两个运行配置分组可分别放行内网主机。
 
 **curl 示例**
 

@@ -7,7 +7,7 @@
 > `@tencent-weixin/openclaw-weixin@2.4.10` 的协议实现扫码绑定、长轮询收消息、文本消息发送，
 > 不依赖任何第三方微信协议服务或个人号 Hook。
 >
-> **当前版本 1.1.1**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
+> **当前版本 1.1.2**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
 > 请使用全新空数据卷部署（旧部署请先备份，回滚需同时使用旧镜像与旧数据卷）。见
 > [`docs/UPGRADE.md`](docs/UPGRADE.md)。
 
@@ -40,7 +40,7 @@
   直到用户回复刷新窗口或窗口过期；可对单用户或分组批量开启。
 - **入站消息 API**：对外 API 可分页/游标增量拉取"微信用户发来的消息"（`GET /api/v1/inbound/messages`），
   支持 `since`/`cursor`/`wait` 长轮询、按用户/分组过滤、附件元数据与下载 URL，便于外部系统集成。
-- **接口应用（关键词触发）**：配置规则后，命中「指定用户/分组 + 关键词/正则」的微信消息会自动调用
+- **接口应用 · 规则列表 Tab**：配置规则后，命中「指定用户/分组 + 关键词/正则」的微信消息会自动调用
   外部 HTTP 接口（从消息提取参数、支持 GET/POST/Header/Body 模板），解析返回并回复用户；也可以
   **不请求外部接口，直接回复一段默认文本**（`request.mode=none`）；支持优先级、
   同消息去重、SSRF 防护（默认拒绝内网）、测试运行与每规则运行日志弹窗；调用频率统一由微信默认发送限流控制；回复模板按 Markdown 编写，
@@ -56,14 +56,14 @@
 - **用户级凭据（只写不读）**：为每个绑定用户保存第三方密钥（一条凭据可含多个字段，如 `gps.token`、
   `weather.apiKey`），值 AES-256-GCM 加密落库、接口与后台**不回显明文**（只显示字段名与掩码提示）；
   用户管理行内「密钥」按钮可视化管理，规则/定时通知按需引用；用户删除时级联删除。
-- **定时通知**：按计划（每 N 分钟，可选每日 HH:mm–HH:mm 生效时间段；或每天 HH:mm；默认 Asia/Shanghai 时区）自动调用外部 HTTP 接口，
+- **接口应用 · 定时通知 Tab**：按计划（每 N 分钟，可选每日 HH:mm–HH:mm 生效时间段；或每天 HH:mm；默认 Asia/Shanghai 时区）自动调用外部 HTTP 接口，
   解析返回并通过微信通知指定用户/分组；支持模板（含 `{{#each}}` 列表渲染）、兜底文案、测试运行、
   立即执行与运行日志；模板输出 `{{noreply}}` 时静默不发送（不使用兜底，适合"没数据不打扰"）。
   **按用户模式**：每个目标用户用**自己的凭据**请求、按用户渲染通知（相同凭据值自动合并请求），
   缺凭据跳过、单用户失败不影响其他人，任务状态可为 `partial`（部分成功）。
 - **管理后台**：菜单式导航（概览/用户管理/用户分组/消息记录/广播消息/接口应用/运行配置，
   hash 路由可直达、响应式侧栏（桌面常驻、窄屏抽屉））、用户管理（搜索/筛选/分组/发消息/解绑/重连/保活/删除）、分组管理、
-  接口应用（含定时通知）、广播、消息记录、运行配置；**限流/保活/接口应用/定时通知/媒体/绑定等运行参数
+  接口应用（含「规则列表」「定时通知」两个 Tab）、广播、消息记录、运行配置；**限流/保活/接口应用/定时通知/媒体/绑定等运行参数
   可在后台「运行配置」修改（DB 持久化，优先于 .env）；页面顶部可一键「重启容器」使需重启字段生效**。
 - **安全**：bot_token / context_token AES-256-GCM 加密落库；admin 密码登录（HttpOnly Cookie +
   CSRF 头校验）；**管理密码（scrypt 哈希）与 API Token（AES 加密）可在后台「安全」卡片修改/轮换**，
@@ -90,7 +90,7 @@
 | --- | --- |
 | ![用户分组](screenshots/admin-menu-groups.webp) | ![接口应用](screenshots/admin-menu-app-rules.webp) |
 
-| 接口应用：规则运行日志弹窗 | 定时通知：按间隔 + 每日生效时间段 |
+| 接口应用：规则运行日志弹窗 | 接口应用 → 定时通知：按间隔 + 每日生效时间段 |
 | --- | --- |
 | ![规则运行日志](screenshots/admin-app-rules-logs-modal.webp) | ![定时通知时间段](screenshots/admin-schedule-window.webp) |
 
@@ -114,13 +114,13 @@
 | --- | --- |
 | ![会话保活](screenshots/admin-keepalive.webp) | ![接口应用文档](screenshots/docs-app-rules.webp) |
 
-| 定时通知（任务列表） | 定时通知（测试运行，不发送） |
+| 接口应用 → 定时通知（任务列表） | 接口应用 → 定时通知（测试运行，不发送） |
 | --- | --- |
 | ![定时通知](screenshots/admin-app-rules-schedule.webp) | ![定时通知测试](screenshots/admin-app-rules-schedule-test.webp) |
 
-| 运行配置（后台可改，DB 持久化） | 定时通知文档 |
+| 运行配置（后台可改，DB 持久化） | 接口应用 → 定时通知文档 |
 | --- | --- |
-| ![运行配置](screenshots/admin-settings.webp) | ![定时通知文档](screenshots/docs-scheduled-tasks.webp) |
+| ![运行配置](screenshots/admin-settings.webp) | ![接口应用 → 定时通知文档](screenshots/docs-scheduled-tasks.webp) |
 
 | 安全设置（管理密码 / API Token） | 运行配置（.env 仅剩必须项） |
 | --- | --- |
@@ -371,7 +371,7 @@ curl -X PATCH http://127.0.0.1:10380/api/admin/users/u_xxxxxxxx/keepalive \
 参数与机制见 [`docs/KEEPALIVE.md`](docs/KEEPALIVE.md)（窗口 24h、首次提前 12h、每 6h 重复提醒、5 分钟扫描一次，
 可用 `KEEPALIVE_*` 环境变量调整）。
 
-### 接口应用（关键词触发 → 外部接口 → 回复用户）
+### 接口应用 → 规则列表（关键词触发 → 外部接口 → 回复用户）
 
 在管理后台「接口应用」新建规则：命中「指定用户/分组 + 关键词/正则」的微信文本消息 → 从消息中提取参数
 （多参数组合提取：关键词后文本 / 正则命名组 / JSON 消息体 / 整句组合）→ 按模板调用外部 HTTP 接口 → 解析返回并回复用户。
@@ -522,7 +522,8 @@ TRUST_PROXY=true
 - **消息记录**：入站/出站分栏，展示状态、尝试次数、错误、微信 server message_id、媒体附件；
   支持按用户/分组筛选；
 - **广播消息**：给全部 active 用户排队发送同一文本；
-- **接口应用**：规则列表/新建/编辑/测试运行/启用筛选，运行日志为页内 Tab（含规则与状态筛选、分页）；
+- **接口应用**：同一页面两个 Tab ——「规则列表」（新建/编辑/测试运行/启用筛选，运行日志为页内 Tab）与
+  「定时通知」（任务列表/编辑器/测试运行/立即执行/运行日志）；
 - **运行配置**：脱敏后的运行配置（API Token 预览、限流、绑定、保活、接口应用参数）。
 - **对外 API**：用户/广播推送、分组管理、按分组发送、入站消息增量拉取（`/api/v1/inbound/messages`）。
 
@@ -577,7 +578,7 @@ mock/              # 零依赖微信 iLink 模拟器 + 控制面 + 自测（26 �
 tests/             # tests/unit 单测（含前端静态/模块/纯函数/生命周期测试）、tests/e2e 端到端、tests/helpers 测试环境
 docs/              # PROTOCOL.md 协议参考 / API.md 接口契约 / ARCHITECTURE.md 设计文档 /
                    # MEDIA.md 多媒体 / GROUPS_AND_INBOUND.md 分组与入站消息 API / KEEPALIVE.md 会话保活 /
-                   # API_RULES.md 接口应用（关键词触发→外部 HTTP，含凭据占位符）/ SCHEDULED_TASKS.md 定时通知 /
+                   # API_RULES.md 接口应用→规则列表（关键词触发→外部 HTTP，含凭据占位符）/ SCHEDULED_TASKS.md 接口应用→定时通知 /
                    # SETTINGS.md 运行配置后台可改 / MARKDOWN_WECHAT.md 微信 Markdown 兼容规则 /
                    # UPGRADE.md 全新基线部署/回滚 / RELEASE.md 发布流程 / SECURITY 策略见根目录 SECURITY.md /
                    # ROTATE_APP_SECRET.md APP_SECRET 轮换 / PRIVACY.md 隐私与数据处置

@@ -290,9 +290,9 @@
               </div>
             </div>
             <p class="section-desc">
-              当指定用户 / 分组发来包含关键词的微信消息时，调用外部 HTTP 接口并把解析结果回复给用户。
+              本页包含两个 Tab：「规则列表」在指定用户 / 分组发来包含关键词的微信消息时调用外部接口并回复；
+              「定时通知」无需用户先发消息，按时间计划主动调用接口并推送结果。
               规则默认不启用；同一消息最多命中一条规则，受冷却与每小时限额约束。
-              定时通知则无需用户先发消息，按时间计划主动调用接口并推送结果。
             </p>
             <div id="rule-tabs" class="tab-bar" role="tablist" aria-label="接口应用视图">
               <button id="rule-tab-rules" class="tab-btn is-active" type="button" role="tab" aria-selected="true" aria-controls="rule-rules-panel" tabindex="0" data-rule-tab="rules">规则列表</button>

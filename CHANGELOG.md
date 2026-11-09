@@ -1,3 +1,12 @@
+## [1.1.2] - 2026-11-09
+
+### 文档 / 文案修正
+
+- 明确「定时通知」是管理后台「接口应用」页面的**第二个 Tab**（与「规则列表」并列），不是独立菜单/页面：
+  - 修正 docs/SCHEDULED_TASKS.md 中「第三个 Tab」等误导表述；
+  - docs/API_RULES.md、docs/ARCHITECTURE.md、docs/API.md、README、后台页面说明统一改为「接口应用 → 规则列表 / 接口应用 → 定时通知」；
+  - README 截图说明、DOC 索引与相关交叉引用同步。
+- 无 API/数据库 schema 变更（schema 仍 v1）。
 ## [1.1.1] - 2026-11-09
 
 ### 修复
