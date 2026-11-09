@@ -206,6 +206,9 @@ export function loadConfig(env = process.env) {
     backoffMs: 30000,
     retryDelayMs: 2000,
     stalePauseMs: 60 * 60 * 1000,
+    // 空闲轮询（无消息）时，get_updates_buf / last_poll_at 的落盘间隔：
+    // 降低 NAS/SD 卡等设备上的 SQLite 写入频率；有消息仍立即落盘。
+    metaFlushMs: Math.max(1000, Math.min(6 * 60 * 60 * 1000, envInt(env, 'MONITOR_META_FLUSH_MS', 5 * 60 * 1000))),
   };
 
   // 24h 会话保活（docs/KEEPALIVE.md）：对开启 keepalive 的用户，在最后一条入站消息

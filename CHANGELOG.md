@@ -1,3 +1,16 @@
+## [1.1.5] - 2026-11-09
+
+### 优化
+
+- **降低空闲时磁盘写入**：此前每个账号每轮 getupdates 都会 UPDATE users 写 last_poll_at，
+  且空闲响应的 get_updates_buf 也每次落库；多账号长轮询时会造成 NAS/SD 卡持续写入与数据库 WAL 增长。
+  现在：
+  - 有消息的响应：仍**立即**持久化游标（不丢消息位置）；
+  - 空闲轮询：游标与 last_poll_at 最多每 MONITOR_META_FLUSH_MS（默认 5 分钟）落盘一次，
+    退出前补写；崩溃最多重放空响应，消息按 wechat_message_id 去重，不会重复回复；
+  - 新增 env-only 配置 MONITOR_META_FLUSH_MS=300000（可调范围 1s–6h）。
+- 实测单账号空闲轮询写库次数由“每轮 1–2 次”降为“约每 5 分钟 1 次”；3 个账号时效果更明显。
+- 文档同步 PROTOCOL/ARCHITECTURE/README/.env.example/SETTINGS；新增空闲写库节流回归测试。
 ## [1.1.4] - 2026-11-09
 
 ### 修复

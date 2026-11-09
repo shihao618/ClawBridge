@@ -7,7 +7,7 @@
 > `@tencent-weixin/openclaw-weixin@2.4.10` 的协议实现扫码绑定、长轮询收消息、文本消息发送，
 > 不依赖任何第三方微信协议服务或个人号 Hook。
 >
-> **当前版本 1.1.4**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
+> **当前版本 1.1.5**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
 > 请使用全新空数据卷部署（旧部署请先备份，回滚需同时使用旧镜像与旧数据卷）。见
 > [`docs/UPGRADE.md`](docs/UPGRADE.md)。
 
@@ -595,9 +595,9 @@ Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editor
 | --- | --- | --- |
 | 后端/核心单测（config、crypto、iLink 客户端、store 与拆分后的 data/**、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载与有界并发、入站下载 URL 白名单、schema 版本校验、数据库索引、用户分组、入站 API、用户级凭据（加密/掩码/级联删除）、凭据占位符解析与脱敏、会话保活调度、分组级保活继承、接口应用规则引擎与 SSRF IP 固定、shared 模板/响应管线、定时通知调度与生效时间段（含按用户模式 partial）、优雅退出 drain、数据维护 GC、可观测性指标、APP_SECRET 轮换、运行配置后台设置、后台菜单路由与初始化顺序、视图懒加载/弹窗交互/焦点陷阱/Tab 语义、响应式布局、前端模块/纯函数/弹窗行为、日志脱敏、错误映射） | `npm run test:unit` | **待发布前实测刷新**（`npm test` 最终值由 Lead 填写） |
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/凭据注入/定时通知（含按用户模式）/运行配置设置/密码与 API Token；子进程 env 白名单、稳定等待断言、mock 违规统一断言） | `npm run test:e2e` | **待发布前实测刷新** |
-| 全量测试（unit + e2e） | `npm test` | **625 项（623 通过 + 2 项 POSIX-only 跳过）** |
+| 全量测试（unit + e2e） | `npm test` | **627 项（625 通过 + 2 项 POSIX-only 跳过）** |
 | e2e 连跑稳定性（串行 3 次，CI 门禁） | `npm run e2e:stability` | 3/3 次通过（每次约 2 分钟） |
-| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line **94.02%** / branch **77.82%** / funcs **94.44%**（CI 阈值门禁通过） |
+| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line **94.03%** / branch **77.78%** / funcs **94.44%**（CI 阈值门禁通过） |
 | 静态检查（ESLint flat config，CI `--max-warnings=0`） | `npm run lint` | 0 error / 0 warning |
 | 文档值级一致性（版本/环境变量/设置字段/API 端点/相对链接/质量表命令） | `npm run doc:lint` | 6 项全部通过（CI 门禁） |
 | 可观测性指标（`GET /api/admin/metrics`、overview.metrics） | `npm run test:unit`（backend-metrics） | 契约与鉴权全覆盖 |
@@ -672,7 +672,7 @@ fnOS 同理修改 `docker-compose.fnos.yml`。只改宿主机侧映射，容器�
 v1.1.0 起协议层按官方插件 `@tencent-weixin/openclaw-weixin@2.4.10` 逐项对齐：请求头矩阵（POST 恒带
 `Content-Type`/`AuthorizationType`/`X-WECHAT-UIN`，GET 仅公共头）、`client_id` 官方格式、`bot_agent` 官方清洗、
 版本常量自动派生、绑定轮询网络容错、`-14` 暂停 1h 后**自动恢复轮询**、退避节奏、`longpolling_timeout_ms`
-原样使用、游标每次变化即落库、入站 `message_id` item 级回退与正文顺序、引用消息（quote/partial_quote）最小解析、
+原样使用、游标有消息立即落库/空闲按 5 分钟节流落库、入站 `message_id` item 级回退与正文顺序、引用消息（quote/partial_quote）最小解析、
 媒体引用下载 / voice 带文本跳过 / 缺媒体跳过 / MIME 路由对齐、Markdown 过滤（删除线只保留文字，换行布局为
 ClawBridge 额外行为）、typing 参数（5s keepalive / 10s 超时 / 24h ticket 随机缓存 + 退避）。
 **有意保留的差异**（多 media、换行布局、客户端限流/队列、AI 通道功能、`run_id` 等）见

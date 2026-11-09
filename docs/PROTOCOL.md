@@ -232,7 +232,9 @@ Body:
   按普通失败退避（避免网关 401 误冷却账号）。
 - 客户端主动中止（长轮询超时）属正常控制流：视为空响应并立即重试。
 - `longpolling_timeout_ms`：服务端返回的合法值**原样使用**（仅 <=0/NaN 等无效值回退当前超时）。
-- 游标 `get_updates_buf`：每次响应变化即落库（不再防抖），退出前补写一次。
+- 游标 `get_updates_buf`：**有消息的响应立即落库**；空闲轮询（无消息）时游标与 `last_poll_at`
+  最多每 `MONITOR_META_FLUSH_MS`（默认 5 分钟）落盘一次，退出前补写一次。
+  这是为降低 NAS/SD 卡等设备写入频率的有意差异：崩溃最多重放空响应，消息按 `wechat_message_id` 去重，不会重复回复。
 - `message_id`：顶层为空时回退遍历 `item_list[].msg_id`（官方 `getWeixinMessageId` 语义）。
 - `notifystart/notifystop` 响应 `ret != 0` 只记 warn，不抛错、不影响轮询。
 - **入站正文**：按 `item_list` 顺序、首个可识别项决定正文（TEXT 文本 / VOICE 且有转写用 text /
@@ -383,7 +385,7 @@ send(user, text):
 
 v1.1.0 起协议层按官方插件 **2.4.10** 逐项对齐：请求头矩阵、`client_id` 格式、`bot_agent` 清洗、
 版本派生（`channel_version`→`iLink-App-ClientVersion`）、绑定轮询网络容错、`-14` 暂停 1h 后自动继续、
-退避计数清零、`longpolling_timeout_ms` 原样使用、游标每次落库、`message_id` item 级回退、入站正文顺序、
+退避计数清零、`longpolling_timeout_ms` 原样使用、有消息立即落库/空闲游标节流落库、`message_id` item 级回退、入站正文顺序、
 quote/partial_quote 最小解析、媒体 `ref_msg` 回退 / voice 带 text 跳过 / 缺媒体跳过 / MIME 路由、
 Markdown 过滤（删除线只保留文字）、typing 参数（5s keepalive / 10s 超时 / 24h ticket 随机缓存 + 退避）。
 

@@ -53,7 +53,7 @@ Express（api.js 组合根：http/middleware → routes/*）── 静态页面(
    ├─ binding.js ── iLink.getBotQrcode()/getQrcodeStatus() ──► 微信 ClawBot（ilinkai.weixin.qq.com）
    │      └─ confirmed → users upsert（按 wechat_user_id）+ monitor.start(user)
    ├─ monitor.js ── notifyStart() + getUpdates() 长轮询（每账号一个循环；-14 暂停 1h 后自动继续）
-   │      └─ 入站消息（含 quote 最小解析、/echo）→ 落库（context_token 加密保存、游标每次落库）+ 媒体下载 → 触发规则/通知
+   │      └─ 入站消息（含 quote 最小解析、/echo）→ 落库（context_token 加密保存、有消息立即落游标/空闲节流）+ 媒体下载 → 触发规则/通知
    ├─ dispatcher.js（单循环 worker）── outbox queued → 每账号限流 → iLink.sendMessage
    │      └─ 成功 sent / -2 退避重试 / -14 暂停 1h（到期自动恢复轮询）/ 永久失败按开关提示用户
    ├─ app-rules 引擎 ── 命中规则 → 显示「正在输入」→ （可选）按触发用户解析凭据 → 外部 HTTP → 渲染回复入 outbox → 取消 typing
@@ -145,7 +145,7 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
 
 ## 6. 入站监控与媒体（`monitor.js` + `media.js`）
 
-- 每账号独立 `getupdates` 长轮询（默认 35s），游标 `get_updates_buf` **每次变化即落库**、用户 `context_token` 加密保存；
+- 每账号独立 `getupdates` 长轮询（默认 35s），游标 `get_updates_buf` **有消息立即落库、空闲按 5 分钟节流落库**、用户 `context_token` 加密保存；
   `-14` 暂停 1 小时，worker 内等待冷却到期后**自动继续轮询**（对齐官方 session-guard；可被 stop 中止，
   进程重启后冷却到期也会自动恢复监控）；连续失败按官方节奏退避（2s→2s→30s，达到阈值清零计数）；
   `longpolling_timeout_ms` 合法值原样使用（仅无效值回退）。

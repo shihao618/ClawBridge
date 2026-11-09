@@ -5,7 +5,7 @@
  *  - HTTP 401 但 body 非 -14：按普通失败退避，不冷却；
  *  - 退避计数清零（2s→2s→30s 节奏）；
  *  - longpolling_timeout_ms 原样使用（仅无效值回退）；
- *  - 游标变化即持久化（对齐官方 sync-buf）；
+ *  - 有消息立即持久化游标 / 空闲轮询按 MONITOR_META_FLUSH_MS 节流写库；
  *  - 入站 message_id 回退 item.msg_id；
  *  - notifyStart/notifyStop ret!=0 只告警；
  *  - 入站文本顺序对齐官方（首个可识别 item 决定正文，媒体占位不带文件名）；
@@ -376,11 +376,27 @@ test('退避分支：getupdates 业务错误（ret!=0）按 retryDelayMs 重试�
   assert.equal(monitor.isRunning(user.id), false);
 });
 
-test('游标变化即持久化（不用等 stop/shutdown），且下一次请求携带新游标', async () => {
+test('有消息时游标立即持久化（不等空闲节流），且下一次请求携带新游标', async () => {
   const token = 'token-monitor-cursor-immediate';
   const user = createUser({ wechatUserId: 'wx_monitor_cursor_immediate', token });
+  // 先制造一个较新的 last_poll_at，确保不是“首次轮询必写”导致通过
+  store.touchPoll(user.id, Date.now());
   queueUpdates({
-    resp: { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: 'immediate-cursor-buf', longpolling_timeout_ms: 300 },
+    resp: {
+      ret: 0,
+      errcode: 0,
+      errmsg: '',
+      msgs: [
+        {
+          message_id: '9007199254740999',
+          from_user_id: 'wx_monitor_cursor_immediate',
+          create_time_ms: Date.now(),
+          item_list: [{ type: 1, text_item: { text: '触发立即落盘的消息' } }],
+        },
+      ],
+      get_updates_buf: 'immediate-cursor-buf',
+      longpolling_timeout_ms: 300,
+    },
   });
   const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
   assert.equal(monitor.start(user.id), true);
@@ -391,7 +407,7 @@ test('游标变化即持久化（不用等 stop/shutdown），且下一次请求
     assert.equal(
       store.getUserRow(user.id).get_updates_buf,
       'immediate-cursor-buf',
-      '每次收到非空 get_updates_buf 应立即落库（官方 sync-buf 语义）',
+      '有消息的响应应立即持久化游标（不等 metaFlushMs）',
     );
     const bodies = fakeState.updateBodies.filter(Boolean);
     assert.ok(
@@ -399,6 +415,58 @@ test('游标变化即持久化（不用等 stop/shutdown），且下一次请求
       '下一次 getupdates 应携带新游标',
     );
   } finally {
+    await monitor.stop(user.id, { notify: false }).catch(() => {});
+  }
+});
+
+test('空闲轮询：空响应游标按 metaFlushMs 节流写库，到期后才落盘', async () => {
+  const prev = config.monitor.metaFlushMs;
+  config.monitor.metaFlushMs = 120;
+  const token = 'token-monitor-cursor-idle';
+  const user = createUser({ wechatUserId: 'wx_monitor_cursor_idle', token });
+  store.touchPoll(user.id, Date.now());
+  queueUpdates({
+    resp: { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: 'idle-cursor-buf', longpolling_timeout_ms: 60 },
+  });
+  const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
+  assert.equal(monitor.start(user.id), true);
+  try {
+    await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= callsBefore + 2, {
+      timeoutMs: 8000,
+    });
+    // 内存游标已经推进（下一次请求带上新 buf），但空闲响应不立即写 DB
+    const bodies = fakeState.updateBodies.filter(Boolean);
+    assert.ok(
+      bodies.some((body) => body.get_updates_buf === 'idle-cursor-buf'),
+      '内存游标应推进到下一次请求',
+    );
+    // 节流到期后应落盘（等待下一次空闲轮询触发 flush）
+    await waitFor(() => store.getUserRow(user.id).get_updates_buf === 'idle-cursor-buf', { timeoutMs: 5000 });
+  } finally {
+    config.monitor.metaFlushMs = prev;
+    await monitor.stop(user.id, { notify: false }).catch(() => {});
+  }
+});
+
+test('空闲轮询：较新的 last_poll_at 不会被每轮 UPDATE 覆盖（只按 metaFlushMs 写）', async () => {
+  const prev = config.monitor.metaFlushMs;
+  config.monitor.metaFlushMs = 60000;
+  const token = 'token-monitor-poll-throttle';
+  const user = createUser({ wechatUserId: 'wx_monitor_poll_throttle', token });
+  const baseline = Date.now() - 10_000;
+  store.touchPoll(user.id, baseline);
+  queueUpdates({
+    resp: { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: '', longpolling_timeout_ms: 60 },
+  });
+  const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
+  assert.equal(monitor.start(user.id), true);
+  try {
+    await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= callsBefore + 2, {
+      timeoutMs: 8000,
+    });
+    assert.equal(Number(store.getUserRow(user.id).last_poll_at), baseline, '空闲轮询不应每轮写 last_poll_at');
+  } finally {
+    config.monitor.metaFlushMs = prev;
     await monitor.stop(user.id, { notify: false }).catch(() => {});
   }
 });

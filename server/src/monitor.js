@@ -6,7 +6,8 @@
  *   -14（token 失效）→ pause_until=now+1h + events('stale_token')，worker 内等待冷却到期后
  *   **继续轮询**（对齐官方 session-guard 语义，不再退出循环）；
  *   其他错误按协议退避（连续 3 次 → 30s 并清零计数，否则 2s）；
- *   每次收到非空 get_updates_buf 即持久化（对齐官方 sync-buf 语义）；
+ *   - 有消息的响应立即持久化 get_updates_buf；空闲轮询按 MONITOR_META_FLUSH_MS（默认 5min）节流落盘，
+ *     降低 NAS/SD 卡等设备写入频率（崩溃最多重放空响应，消息按 msg_id 去重）；
  *   客户端超时/主动中止属于正常控制流（ilink.getUpdates 已转为空响应）。
  *
  * start/stop 幂等，key = userId；stop 时 best-effort notifyStop。
@@ -588,6 +589,9 @@ async function runLoop(row, token, controller, worker) {
   let consecutiveFailures = 0;
   let nextTimeoutMs = config.monitor.longPollTimeoutMs;
   let cursorDirty = false;
+  const metaFlushMs = Math.max(1000, Number(config.monitor.metaFlushMs) || 5 * 60 * 1000);
+  /** 上次把轮询元数据（游标 / last_poll_at）落盘的时间；空闲轮询按 metaFlushMs 节流。 */
+  let lastDiskFlushAt = Number(row.last_poll_at) || 0;
   /** 是否刚从 -14 冷却恢复（恢复后的首个成功响应清除 DB pause_until/last_error）。 */
   let pausedForStaleToken = false;
 
@@ -660,8 +664,8 @@ async function runLoop(row, token, controller, worker) {
       log.info('监控凭据已变更或解绑，旧循环退出', { userId });
       return;
     }
-    // 上一轮游标落库失败则先重试（变化即落库；失败不丢，继续使用旧游标请求）
-    if (cursorDirty) persistCursor();
+    // 上一轮游标落库失败后的重试不做额外特殊处理：dirty 会在下一个成功响应
+    // 满足「有消息 / 距上次落盘 ≥ metaFlushMs」时重试，避免每轮轮询都尝试写库。
     metrics.incCounter('monitor.poll.total');
     let resp;
     try {
@@ -702,13 +706,7 @@ async function runLoop(row, token, controller, worker) {
       return;
     }
 
-    // 每轮成功拿到 getUpdates 响应后更新 last_poll_at（轻量 UPDATE；失败不影响轮询/退避流程）。
-    try {
-      store.touchPoll(userId);
-    } catch (pollErr) {
-      log.debug('更新 last_poll_at 失败（忽略）', { userId, message: pollErr?.message });
-    }
-
+    // 每轮成功响应后更新内存指标；DB last_poll_at 按 metaFlushMs 节流（见下方落库策略）。
     const ret = Number(resp?.ret ?? 0);
     const errcode = Number(resp?.errcode ?? 0);
     if (ret === -14 || errcode === -14) {
@@ -753,15 +751,34 @@ async function runLoop(row, token, controller, worker) {
       await deferForFailure({ reason: 'inbound_save_retry' });
       continue;
     }
-    // 落库处理完成（成功或不可重试失败已记事件）后才推进内存游标，并立即持久化
-    //（官方 sync-buf 语义：每次收到非空 get_updates_buf 即落盘）。
+    // 落库处理完成（成功或不可重试失败已记事件）后才推进内存游标。
+    // 磁盘写入策略（兼顾可靠性与 NAS/低写入设备寿命）：
+    // - 收到消息：立即持久化，保证崩溃后不重放有消息的批次；
+    // - 空闲轮询：游标/最近轮询时间最多每 metaFlushMs 落盘一次（默认 5 分钟）；
+    //   崩溃最多重放空响应，消息按 wechat_message_id 去重，不会产生重复回复。
     if (bufChanged) {
       getUpdatesBuf = newBuf;
       cursorDirty = true;
     }
     worker.pendingBuf = getUpdatesBuf;
-    if (bufChanged) persistCursor();
     worker.lastPollAt = Date.now();
+    const now = Date.now();
+    let persisted = false;
+    if (cursorDirty) {
+      const flushDue = messages.length > 0 || now - lastDiskFlushAt >= metaFlushMs;
+      if (flushDue) {
+        persisted = persistCursor();
+        if (persisted) lastDiskFlushAt = now;
+      }
+    }
+    if (!persisted && now - lastDiskFlushAt >= metaFlushMs) {
+      try {
+        store.touchPoll(userId, now);
+        lastDiskFlushAt = now;
+      } catch (pollErr) {
+        log.debug('更新 last_poll_at 失败（忽略）', { userId, message: pollErr?.message });
+      }
+    }
   }
 }
 
