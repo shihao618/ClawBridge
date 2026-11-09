@@ -596,6 +596,27 @@ async function run() {
       assert(textLength > 50, `页面 ${route} 内容为空`);
       log(`通过：页面 ${route}（文本长度 ${textLength}）`);
     }
+
+    // ---- 4. 文档目录 hash 路由：连续快速点击也必须落在目标 section ----
+    await cdp.evaluate(`document.querySelector('#docs-nav a[href="#app-rules"]').click()`);
+    await sleep(80);
+    await cdp.evaluate(`document.querySelector('#docs-nav a[href="#scheduled-tasks"]').click()`);
+    await waitFor(
+      async () => (await cdp.evaluate(`location.hash === '#scheduled-tasks'`)) === true,
+      { timeoutMs: NAV_TIMEOUT_MS, label: '文档路由 hash' },
+    );
+    const scheduledTop = await cdp.evaluate(
+      `Math.round(document.getElementById('scheduled-tasks').getBoundingClientRect().top)`,
+    );
+    assert(
+      scheduledTop >= 0 && scheduledTop < 260,
+      `文档目录「定时通知」路由位置错误（section top=${scheduledTop}）`,
+    );
+    const activeDocLink = await cdp.evaluate(
+      `[...document.querySelectorAll('#docs-nav a.is-active')].map((a) => a.textContent.trim()).join(',')`,
+    );
+    assert(activeDocLink.includes('定时通知'), `文档目录高亮错误（active=${activeDocLink}）`);
+    log('通过：文档目录 hash 路由');
   } catch (err) {
     failures.push(err);
     log(`失败：${err.message}`);
