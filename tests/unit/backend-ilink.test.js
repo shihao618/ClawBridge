@@ -107,7 +107,7 @@ test('ilink.sanitizeBotAgent / createClientId', () => {
   assert.match(a, /^clawbridge-[0-9a-f-]{36}$/);
 });
 
-test('未使用的 getConfig/sendTyping 导出已移除（协议端点随后续需求再加回）', () => {
-  assert.equal('getConfig' in ilink, false);
-  assert.equal('sendTyping' in ilink, false);
+test('getConfig/sendTyping 导出存在（规则「正在输入」使用，docs/PROTOCOL.md §5.6）', () => {
+  assert.equal(typeof ilink.getConfig, 'function');
+  assert.equal(typeof ilink.sendTyping, 'function');
 });

@@ -484,7 +484,7 @@ export function openAppRuleEditor(rule = null) {
   );
   const requestSection = formSection(
     '请求',
-    'URL / Header / Body 支持 {变量} 占位；可用 {credential:凭据名.字段} 引用当前触发用户在「用户管理 → 密钥」配置的凭据（缺失时规则失败且不调用接口，日志已脱敏）；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。',
+    'URL / Header / Body 支持 {变量} 占位；可用 {credential:凭据名.字段} 引用当前触发用户在「用户管理 → 密钥」配置的凭据（缺失时规则失败且不调用接口，日志已脱敏）；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。请求外部接口期间会向触发用户显示「正在输入」状态（可在「运行配置 → 接口应用」关闭）。',
     requestDetailsBox,
   );
   const responseGrid = buildResponseRow({

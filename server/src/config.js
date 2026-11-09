@@ -205,6 +205,9 @@ export function loadConfig(env = process.env) {
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean),
     maxQueue: Math.max(1, envInt(env, 'APP_RULE_MAX_QUEUE', 200)),
+    // 「正在输入」状态（docs/PROTOCOL.md §5.6）：规则请求外部接口期间向触发用户显示，best-effort。
+    typingIndicator: envBool(env, 'APP_RULE_TYPING_INDICATOR', true),
+    typingRefreshMs: Math.min(30000, Math.max(1000, envInt(env, 'APP_RULE_TYPING_REFRESH_MS', 4000))),
   };
 
   // 定时通知（docs/SCHEDULED_TASKS.md）：按时间计划调用外部接口并把结果推送微信。

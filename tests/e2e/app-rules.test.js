@@ -625,3 +625,49 @@ test('未命中关键词/无规则的消息不触发外部接口', async () => {
   assert.equal(unmatchedStable.requests, 0, '未命中任何规则的消息不应调用外部 API');
   assert.equal(unmatchedStable.matchedLogs, false, '未命中消息不应产生对应规则日志');
 });
+
+// ---------------------------------------------------------------------------
+// 「正在输入」状态（docs/PROTOCOL.md §5.6）：规则请求外部接口期间显示，结束后取消
+// ---------------------------------------------------------------------------
+
+test('「正在输入」：规则调外部接口期间 getconfig/sendtyping(1)，请求结束 sendtyping(2)', async () => {
+  await e2e.ensureAdmin();
+  externalApi.setResponse({ json: { data: { answer: 'TYPING-DONE' } } });
+  const beforeState = await e2e.mockState();
+  const beforeSendTyping = Number(beforeState.pollCounts?.sendTyping ?? 0);
+
+  await createRuleOrFail({
+    ...RULE_BASE(),
+    name: '正在输入规则',
+    scope: { type: 'users', ids: [userA.id] },
+    keywords: ['正在输入测试'],
+    extraction: { mode: 'multi', config: { extractors: [{ type: 'trailing', param: 'arg' }] } },
+    request: { method: 'GET', url: `${externalApi.baseUrl}/typing-probe`, headers: {}, bodyTemplate: '' },
+    response: { type: 'json', path: 'data', template: '{{answer}}', fallbackText: '' },
+    timeoutMs: 3000,
+  });
+
+  await injectInbound(userA, accountA, uniqueText('正在输入测试'));
+  await e2e.waitMockSentMessageContaining('TYPING-DONE', {
+    toUserId: userA.wechatUserId,
+    label: '用户 A 收到规则解析回复（触发「正在输入」）',
+  });
+
+  // mock 侧：请求期间至少 1 次 status=1、结束后 status=2（真实走 getconfig + sendtyping）
+  const state = await waitFor(
+    async () => {
+      const current = await e2e.mockState();
+      const account = (current.accounts ?? []).find((row) => row.botId === accountA.botId);
+      const sendTypingCount = Number(current.pollCounts?.sendTyping ?? 0);
+      return sendTypingCount >= beforeSendTyping + 2 && account?.lastTypingStatus === 2 ? current : null;
+    },
+    { timeoutMs: 10000, label: 'mock 收到 sendtyping(1)→(2) 且已取消' },
+  );
+  const sendTypingCount = Number(state.pollCounts.sendTyping);
+  const getConfigCount = Number(state.pollCounts.getConfig);
+  assert.ok(sendTypingCount >= beforeSendTyping + 2, `sendtyping 至少 2 次（1 开始 + 2 取消）：${sendTypingCount}`);
+  // typing_ticket 内存缓存 10 分钟：同用户此前规则请求可能已取过，这里只要求整体至少 1 次 getconfig。
+  assert.ok(getConfigCount >= 1, '应调用 getconfig 获取 typing_ticket（10 分钟内同用户复用缓存）');
+  const account = (state.accounts ?? []).find((row) => row.botId === accountA.botId);
+  assert.equal(account.lastTypingStatus, 2, '规则请求结束后应取消「正在输入」');
+});

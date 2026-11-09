@@ -19,6 +19,7 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
 | `server/src/store.js` | 数据层 façade：`export *` 重导出 `data/**`，调用方零改动 |
 | `server/src/data/` | 数据层按域实现：`users.js`、`groups.js`、`keepalive.js`、`rules.js`、`scheduled.js`、`attachments.js`、`outbox.js`、`inbound.js`、`messages.js`、`events.js`、`stats.js`、`user-secrets.js`（用户级凭据）+ `mappers.js`/`helpers.js` |
 | `server/src/shared/` | 领域共享层：`http-client.js`（SSRF/传输/钉 IP/响应读取）、`template.js`（模板引擎）、`response.js`（响应解析）、`http-execute.js`（渲染→HTTP→解析→渲染回复管线）、`credentials.js`（凭据引用收集/解析/渲染/脱敏）、`wechat-markdown.js`（微信 Markdown 兼容过滤，出站前使用） |
+| `server/src/typing.js` | 「正在输入」状态（规则请求外部接口期间显示）：`typing_ticket` 获取/缓存、刷新定时器、按用户引用计数、best-effort 失败忽略 |
 | `server/src/binding.js` / `monitor.js` / `dispatcher.js` / `keepalive.js` / `app-rules.js` / `scheduler.js` / `settings.js` / `auth.js` / `maintenance.js` | 领域层：扫码绑定状态机、入站长轮询、出站队列、会话保活、接口应用规则引擎、定时通知、运行配置与机密管理（`settings.js` façade + `settings/{schema,validate,apply,secrets,persistence}.js`）、认证与限流、数据生命周期维护 |
 | `server/src/app-rules/` / `scheduler/` | 领域模块拆分实现：`app-rules/{match,engine,index}.js`、`scheduler/{calc,index}.js`；根文件保留 façade |
 | `server/src/http/` | HTTP 支撑层：`middleware.js`（安全头/body 解析/404/统一错误处理）、`helpers.js`、`views.js`、`validators.js`、`app-rule-validators.js`、`scheduled-validators.js`、`media-handlers.js`、`queue-service.js` |
@@ -173,6 +174,11 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
   SSRF 防护（默认拒绝私网/本机，`APP_RULES_ALLOWED_HOSTS` 白名单；连接层钉 IP + 重定向复验）。
 - 响应解析：`json`（点路径）或 `text`；回复模板用 `{{path}}`、`{{#each}}`（含 `where` 过滤、`@index`/`@number`）、
   `{{#if}}`/`{{default}}` 等指令；达到 `MAX_TEXT_LENGTH` 停止渲染；`{{noreply}}` 表示不发送（不使用兜底）。
+- **「正在输入」（typing indicator）**：命中规则且 `request.url` 非空时，请求前 `beginTyping()`
+  （按触发用户；`getconfig`→`typing_ticket` 缓存 10 分钟→`sendtyping status=1`，按
+  `APP_RULE_TYPING_REFRESH_MS` 默认 4s 刷新），请求结束（成功/失败/超时/`{{noreply}}`）在 finally 中
+  `endTyping()`（引用计数归零发 `status=2`）；best-effort，失败只 debug 日志、不影响规则；
+  `request.mode=none`（不请求）不显示。实现见 `server/src/typing.js`（依赖可注入便于单测）。
 - 执行队列：进程内 worker（`APP_RULES_WORKER_CONCURRENCY`）+ 有界队列（`APP_RULE_MAX_QUEUE`），
   失败只记录该次运行；运行日志写 `app_rule_logs`（参数/请求/响应预览均已脱敏，不含凭据值）。
 

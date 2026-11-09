@@ -452,4 +452,83 @@ export async function notifyStop({ baseUrl, token, timeoutMs = config.ilink.requ
   });
 }
 
+// ---------------------------------------------------------------------------
+// 正在输入（typing indicator，docs/PROTOCOL.md §5.6）
+// ---------------------------------------------------------------------------
+
+/**
+ * 获取 typing_ticket（POST /ilink/bot/getconfig）。
+ * @param {{baseUrl?:string, token?:string, ilinkUserId:string, contextToken?:string, timeoutMs?:number}} params
+ * @returns {Promise<object>} 协议响应（含 typing_ticket）
+ */
+export async function getConfig({
+  baseUrl,
+  token,
+  ilinkUserId,
+  contextToken,
+  timeoutMs = config.ilink.requestTimeoutMs,
+} = {}) {
+  const resp = await requestJson({
+    method: 'POST',
+    baseUrl,
+    endpoint: '/ilink/bot/getconfig',
+    token,
+    body: {
+      ilink_user_id: String(ilinkUserId ?? ''),
+      ...(contextToken ? { context_token: String(contextToken) } : {}),
+      base_info: buildBaseInfo(),
+    },
+    timeoutMs,
+    label: 'getconfig',
+  });
+  if (Number(resp?.ret) !== 0) {
+    throw new ILinkError(`getconfig 失败：ret=${resp?.ret ?? 'unknown'} ${resp?.errmsg ?? ''}`.trim(), {
+      endpoint: 'getconfig',
+      body: resp,
+    });
+  }
+  return resp;
+}
+
+/**
+ * 发送/取消「正在输入」状态（POST /ilink/bot/sendtyping）。
+ * status：1=正在输入，2=取消。
+ * @param {{baseUrl?:string, token?:string, ilinkUserId:string, typingTicket:string, status:1|2, timeoutMs?:number}} params
+ * @returns {Promise<object>} 协议响应（ret=0）
+ */
+export async function sendTyping({
+  baseUrl,
+  token,
+  ilinkUserId,
+  typingTicket,
+  status,
+  timeoutMs = config.ilink.requestTimeoutMs,
+} = {}) {
+  const normalizedStatus = Number(status);
+  if (normalizedStatus !== 1 && normalizedStatus !== 2) {
+    throw new ILinkError('sendtyping status 只能是 1|2', { endpoint: 'sendtyping' });
+  }
+  const resp = await requestJson({
+    method: 'POST',
+    baseUrl,
+    endpoint: '/ilink/bot/sendtyping',
+    token,
+    body: {
+      ilink_user_id: String(ilinkUserId ?? ''),
+      typing_ticket: String(typingTicket ?? ''),
+      status: normalizedStatus,
+      base_info: buildBaseInfo(),
+    },
+    timeoutMs,
+    label: 'sendtyping',
+  });
+  if (Number(resp?.ret) !== 0) {
+    throw new ILinkError(`sendtyping 失败：ret=${resp?.ret ?? 'unknown'} ${resp?.errmsg ?? ''}`.trim(), {
+      endpoint: 'sendtyping',
+      body: resp,
+    });
+  }
+  return resp;
+}
+
 export { ILinkError };

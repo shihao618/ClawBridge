@@ -46,6 +46,8 @@ export const GROUPS = [
       { key: 'workerConcurrency', label: '并发数', type: 'number', min: 1, max: 16, description: '规则执行 worker 并发数' },
       { key: 'maxQueue', label: '队列上限', type: 'number', min: 1, max: 10000, description: '内存队列最大长度，满则丢弃' },
       { key: 'allowedHosts', label: '内网/本机白名单', type: 'stringArray', description: '允许访问私网的主机名/IP（数组或逗号分隔；空=只允许公网）' },
+      { key: 'typingIndicator', label: '请求时显示正在输入', type: 'boolean', description: '规则调用外部接口期间向触发用户显示微信「正在输入」（best-effort，失败不影响规则执行）' },
+      { key: 'typingRefreshMs', label: '正在输入刷新间隔（毫秒）', type: 'number', min: 1000, max: 30000, description: '请求耗时较长时按该间隔重发「正在输入」状态，避免微信侧提前消失' },
     ],
   },
   {

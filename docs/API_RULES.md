@@ -13,7 +13,8 @@ monitor 收到入站消息并落库
      ├─ 关键词/正则命中？同消息+规则未重复？
      ├─ 按 priority 取第一条命中规则（一消息最多执行一条）
      ├─ request.mode=none → 直接渲染默认回复文本（跳过提取/请求/解析）
-     ├─ 否则：参数提取（none / multi）→ 渲染请求模板 → HTTP 调用（SSRF/超时/大小限制）
+     ├─ 否则：参数提取（none / multi）→ 渲染请求模板 → 显示「正在输入」（best-effort，§4.1）
+     │        → HTTP 调用（SSRF/超时/大小限制）
      ├─ 解析响应（JSON 路径或纯文本）→ 渲染回复模板（或兜底文案）
      ├─ 写 app_rule_logs（状态/耗时/HTTP 码/错误/预览，脱敏）
      └─ 入队 outbox（source='rule'）→ 微信回复用户（复用限流/-2/-14/context_token）
@@ -91,8 +92,11 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
 | `APP_RULES_WORKER_CONCURRENCY` | `2` | 规则执行并发数 |
 | `APP_RULES_ALLOWED_HOSTS` | 空 | **允许访问内网/本机的主机白名单**（逗号分隔；为空时只允许公网地址） |
 | `APP_RULE_MAX_QUEUE` | `200` | 内存队列上限（超出丢弃并记日志） |
+| `APP_RULE_TYPING_INDICATOR` | `true` | 规则调用外部接口期间向触发用户显示微信「正在输入」（best-effort） |
+| `APP_RULE_TYPING_REFRESH_MS` | `4000`（1000–30000） | 「正在输入」刷新间隔（毫秒） |
 
-`config.appRules = { enabled, timeoutMs, maxResponseBytes, workerConcurrency, allowedHosts[], maxQueue }`。
+`config.appRules = { enabled, timeoutMs, maxResponseBytes, workerConcurrency, allowedHosts[], maxQueue,
+typingIndicator, typingRefreshMs }`。
 
 ## 3. 触发匹配与参数提取
 
@@ -184,6 +188,17 @@ CREATE INDEX IF NOT EXISTS idx_app_rule_logs_created ON app_rule_logs(created_at
   - 只接受文本响应（忽略二进制）；失败不重试（避免用户触发场景重复副作用）。
 - 日志/接口响应不得包含完整 Header 值（如 Authorization）或请求 body 中的敏感值：日志预览需脱敏
   （含 token/secret/password/key 的字段替换为 `[redacted]`）。
+
+### 4.1 请求期间显示「正在输入」（typing indicator）
+
+- 规则命中且 `request.url` 非空时，在外部 HTTP 请求前向**触发用户**显示微信「正在输入」状态
+  （`getconfig` 取 `typing_ticket` → `sendtyping status=1`）；请求结束（成功/失败/超时/`{{noreply}}`）
+  在 finally 中发送 `status=2` 取消。`request.mode=none`（直接默认文本回复）不显示。
+- 默认**开启**；后台「运行配置 → 接口应用」可关闭（`appRules.typingIndicator`），或调整刷新间隔
+  （`appRules.typingRefreshMs`，默认 4000ms、范围 1000–30000，即时生效）。
+- **best-effort**：开关关闭 / 用户无 token / `getconfig`/`sendtyping` 失败或超时均静默跳过（仅 debug 日志），
+  **不影响规则执行**；`typing_ticket` 内存缓存 10 分钟；同一用户并发多个规则请求按引用计数只取消一次；
+  日志不记录 ticket/token。协议细节见 [`docs/PROTOCOL.md`](PROTOCOL.md) §5.6。
 
 ## 5. 响应解析与回复
 

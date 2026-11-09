@@ -11,7 +11,7 @@
 | --- | --- |
 | push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`retryDelaysMs`(逗号分隔)、`apiRateLimitPerMinute`、`maxTextLength` |
 | keepalive | `enabled`、`windowMs`、`leadMs`、`repeatMs`、`tickMs`、`text`、`maxPerTick` |
-| appRules | `enabled`、`timeoutMs`、`maxResponseBytes`、`workerConcurrency`、`allowedHosts`(数组/逗号分隔)、`maxQueue` |
+| appRules | `enabled`、`timeoutMs`、`maxResponseBytes`、`workerConcurrency`、`allowedHosts`(数组/逗号分隔)、`maxQueue`、`typingIndicator`(bool，默认 true)、`typingRefreshMs`(number 1000–30000，默认 4000) |
 | scheduler | `enabled`、`tickMs`、`timezone`(IANA)、`maxRecipients`、`timeoutMs`、`maxResponseBytes`（0=继承 appRules）、`allowedHosts`（数组/逗号分隔；空=继承 appRules）、`perUserConcurrency`（按用户模式并发，默认 2/范围 1-10）、`perUserMaxRecipients`（按用户模式目标上限，默认 50/范围 1-200） |
 | media | `maxBytes`、`inboundMaxBytes`、`downloadTimeoutMs`、`uploadTimeoutMs`、`inboundMaxConcurrent`、`inboundMaxQueue`、`allowedHosts`(数组/逗号分隔)、`allowInsecureHttp`、`allowedImageMime`、`allowedVideoMime`（数组/逗号分隔） |
 | binding | `ttlMs`、`maxRefreshes`、`maxActive`、`ipLimitPerHour`、`verifyTimeoutMs`、`networkErrorLimit`、`pollGapMs` |

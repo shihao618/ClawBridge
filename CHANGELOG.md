@@ -3,6 +3,23 @@
 ClawBridge 采用自托管单仓库发布（Docker 镜像 + 源码），版本号以 `package.json` 为准。
 本文件从 **1.0.0 全新基线**开始记录；更早的开发历史保留在 git 标签/历史中，不再写入本文件。
 
+## [1.0.2] - 2026-11-09
+
+### 新增
+
+- **「正在输入」状态（typing indicator）**：接口应用规则调用外部 HTTP 接口期间，向**触发用户**显示微信
+  「正在输入」（`getconfig` 获取 `typing_ticket` → `sendtyping status=1`；请求结束——成功/失败/超时/
+  `{{noreply}}`——发送 `status=2` 取消）。默认开启，可在后台「运行配置 → 接口应用」关闭；
+  刷新间隔默认 4000ms（范围 1000–30000，`appRules.typingRefreshMs`）。
+  **best-effort**：开关关闭/无 token/接口失败均静默跳过（仅 debug 日志），不影响规则执行；
+  `typing_ticket` 内存缓存 10 分钟；日志不记录 ticket/token。仅外部 HTTP 请求模式（`request.url` 非空）显示。
+
+### 配置
+
+- `.env.example` 新增 `APP_RULE_TYPING_INDICATOR`（默认 `true`）与 `APP_RULE_TYPING_REFRESH_MS`
+  （默认 `4000`，范围 1000–30000）。
+- 无 API/数据库 schema 变更（schema 仍 v1），可直接原地升级。
+
 ## [1.0.1] - 2026-11-09
 
 ### 优化

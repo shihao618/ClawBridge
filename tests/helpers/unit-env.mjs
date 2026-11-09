@@ -55,7 +55,13 @@ export function prepareUnitEnv({ env = {}, prefix = 'clawbridge-unit-' } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   // DATA_DIR 以临时目录为准（不允许 env 覆盖，避免测试污染工作区）
   process.env.DATA_DIR = dataDir;
-  const applied = { APP_SECRET: DEFAULT_APP_SECRET, LOG_LEVEL: DEFAULT_LOG_LEVEL, ...env };
+  const applied = {
+    APP_SECRET: DEFAULT_APP_SECRET,
+    LOG_LEVEL: DEFAULT_LOG_LEVEL,
+    // 单测默认关闭「正在输入」：避免既有用例因规则触发真实 iLink 网络；typing 单测显式开启。
+    APP_RULE_TYPING_INDICATOR: '0',
+    ...env,
+  };
   for (const [name, value] of Object.entries(applied)) {
     if (value === undefined || value === null) {
       delete process.env[name];

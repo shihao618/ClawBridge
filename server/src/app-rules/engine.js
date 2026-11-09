@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { logger, redactUrlQueryForLog } from '../logger.js';
 import { maxReplyLength, truncate } from '../shared/template.js';
 import * as store from '../store.js';
+import { beginTyping, endTyping } from '../typing.js';
 
 import { executeRuleHttp, getRuleDependencies } from './index.js';
 import { matchRule, parseRuleRow } from './match.js';
@@ -130,12 +131,21 @@ async function processInboundJob(job) {
     return;
   }
 
-  const result = await executeRuleHttp(rule, {
-    text,
-    userId,
-    displayName: user.displayName ?? '',
-    now,
-  });
+  // 请求外部接口期间显示微信「正在输入」（best-effort：失败/无凭据时静默返回 null，不影响规则）
+  // 直接回复默认文本（request.url 为空）的规则不显示。
+  const typingHandle = rule.request?.url ? await beginTyping(user) : null;
+  let result;
+  try {
+    result = await executeRuleHttp(rule, {
+      text,
+      userId,
+      displayName: user.displayName ?? '',
+      now,
+    });
+  } finally {
+    // 正常/失败/超时/异常路径都取消「正在输入」
+    await endTyping(typingHandle);
+  }
   const previews = makePreviews({
     params: result.params,
     requestUrl: result.requestUrl,
