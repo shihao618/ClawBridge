@@ -9,7 +9,7 @@
 
 | 分组 | 字段 |
 | --- | --- |
-| push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`retryDelaysMs`(逗号分隔)、`apiRateLimitPerMinute`、`maxTextLength` |
+| push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`retryDelaysMs`(逗号分隔)、`apiRateLimitPerMinute`、`maxTextLength`、`errorNoticeEnabled`(bool，默认 true) |
 | keepalive | `enabled`、`windowMs`、`leadMs`、`repeatMs`、`tickMs`、`text`、`maxPerTick` |
 | appRules | `enabled`、`timeoutMs`、`maxResponseBytes`、`workerConcurrency`、`allowedHosts`(数组/逗号分隔)、`maxQueue`、`typingIndicator`(bool，默认 true)、`typingRefreshMs`(number 1000–30000，默认 5000) |
 | scheduler | `enabled`、`tickMs`、`timezone`(IANA)、`maxRecipients`、`timeoutMs`、`maxResponseBytes`（0=继承 appRules）、`allowedHosts`（数组/逗号分隔；空=继承 appRules）、`perUserConcurrency`（按用户模式并发，默认 2/范围 1-10）、`perUserMaxRecipients`（按用户模式目标上限，默认 50/范围 1-200） |
@@ -113,7 +113,8 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 
 > **例外（尚未并入后台运行配置）**：数据维护（`server/src/maintenance.js`：孤儿附件 / 日志保留 GC）
 > 的参数目前从 env 读取（`MAINTENANCE_*`，默认开启、每天一次），见 [`docs/UPGRADE.md`](UPGRADE.md) §8
-> 「数据维护」。此类运维参数后续可并入 settings 分组。
+> 「数据维护」。另有 env-only 可选项 `ILINK_CONFIG_TIMEOUT_MS`（轻量 iLink API 超时，默认 10000），
+> 未进运行配置；此类参数后续可并入 settings 分组。
 
 ### 7.2 新增设置分组/字段（全部 DB 可改）
 
@@ -127,9 +128,9 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 | ilink | `loginBaseUrl`、`defaultBaseUrl`、`cdnBaseUrl`(URL)、`appId`、`channelVersion`、`botAgent`、`botType`、`routeTag`(string)、`clientVersion`、`requestTimeoutMs`、`qrPollTimeoutMs`、`longPollTimeoutMs`(number) | 即时（每次请求实时读取；已建立的绑定会话沿用原 Base URL） |
 | monitor | `longPollTimeoutMs`、`maxAccounts`(number) | restartRequired（监控账号/长轮询在启动时创建） |
 | media | `maxBytes`、`inboundMaxBytes`、`downloadTimeoutMs`、`uploadTimeoutMs`、`inboundMaxConcurrent`、`inboundMaxQueue`、`allowedHosts`(数组/逗号分隔)、`allowInsecureHttp`(bool)、`allowedImageMime`、`allowedVideoMime`（数组/逗号串） | `maxBytes`、`inboundMaxConcurrent`、`inboundMaxQueue` restartRequired（body 解析器/下载信号量启动时创建）；其余即时 |
-| push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`apiRateLimitPerMinute`、`maxTextLength`、`retryDelaysMs`(逗号分隔) | `rateLimitMax`/`rateLimitWindowMs` restartRequired（令牌桶启动时创建）；`tickMs`（每轮实时读取）与 `apiRateLimitPerMinute`（每请求同步）即时；其余即时 |
+| push | `rateLimitMax`、`rateLimitWindowMs`、`tickMs`、`maxAttempts`、`apiRateLimitPerMinute`、`maxTextLength`、`retryDelaysMs`(逗号分隔)、`errorNoticeEnabled`(bool，默认 true) | `rateLimitMax`/`rateLimitWindowMs` restartRequired（令牌桶启动时创建）；`tickMs`（每轮实时读取）与 `apiRateLimitPerMinute`（每请求同步）即时；其余即时（`errorNoticeEnabled` 每次发送失败判定时实时读取） |
 | scheduler | `enabled`、`tickMs`、`timeoutMs`、`timezone`(IANA)、`maxRecipients`、`maxResponseBytes`、`allowedHosts`、`perUserConcurrency`、`perUserMaxRecipients` | 即时（引擎/定时器经 hook 重启）；`maxResponseBytes=0` / `allowedHosts` 为空时继承接口应用；`perUserConcurrency`/`perUserMaxRecipients` 在每次按用户模式执行时实时读取 |
-| binding | `ttlMs`、`maxRefreshes`、`maxActive`、`ipLimitPerHour`、`verifyTimeoutMs`、`networkErrorLimit`、`pollGapMs`(number) | 即时 |
+| binding | `ttlMs`、`maxRefreshes`、`maxActive`、`ipLimitPerHour`、`verifyTimeoutMs`、`networkErrorLimit`(number，仅网络错误告警阈值)、`pollGapMs`(number) | 即时（`networkErrorLimit` 仅决定连续网络错误告警日志阈值，不再终止绑定；网络/网关错误会继续轮询到会话 TTL，对齐官方） |
 
 以上字段对应的 `.env` **首次启动默认值**变量名见 `.env.example`（如 `BINDING_VERIFY_TIMEOUT_MS`、
 `BINDING_NETWORK_ERROR_LIMIT`、`BINDING_POLL_GAP_MS`、`ILINK_ROUTE_TAG`、`MEDIA_ALLOWED_IMAGE_MIME`、

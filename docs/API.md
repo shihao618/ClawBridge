@@ -140,7 +140,7 @@ GET /api/admin/overview
     "inboundLast24h": 8
   },
   "server": {
-    "version": "1.0.5",
+    "version": "1.1.0",
     "uptimeMs": 123456,
     "now": 1760000000000,
     "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
@@ -261,7 +261,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
 ```
 GET /api/admin/config
 → 200 {
-  "version": "1.0.5",
+  "version": "1.1.0",
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
@@ -284,7 +284,7 @@ GET /api/admin/config
 GET /api/admin/metrics          # 需要管理后台 Cookie 会话（401 未登录）
 → 200 {
   "serverTime": 1760000000000,
-  "version": "1.0.5",
+  "version": "1.1.0",
   "pid": 12345,
   "node": "v24.20.0",
   "uptimeMs": 123456,             // 进程运行时长

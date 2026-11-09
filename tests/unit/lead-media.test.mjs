@@ -123,7 +123,7 @@ test('media 入站 item 提取: 图片 aeskey hex 优先 / 文件语音视频 ba
   const items = media.extractInboundMediaItems({
     item_list: [
       { type: 2, image_item: { media: { encrypt_query_param: 'p1', aes_key: KEY.toString('base64') }, aeskey: KEY_HEX } },
-      { type: 3, voice_item: { media: { encrypt_query_param: 'p2', aes_key: Buffer.from(KEY_HEX).toString('base64') }, text: '转文字' } },
+      { type: 3, voice_item: { media: { encrypt_query_param: 'p2', aes_key: Buffer.from(KEY_HEX).toString('base64') } } },
       { type: 4, file_item: { media: { encrypt_query_param: 'p3', aes_key: Buffer.from(KEY_HEX).toString('base64') }, file_name: 'a.pdf' } },
       { type: 5, video_item: { media: { encrypt_query_param: 'p4', aes_key: Buffer.from(KEY_HEX).toString('base64') } } },
       { type: 1, text_item: { text: 'hi' } },
@@ -138,6 +138,20 @@ test('media 入站 item 提取: 图片 aeskey hex 优先 / 文件语音视频 ba
   assert.equal(items[2].fileName, 'a.pdf');
   assert.equal(items[2].mime, 'application/pdf');
   assert.equal(items[3].kind, 'video');
+
+  // 官方对齐：voice 带转写文本时只保留文本、不下载媒体（process-message.js:79-81）
+  const voiceWithText = media.extractInboundMediaItems({
+    item_list: [
+      {
+        type: 3,
+        voice_item: {
+          media: { encrypt_query_param: 'p2', aes_key: Buffer.from(KEY_HEX).toString('base64') },
+          text: '转文字',
+        },
+      },
+    ],
+  });
+  assert.equal(voiceWithText.length, 0, 'voice 带转写文本时不应下载媒体');
 });
 
 // ---------------------------------------------------------------------------

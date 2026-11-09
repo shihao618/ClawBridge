@@ -28,12 +28,17 @@
  *   MOCK_QUIET=1                    关闭每请求 JSON 日志（listen/reset 等生命周期日志仍输出）
  *
  * 多媒体/CDN（docs/MEDIA.md §9）：
- *   POST /ilink/bot/getuploadurl     申请上传地址 → upload_full_url 指向本 mock 的 /cdn/upload
- *                                    （由 MOCK_PUBLIC_BASE_URL 或请求 Host 拼出，保证 app 可达）
- *   POST /cdn/upload?filekey=…       接收 AES-128-ECB 密文，用 getuploadurl 记录的 aeskey 解密校验
+ *   POST /ilink/bot/getuploadurl     申请上传地址 → 默认 upload_full_url 指向本 mock 的 /cdn/upload；
+ *                                    可用 POST /__mock/cdn-upload-url-mode {mode:"full"|"param"|"none"}
+ *                                    切换到仅 upload_param（覆盖客户端拼接回退）/两者皆缺（错误路径）
+ *   POST /cdn/upload?filekey=…       接收 AES-128-ECB 密文（校验 Content-Type），用 getuploadurl 记录的
+ *                                    aeskey 解密并核对 rawsize/rawfilemd5/filesize
  *   GET  /cdn/download?encrypted_query_param=<token>   返回密文字节（404 未知 token）
- *   POST /__mock/accounts/{botId}/inbound-media        注入图片/文件/视频/语音入站媒体消息
- *   GET  /__mock/state               暴露 uploads[] / cdnFiles[] / sentMessages[].itemList
+ *   POST /__mock/accounts/{botId}/inbound-media        注入入站媒体消息：
+ *                                    {kind,fileName?,mime?,contentBase64,fullUrl?,text?} 单媒体；
+ *                                    {items:[{kind,...},...]} 多 item（产品增强）；
+ *                                    {refMedia:true, kind,...} 引用消息（媒体放在 ref_msg.message_item）
+ *   GET  /__mock/state               暴露 uploads[] / cdnFiles[] / sentMessages[].itemList / cdnUploadUrlMode
  *
  * 本地占位页（非真实微信页面）：
  *   GET  /mock-bind?qrcode=…         qrcode_img_content 指向的说明页：展示 qrcode 参数、说明这是
@@ -44,7 +49,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 
-const VERSION = '1.0.5';
+const VERSION = '1.1.0';
 const STARTED_AT = Date.now();
 
 // ---------------------------------------------------------------------------
@@ -243,6 +248,7 @@ function uploadSummary(upload) {
     noNeedThumb: upload.noNeedThumb,
     botId: upload.botId,
     uploadFullUrl: upload.uploadFullUrl,
+    uploadUrlMode: upload.uploadUrlMode ?? 'full',
     token: upload.token ?? '',
     plainSha256: upload.plainSha256 ?? '',
     plainSize: upload.plainSize ?? 0,
@@ -323,6 +329,30 @@ function validateMediaItem(endpoint, entry, index) {
   }
 }
 
+/**
+ * 用 mock 记录的 CDN 密文/明文交叉校验 sendmessage 媒体 item 的尺寸字段
+ * （官方 send.js:226,258,291：mid_size/video_size=密文字节数、file.len=明文字节数）。
+ * 仅当 encrypt_query_param 能在 cdnFiles 中命中时校验（外部手造的未知 token 不判定）；
+ * 与其它 mock 校验一致：只记录违规，不拒绝请求。
+ */
+function validateMediaItemAgainstCdn(endpoint, itemList) {
+  for (const entry of itemList) {
+    const token = entry.media?.encryptQueryParam;
+    if (!token) continue;
+    const file = state.cdnFiles.get(token);
+    if (!file) continue;
+    if (entry.kind === 'image' && entry.midSize !== file.cipherSize) {
+      noteViolation(endpoint, `image_item.mid_size=${entry.midSize} (expect ciphertext size ${file.cipherSize})`);
+    }
+    if (entry.kind === 'video' && entry.videoSize !== file.cipherSize) {
+      noteViolation(endpoint, `video_item.video_size=${entry.videoSize} (expect ciphertext size ${file.cipherSize})`);
+    }
+    if (entry.kind === 'file' && Number(entry.len) !== file.plainSize) {
+      noteViolation(endpoint, `file_item.len=${entry.len} (expect plaintext size ${file.plainSize})`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 状态
 // ---------------------------------------------------------------------------
@@ -337,6 +367,9 @@ function createState() {
     rejections: [],
     uploads: [], // 出站 getuploadurl 记录（docs/MEDIA.md §9）
     cdnFiles: new Map(), // token -> {token, ciphertext(Buffer), plaintextSha256, ...}
+    // getuploadurl 返回模式：'full'（默认：只给 upload_full_url）| 'param'（只给 upload_param，
+    // 客户端需按官方 cdn-url.js 拼接回退 URL）| 'none'（两者都缺，用于错误路径）。控制面可切换。
+    cdnUploadUrlMode: 'full',
     pollCounts: {
       getBotQrcode: 0,
       qrStatus: 0,
@@ -728,6 +761,7 @@ function snapshotState() {
     accounts: [...state.accounts.values()].map(accountSummary),
     uploads: state.uploads.map(uploadSummary),
     cdnFiles: [...state.cdnFiles.values()].map(cdnFileSummary),
+    cdnUploadUrlMode: state.cdnUploadUrlMode,
     sentMessages: state.sentMessages,
     failedSends: state.failedSends,
     failNextSend: state.failNextSend.map((entry) => ({ ...entry })),
@@ -858,7 +892,10 @@ function checkCommonHeaders(req, endpoint) {
   const violations = [];
   if (!headers['ilink-app-id']) violations.push('missing iLink-App-Id');
   if (!headers['ilink-app-clientversion']) violations.push('missing iLink-App-ClientVersion');
-  if (!headers['x-wechat-uin']) violations.push('missing X-WECHAT-UIN');
+  // 官方请求头矩阵：X-WECHAT-UIN 仅 POST 携带；GET（get_qrcode_status）只有公共头。
+  if (String(req.method ?? '').toUpperCase() !== 'GET' && !headers['x-wechat-uin']) {
+    violations.push('missing X-WECHAT-UIN');
+  }
   for (const reason of violations) noteViolation(endpoint, reason);
   return violations;
 }
@@ -1022,6 +1059,7 @@ async function handleSendMessage(req, res) {
     noteViolation(endpoint, `media message should contain exactly one item (got ${itemList.length})`);
   }
   itemList.forEach((entry, index) => validateMediaItem(endpoint, entry, index));
+  validateMediaItemAgainstCdn(endpoint, itemList);
   const headers = req.headers;
   if (msg.from_user_id !== '') noteViolation(endpoint, `msg.from_user_id must be "" (got ${JSON.stringify(msg.from_user_id)})`);
   if (Number(msg.message_type) !== 2) noteViolation(endpoint, `msg.message_type=${msg.message_type} (expect 2 BOT)`);
@@ -1248,7 +1286,11 @@ async function handleGetUploadUrl(req, res) {
   }
 
   const baseUrl = resolveBaseUrl(req);
-  const uploadFullUrl = `${baseUrl}/cdn/upload?filekey=${encodeURIComponent(filekey)}&mock_upload=1`;
+  const urlMode = state.cdnUploadUrlMode;
+  const uploadParam = `mock_upload_param_${randomHex(8)}`;
+  const uploadFullUrl = urlMode === 'param' || urlMode === 'none'
+    ? ''
+    : `${baseUrl}/cdn/upload?filekey=${encodeURIComponent(filekey)}&mock_upload=1`;
   const upload = {
     filekey,
     mediaType,
@@ -1262,6 +1304,7 @@ async function handleGetUploadUrl(req, res) {
     botId: account.botId,
     baseUrl,
     uploadFullUrl,
+    uploadUrlMode: urlMode,
     createdAt: Date.now(),
   };
   state.uploads.push(upload);
@@ -1274,12 +1317,13 @@ async function handleGetUploadUrl(req, res) {
     kind: upload.kind,
     rawsize: upload.rawsize,
     filesize: upload.filesize,
+    uploadUrlMode: urlMode,
   });
   sendJson(res, 200, {
     ret: 0,
-    upload_param: `mock_upload_param_${randomHex(8)}`,
+    upload_param: uploadParam,
     thumb_upload_param: '',
-    upload_full_url: uploadFullUrl,
+    ...(uploadFullUrl ? { upload_full_url: uploadFullUrl } : {}),
   });
 }
 
@@ -1290,6 +1334,11 @@ async function handleCdnUpload(req, res, url) {
   if (!upload) {
     sendError(res, 404, 'NOT_FOUND', `unknown upload filekey: ${filekey}`);
     return;
+  }
+  const contentType = String(req.headers['content-type'] || '');
+  if (!/^application\/octet-stream\b/i.test(contentType)) {
+    // 官方 cdn-upload.js:31-35 固定 Content-Type: application/octet-stream；只记录违规，不拒绝请求。
+    noteViolation('cdn_upload', `Content-Type should be application/octet-stream (got ${contentType || '(missing)'})`);
   }
   const ciphertext = await readRawBody(req);
   if (ciphertext.length === 0) {
@@ -1562,40 +1611,33 @@ function buildInboundMediaItem(kind, { fileName, token, aeskeyHex, ciphertext, p
   return { type: 3, voice_item: { media, encode_type: 6, playtime: 1234, text: String(voiceText ?? '') } };
 }
 
-/** POST /__mock/accounts/{botId}/inbound-media：加密内容并注入一条带媒体 item 的入站消息。 */
-async function handleControlInboundMedia(req, res, accountKey) {
-  state.pollCounts.control += 1;
-  const { body } = await readJsonBody(req);
-  const account = findAccount(accountKey);
-  if (!account) {
-    sendError(res, 404, 'NOT_FOUND', `account not found: ${accountKey}`);
-    return;
-  }
-  const kind = String(body.kind ?? '').trim();
+/**
+ * 入站媒体注入的单条媒体构造（供单 item / 多 item / 引用消息复用）：
+ * 加密内容 → 登记 mock CDN → 生成对应 WeixinMessage item。
+ */
+function createInboundMediaFixture(account, spec = {}, baseUrl, index = 0) {
+  const label = `items[${index}]`;
+  const kind = String(spec.kind ?? '').trim();
   if (!['image', 'video', 'file', 'voice'].includes(kind)) {
-    sendJson(res, 400, { ok: false, error: 'kind 必须是 image | video | file | voice' });
-    return;
+    throw Object.assign(new Error(`${label}.kind 必须是 image | video | file | voice`), { statusCode: 400 });
   }
   let content;
   try {
-    content = Buffer.from(String(body.contentBase64 ?? ''), 'base64');
+    content = Buffer.from(String(spec.contentBase64 ?? ''), 'base64');
   } catch {
     content = Buffer.alloc(0);
   }
   if (content.length === 0) {
-    sendJson(res, 400, { ok: false, error: 'contentBase64 解码后为空（请传非空 base64 内容）' });
-    return;
+    throw Object.assign(new Error(`${label}.contentBase64 解码后为空（请传非空 base64 内容）`), { statusCode: 400 });
   }
   if (content.length > MEDIA_MAX_BYTES) {
-    sendJson(res, 413, { ok: false, error: `content 过大（${content.length} > ${MEDIA_MAX_BYTES}）` });
-    return;
+    throw Object.assign(new Error(`${label}.content 过大（${content.length} > ${MEDIA_MAX_BYTES}）`), { statusCode: 413 });
   }
-  const fileName = sanitizeFileName(body.fileName || DEFAULT_MEDIA_FILE_NAMES[kind]);
-  const mime = String(body.mime || MEDIA_KIND_DEFAULT_MIME[kind] || 'application/octet-stream');
+  const fileName = sanitizeFileName(spec.fileName || DEFAULT_MEDIA_FILE_NAMES[kind]);
+  const mime = String(spec.mime || MEDIA_KIND_DEFAULT_MIME[kind] || 'application/octet-stream');
   const aeskeyHex = randomHex(16); // AES-128 key（hex）
   const ciphertext = aes128EcbEncrypt(content, Buffer.from(aeskeyHex, 'hex'));
   const token = `mock_cdn_${randomHex(12)}`;
-  const baseUrl = resolveBaseUrl(req);
   registerCdnFile({
     token,
     filekey: '',
@@ -1608,7 +1650,7 @@ async function handleControlInboundMedia(req, res, accountKey) {
     plaintext: content,
     baseUrl,
   });
-  const fullUrl = Boolean(body.fullUrl);
+  const fullUrl = Boolean(spec.fullUrl);
   const item = buildInboundMediaItem(kind, {
     fileName,
     token,
@@ -1617,13 +1659,59 @@ async function handleControlInboundMedia(req, res, accountKey) {
     plainSize: content.length,
     fullUrl,
     baseUrl,
-    voiceText: body.text,
+    voiceText: spec.text,
   });
+  return { kind, fileName, mime, fullUrl, content, token, item, cdnFile: state.cdnFiles.get(token) };
+}
+
+/**
+ * POST /__mock/accounts/{botId}/inbound-media：加密内容并注入一条入站媒体消息。
+ *
+ * body 兼容三种形态（docs/MEDIA.md §9）：
+ *  - 单媒体（默认）：{kind, fileName?, mime?, contentBase64, fullUrl?, text?}
+ *    text 仅对 voice 生效（voice_item.text = 语音转写；带转写时客户端应只保留文本、不下载媒体）；
+ *  - 多媒体（产品增强）：{items:[{kind, contentBase64, fileName?, mime?, fullUrl?, text?}, ...]}
+ *    一条消息多个 media item（官方只取一个，ClawBridge 有意支持多个）；
+ *  - 引用消息媒体：{refMedia:true, kind/contentBase64/..., text?} → 主 item_list 只有 TEXT item，
+ *    媒体放在 item.ref_msg.message_item 内（对应官方 process-message.js:82-88 的引用回退）。
+ */
+async function handleControlInboundMedia(req, res, accountKey) {
+  state.pollCounts.control += 1;
+  const { body } = await readJsonBody(req);
+  const account = findAccount(accountKey);
+  if (!account) {
+    sendError(res, 404, 'NOT_FOUND', `account not found: ${accountKey}`);
+    return;
+  }
+  const baseUrl = resolveBaseUrl(req);
+  const specs = Array.isArray(body.items) && body.items.length > 0 ? body.items : [body];
+  const fixtures = [];
+  try {
+    for (let index = 0; index < specs.length; index += 1) {
+      fixtures.push(createInboundMediaFixture(account, specs[index] ?? {}, baseUrl, index));
+    }
+  } catch (err) {
+    sendJson(res, Number(err?.statusCode) || 400, { ok: false, error: String(err?.message ?? err) });
+    return;
+  }
+  const useRefMedia = body.refMedia === true || body.reference === true;
+  const mediaItems = fixtures.map((fixture) => fixture.item);
+  const itemList = useRefMedia
+    ? [{
+        type: 1,
+        text_item: { text: String(body.text ?? body.refText ?? '引用了一条媒体消息') },
+        ref_msg: {
+          title: String(body.refTitle ?? ''),
+          message_item: mediaItems[0],
+          svr_id: String(body.refSvrId ?? `mock_ref_${randomHex(4)}`),
+        },
+      }]
+    : mediaItems;
   const message = buildInboundMessage(account, {
     message_id: body.message_id,
     context_token: body.context_token,
     from_user_id: body.from_user_id,
-    item_list: [item],
+    item_list: itemList,
     text: '',
   });
   account.queued.push(message);
@@ -1631,28 +1719,37 @@ async function handleControlInboundMedia(req, res, accountKey) {
   state.counts.inboundInjected += 1;
   state.counts.inboundMediaInjected += 1;
   wakeWaiters(updatesWaiters, account.botId);
+  const single = !useRefMedia && fixtures.length === 1 ? fixtures[0] : null;
   log('mock_inbound_media', {
     botId: account.botId,
-    kind,
-    fileName,
-    plainSize: content.length,
-    cipherSize: ciphertext.length,
-    fullUrl,
+    kinds: fixtures.map((fixture) => fixture.kind),
+    count: fixtures.length,
+    refMedia: useRefMedia,
+    plainSizes: fixtures.map((fixture) => fixture.content.length),
   });
   sendJson(res, 200, {
     ok: true,
-    kind,
-    fileName,
-    mime,
+    refMedia: useRefMedia,
+    ...(single
+      ? {
+          kind: single.kind,
+          fileName: single.fileName,
+          mime: single.mime,
+          contentSha256: sha256Hex(single.content),
+          contentLength: single.content.length,
+          cdnFile: cdnFileSummary(single.cdnFile),
+          item: single.item,
+        }
+      : {}),
+    items: mediaItems,
+    cdnFiles: fixtures.map((fixture) => cdnFileSummary(fixture.cdnFile)),
     message: {
       seq: message.seq,
       message_id: typeof message.message_id === 'bigint' ? message.message_id.toString() : message.message_id,
       context_token: message.context_token,
-      item,
+      item_list: itemList,
+      ...(single ? { item: single.item } : {}),
     },
-    cdnFile: cdnFileSummary(state.cdnFiles.get(token)),
-    contentSha256: sha256Hex(content),
-    contentLength: content.length,
   });
 }
 
@@ -1683,6 +1780,26 @@ async function handleControlFailNextSend(req, res) {
   const resolvedBotId = botId ? (state.accounts.get(botId)?.botId ?? getAccountByToken(botId)?.botId ?? botId) : null;
   state.failNextSend.push({ ret, remaining: times, botId: resolvedBotId, errmsg: String(body.errmsg ?? '') });
   sendJson(res, 200, { ok: true, pending: state.failNextSend.reduce((sum, entry) => sum + entry.remaining, 0) });
+}
+
+/**
+ * POST /__mock/cdn-upload-url-mode {mode:"full"|"param"|"none"}：
+ * 切换 getuploadurl 的返回形态，用于覆盖客户端「upload_full_url 优先 / upload_param 拼接回退」两条路径：
+ *  - full（默认）：只返回 upload_full_url；
+ *  - param：只返回 upload_param（客户端需按官方 cdn-url.js 拼 {cdnBaseUrl}/upload?…&filekey=…）；
+ *  - none：两者都缺（用于错误路径）。
+ */
+async function handleControlCdnUploadUrlMode(req, res) {
+  state.pollCounts.control += 1;
+  const { body } = await readJsonBody(req);
+  const mode = String(body?.mode ?? '').trim();
+  if (!['full', 'param', 'none'].includes(mode)) {
+    sendJson(res, 400, { ok: false, error: 'mode 必须是 full | param | none' });
+    return;
+  }
+  state.cdnUploadUrlMode = mode;
+  log('mock_cdn_upload_url_mode', { mode });
+  sendJson(res, 200, { ok: true, mode, cdnUploadUrlMode: state.cdnUploadUrlMode });
 }
 
 async function handleControlReset(req, res) {
@@ -1817,6 +1934,14 @@ async function dispatch(req, res) {
         return;
       }
       await handleControlFailNextSend(req, res);
+      return;
+    }
+    if (pathname === '/__mock/cdn-upload-url-mode') {
+      if (method !== 'POST') {
+        sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use POST');
+        return;
+      }
+      await handleControlCdnUploadUrlMode(req, res);
       return;
     }
     if (pathname === '/__mock/shutdown') {

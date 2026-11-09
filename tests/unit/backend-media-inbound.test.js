@@ -4,8 +4,11 @@
  * 用本地假 CDN 服务验证：
  *  - 图片 aeskey(hex) 优先、文件/语音 base64(hex) 两种 key 形态解析；
  *  - AES-128-ECB 解密 → 落盘 → attachments 行（关联 inbound_message_id/wechat_message_id）；
- *  - 单消息最多 5 个媒体；
+ *  - 单消息最多 5 个媒体（产品增强，官方只取一个主媒体）；
  *  - 下载失败/超限 → 记录 status='failed' 且不影响消息入库；
+ *  - 官方对齐：voice 带转写文本不下载；缺 media/aes_key/host 不合法 item 静默跳过；
+ *    引用消息 ref_msg.message_item 回退下载并标记 referenced；出站 MIME 路由按官方 mime.js；
+ *  - 下载 URL 白名单（含 .qpic.cn/.weixin.com/wx.qq.com 等微信 CDN 后缀）；
  *  - raw_json 中 aes_key/aeskey/context_token 全部脱敏。
  */
 import assert from 'node:assert/strict';
@@ -184,7 +187,6 @@ test('入站媒体：图片/文件/视频/语音下载解密落盘 + raw_json �
         type: 3,
         voice_item: {
           media: { encrypt_query_param: voice.token, aes_key: voice.keyBase64, encrypt_type: 1 },
-          text: '语音转文字',
         },
       },
     ],
@@ -238,8 +240,156 @@ test('入站媒体：图片/文件/视频/语音下载解密落盘 + raw_json �
   assert.equal(store.getUserSecrets(user.id).contextToken, 'ctx-inbound-secret');
 });
 
-test('入站媒体：单消息最多处理 5 个媒体（防御性上限）', async () => {
+test('入站媒体：voice 带转写文本时不下载（官方对齐），消息文本保留转写', async () => {
   const user = createUser();
+  const voice = registerCdnFile(Buffer.from('SILK-SHOULD-NOT-BE-DOWNLOADED'), 'tok_voice_text_1');
+  const okFile = registerCdnFile(Buffer.from('OK'), 'tok_voice_text_ok_1');
+  const message = buildMessage({
+    messageId: '9007199254742005',
+    items: [
+      {
+        type: 3,
+        voice_item: {
+          media: { encrypt_query_param: voice.token, aes_key: voice.keyBase64, encrypt_type: 1 },
+          encode_type: 6,
+          playtime: 1200,
+          text: '语音转文字内容',
+        },
+      },
+      {
+        type: 4,
+        file_item: {
+          media: { encrypt_query_param: okFile.token, aes_key: okFile.keyBase64, encrypt_type: 1 },
+          file_name: 'ok.bin',
+        },
+      },
+    ],
+  });
+  const requestsBefore = cdnRequests.length;
+  await monitor.processMessages(user.id, [message]);
+
+  const inboundRow = getDb()
+    .prepare('SELECT id, text FROM inbound_messages WHERE wechat_message_id = ?')
+    .get('9007199254742005');
+  assert.ok(inboundRow);
+  assert.equal(inboundRow.text, '语音转文字内容', '消息文本应保留语音转写');
+  const attachments = store.getAttachmentsByInbound([inboundRow.id]).get(inboundRow.id);
+  assert.equal(attachments.length, 1, '带转写的 voice 不应生成附件（官方 process-message.js:79-81）');
+  assert.equal(attachments[0].kind, 'file');
+  assert.ok(
+    !cdnRequests.slice(requestsBefore).some((path) => path.includes(voice.token)),
+    '不应为带转写的 voice 发起 CDN 下载',
+  );
+});
+
+test('入站媒体：缺 media/encrypt_query_param/full_url/aes_key 或不合法 host 的 item 静默跳过（不生成 failed 附件）', async () => {
+  const user = createUser();
+  const okFile = registerCdnFile(Buffer.from('VALID'), 'tok_skip_valid_1');
+  const message = buildMessage({
+    messageId: '9007199254742006',
+    items: [
+      // 缺 media
+      { type: 4, file_item: { media: {}, file_name: 'no-media.bin' } },
+      // 有下载参数但缺 aes_key（file/voice/video 官方要求 aes_key）
+      { type: 4, file_item: { media: { encrypt_query_param: 'tok_missing_key' }, file_name: 'no-aes.bin' } },
+      // voice 带转写（跳过）
+      {
+        type: 3,
+        voice_item: {
+          media: { encrypt_query_param: 'tok_voice_skip', aes_key: okFile.keyBase64 },
+          text: '转写内容',
+        },
+      },
+      // host 不在白名单（跳过；assertInboundDownloadUrl 会记 warn）
+      {
+        type: 2,
+        image_item: { media: { full_url: 'https://evil.example.invalid/x.png' }, aes_key: okFile.keyBase64 },
+      },
+      // 唯一合法 item
+      {
+        type: 4,
+        file_item: {
+          media: { encrypt_query_param: okFile.token, aes_key: okFile.keyBase64, encrypt_type: 1 },
+          file_name: 'valid.bin',
+        },
+      },
+    ],
+  });
+  await monitor.processMessages(user.id, [message]);
+
+  const attachments = attachmentByMessageId('9007199254742006');
+  assert.equal(attachments.length, 1, '只应为合法 item 生成附件（跳过的 item 不产生 failed 行）');
+  assert.equal(attachments[0].file_name, 'valid.bin');
+  assert.equal(attachments[0].status, 'ready');
+});
+
+test('入站媒体：引用消息 ref_msg.message_item 回退下载并标记 referenced（官方对齐）', async () => {
+  const user = createUser();
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+  const image = registerCdnFile(pngBytes, 'tok_ref_image_1');
+  const refItem = {
+    type: 2,
+    image_item: {
+      media: { encrypt_query_param: image.token, aes_key: image.keyBase64, encrypt_type: 1 },
+      aeskey: image.keyHex,
+      mid_size: image.ciphertext.length,
+    },
+  };
+  const message = buildMessage({
+    messageId: '9007199254742007',
+    items: [
+      {
+        type: 1,
+        text_item: { text: '引用了一张图片' },
+        ref_msg: { title: '', message_item: refItem, svr_id: '1' },
+      },
+    ],
+  });
+
+  const extracted = media.extractInboundMediaItems(message);
+  assert.equal(extracted.length, 1, '主 item 无媒体时应回退到引用消息媒体');
+  assert.equal(extracted[0].kind, 'image');
+  assert.equal(extracted[0].referenced, true, '引用消息媒体应标记 referenced');
+
+  await monitor.processMessages(user.id, [message]);
+  const attachments = attachmentByMessageId('9007199254742007');
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].status, 'ready');
+  assert.equal(attachments[0].kind, 'image');
+  assert.deepEqual(await media.readMediaFile(attachments[0].path), pngBytes);
+});
+
+test('入站媒体：主 item_list 有媒体时不下载引用媒体（官方优先级）', () => {
+  const directFile = {
+    type: 4,
+    file_item: { media: { encrypt_query_param: 'p_direct', aes_key: Buffer.from('00'.repeat(16)).toString('base64') }, file_name: 'direct.bin' },
+  };
+  const refItem = { type: 2, image_item: { media: { encrypt_query_param: 'p_ref' } } };
+  const extracted = media.extractInboundMediaItems({
+    item_list: [
+      directFile,
+      { type: 1, text_item: { text: '引用' }, ref_msg: { message_item: refItem } },
+    ],
+  });
+  assert.equal(extracted.length, 1);
+  assert.equal(extracted[0].kind, 'file');
+  assert.equal(extracted[0].referenced, false);
+});
+
+test('出站 MIME 路由：按官方 media/mime.js 扩展名优先（.avi/.m4v→video），无扩展名时回退声明 MIME 白名单', () => {
+  // 官方 send-media.js:15-52：getMimeFromFilename → video/* 发视频、image/* 发图片、其余文件
+  assert.equal(media.detectKind({ mime: 'application/octet-stream', fileName: 'a.avi' }), 'video');
+  assert.equal(media.detectKind({ mime: 'video/x-msvideo', fileName: 'a.avi' }), 'video');
+  assert.equal(media.detectKind({ mime: 'application/octet-stream', fileName: 'a.m4v' }), 'video');
+  assert.equal(media.detectKind({ mime: 'audio/mp4', fileName: 'a.m4a' }), 'file', '音频按普通文件发送');
+  // 官方 mime 表外的图片格式仍按文件发送（安全差异）
+  assert.equal(media.detectKind({ mime: 'image/svg+xml', fileName: 'logo.svg' }), 'file');
+  // 产品增强：扩展名缺失时回退上传声明 MIME（仅白名单内的 image/video）
+  assert.equal(media.detectKind({ mime: 'image/jpeg' }), 'image');
+  assert.equal(media.detectKind({ mime: 'image/heic' }), 'file');
+});
+
+test('入站媒体：单消息最多处理 5 个媒体（防御性上限）', async () => {  const user = createUser();
   const items = [];
   for (let i = 0; i < 7; i += 1) {
     const file = registerCdnFile(Buffer.from(`DATA-${i}`), `tok_cap_${i}`);
@@ -364,6 +514,15 @@ test('入站下载 URL 校验：协议/主机白名单/userinfo', async () => {
     'novac2c.cdn.weixin.qq.com',
   );
   assert.equal(assertInboundDownloadUrl('https://wx.qq.com/a.bin').hostname, 'wx.qq.com');
+  // F-P1-01：按官方常见 CDN 域名补齐的可信后缀（微信图片 CDN / weixin.com / wx.qq.com）
+  for (const [url, hostname] of [
+    ['https://mmbiz.qpic.cn/mmbiz_png/abc/0?wx_fmt=png', 'mmbiz.qpic.cn'],
+    ['https://res.weixin.com/media/a.png', 'res.weixin.com'],
+    ['https://cdn.weixin.com/a.bin', 'cdn.weixin.com'],
+    ['https://wx.qq.com/cgi-bin/a.png', 'wx.qq.com'],
+  ]) {
+    assert.equal(assertInboundDownloadUrl(url).hostname, hostname, `${hostname} 应放行（可信微信 CDN 后缀）`);
+  }
   // 本机 http（开发/测试环境，mock 形态）放行
   assert.equal(assertInboundDownloadUrl(`${cdnBase}/download?encrypted_query_param=x`).hostname, '127.0.0.1');
   // 配置的 CDN 主机（http，demo/mock 形态）放行

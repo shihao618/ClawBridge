@@ -7,7 +7,7 @@
 > `@tencent-weixin/openclaw-weixin@2.4.10` 的协议实现扫码绑定、长轮询收消息、文本消息发送，
 > 不依赖任何第三方微信协议服务或个人号 Hook。
 >
-> **当前版本 1.0.5**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
+> **当前版本 1.1.0**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
 > 请使用全新空数据卷部署（旧部署请先备份，回滚需同时使用旧镜像与旧数据卷）。见
 > [`docs/UPGRADE.md`](docs/UPGRADE.md)。
 
@@ -48,6 +48,11 @@
   URL/Header/Body 模板可使用 **`{credential:凭据名.字段}`** 占位符，按**触发用户**注入其用户级凭据。
   规则命中处理期间（含直接回复）会向触发用户显示微信「正在输入」状态（默认开启，可在运行配置关闭；
   best-effort，失败不影响规则；详见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md) §5.6）。
+- **发送失败用户提示**：消息最终发送失败（非 -14 暂停、非 prepare failed 可重试）时，向该用户 best-effort
+  发一条「⚠️ 消息发送失败，请稍后重试」（默认开启，可后台「运行配置 → 推送/限流」关闭；不进队列、不重试、
+  每条只提示一次）。
+- **`/echo` 指令**：用户发送 `/echo 内容` 时直接回显（走发送队列，不进入接口应用规则）；其他官方 slash
+  指令（如 `/toggle-debug`）不实现。
 - **用户级凭据（只写不读）**：为每个绑定用户保存第三方密钥（一条凭据可含多个字段，如 `gps.token`、
   `weather.apiKey`），值 AES-256-GCM 加密落库、接口与后台**不回显明文**（只显示字段名与掩码提示）；
   用户管理行内「密钥」按钮可视化管理，规则/定时通知按需引用；用户删除时级联删除。
@@ -442,7 +447,8 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 - **多媒体**：出站支持图片/视频/文件（≤25MB/个），入站自动下载解密图片/文件/视频/语音（≤100MB/个）；
   出站语音暂不支持（微信语音为 SILK 编码，需要转码，不在本期范围）。
 - 换绑：同一微信用户重新扫码绑定即可，ClawBridge 会按微信用户自动替换旧 bot 凭证（官方语义）。
-- 若服务端返回 `-14`（token 失效），该账号会冷却 1 小时并在后台显示为「paused」，需用户重新扫码。
+- 若服务端返回 `-14`（token 失效），该账号会暂停 1 小时并在后台显示为「paused」，冷却到期后**自动恢复轮询**；
+  若 token 确实失效，用户仍需重新扫码。HTTP 401 仅在响应体带 `-14` 时才按 token 失效处理（避免网关 401 误暂停）。
 
 ---
 
@@ -472,6 +478,10 @@ curl -X POST http://127.0.0.1:10380/api/v1/messages \
 > 会话 TTL 等）均可在后台「运行配置」修改并持久化到数据库；管理密码与 API Token 在「安全」卡片管理
 > （首次启动自动生成到数据卷 `/app/data/admin-password.txt`、`api-token.txt`，之后不再读取 .env）。
 > 详见 [`docs/SETTINGS.md`](docs/SETTINGS.md) §7/§8。
+>
+> 其他常用可选 env（均为首次启动默认值）：`ILINK_CONFIG_TIMEOUT_MS`（轻量 iLink API 超时，默认 10000）、
+> `PUSH_ERROR_NOTICE_ENABLED`（发送失败提示，默认 true）、`BINDING_NETWORK_ERROR_LIMIT`（绑定网络错误告警阈值）——
+> 完整列表见 [`.env.example`](.env.example)。
 
 ### 数据维护与升级（1.0.0 全新基线）
 
@@ -584,9 +594,9 @@ Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editor
 | --- | --- | --- |
 | 后端/核心单测（config、crypto、iLink 客户端、store 与拆分后的 data/**、限流、auth、API、绑定状态机、监控、换绑、媒体加解密/上传管线/入站下载与有界并发、入站下载 URL 白名单、schema 版本校验、数据库索引、用户分组、入站 API、用户级凭据（加密/掩码/级联删除）、凭据占位符解析与脱敏、会话保活调度、分组级保活继承、接口应用规则引擎与 SSRF IP 固定、shared 模板/响应管线、定时通知调度与生效时间段（含按用户模式 partial）、优雅退出 drain、数据维护 GC、可观测性指标、APP_SECRET 轮换、运行配置后台设置、后台菜单路由与初始化顺序、视图懒加载/弹窗交互/焦点陷阱/Tab 语义、响应式布局、前端模块/纯函数/弹窗行为、日志脱敏、错误映射） | `npm run test:unit` | **待发布前实测刷新**（`npm test` 最终值由 Lead 填写） |
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/凭据注入/定时通知（含按用户模式）/运行配置设置/密码与 API Token；子进程 env 白名单、稳定等待断言、mock 违规统一断言） | `npm run test:e2e` | **待发布前实测刷新** |
-| 全量测试（unit + e2e） | `npm test` | **589 项（587 通过 + 2 项 POSIX-only 跳过，约 35s）** |
+| 全量测试（unit + e2e） | `npm test` | **624 项（622 通过 + 2 项 POSIX-only 跳过，约 40s）** |
 | e2e 连跑稳定性（串行 3 次，CI 门禁） | `npm run e2e:stability` | 3/3 次通过（每次约 2 分钟） |
-| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line **93.67%** / branch **77.30%** / funcs **94.25%**（CI 阈值门禁通过） |
+| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line **94.00%** / branch **77.74%** / funcs **94.43%**（CI 阈值门禁通过） |
 | 静态检查（ESLint flat config，CI `--max-warnings=0`） | `npm run lint` | 0 error / 0 warning |
 | 文档值级一致性（版本/环境变量/设置字段/API 端点/相对链接/质量表命令） | `npm run doc:lint` | 6 项全部通过（CI 门禁） |
 | 可观测性指标（`GET /api/admin/metrics`、overview.metrics） | `npm run test:unit`（backend-metrics） | 契约与鉴权全覆盖 |
@@ -653,6 +663,19 @@ fnOS 同理修改 `docker-compose.fnos.yml`。只改宿主机侧映射，容器�
 两种方式都**必须包含 `app-secret.key`**，否则历史凭证无法解密。
 备份与恢复仅能与**同一版本基线**配套使用：1.0.0（schema v1）不能读取旧版本的数据卷，
 旧版本也不能读取 1.0.0 的数据卷；升级/回滚请按 [`docs/UPGRADE.md`](docs/UPGRADE.md) 同时切换镜像与数据卷。
+
+---
+
+## 与官方插件 2.4.10 的兼容性
+
+v1.1.0 起协议层按官方插件 `@tencent-weixin/openclaw-weixin@2.4.10` 逐项对齐：请求头矩阵（POST 恒带
+`Content-Type`/`AuthorizationType`/`X-WECHAT-UIN`，GET 仅公共头）、`client_id` 官方格式、`bot_agent` 官方清洗、
+版本常量自动派生、绑定轮询网络容错、`-14` 暂停 1h 后**自动恢复轮询**、退避节奏、`longpolling_timeout_ms`
+原样使用、游标每次变化即落库、入站 `message_id` item 级回退与正文顺序、引用消息（quote/partial_quote）最小解析、
+媒体引用下载 / voice 带文本跳过 / 缺媒体跳过 / MIME 路由对齐、Markdown 过滤（删除线只保留文字，换行布局为
+ClawBridge 额外行为）、typing 参数（5s keepalive / 10s 超时 / 24h ticket 随机缓存 + 退避）。
+**有意保留的差异**（多 media、换行布局、客户端限流/队列、AI 通道功能、`run_id` 等）见
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md) §8「官方对齐与有意差异」。
 
 ---
 

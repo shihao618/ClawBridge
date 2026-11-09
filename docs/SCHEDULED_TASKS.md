@@ -108,6 +108,9 @@ perUserConcurrency, perUserMaxRecipients }`。
 
 ## 4. 执行流程
 
+> 说明：定时通知**不显示**微信「正在输入」状态（该能力仅用于接口应用规则处理期间，属有意差异，
+> 见 [`docs/PROTOCOL.md`](PROTOCOL.md) §8）。
+
 1. 读取任务（Header 解密）→ 渲染 URL/Body 模板（内置变量：`{now}`、`{date}`、`{time}`、`{taskName}`）。
 2. 调用外部接口（复用 app-rules 的 SSRF 防护/超时/大小限制/重定向复验；默认拒绝内网）。
 3. 非 2xx / 超时 / JSON 解析失败 / 模板渲染为空 → `failed`：

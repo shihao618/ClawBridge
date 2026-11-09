@@ -49,7 +49,7 @@ test('admin 发消息（冷启动无 context_token）→ 202 → mock 收到 →
   assert.equal(sent.toUserId, coldUser.user.wechatUserId);
   assert.equal(sent.text, text);
   assert.equal(sent.contextToken, '', '冷启动尚无入站消息，不应携带 context_token');
-  assert.match(sent.clientId, /^clawbridge-/);
+  assert.match(sent.clientId, /^openclaw-weixin:\d{13}-[0-9a-f]{8}$/, 'client_id 应为官方格式');
   assert.deepEqual(sent.itemTypes, [1]);
   assert.equal(sent.headers.authorizationType, 'ilink_bot_token');
   assert.equal(sent.headers.appId, 'bot');

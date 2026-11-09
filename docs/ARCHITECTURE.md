@@ -19,6 +19,7 @@ ClawBridge = 多用户微信 ClawBot 扫码绑定 + 消息推送平台（Docker 
 | `server/src/store.js` | 数据层 façade：`export *` 重导出 `data/**`，调用方零改动 |
 | `server/src/data/` | 数据层按域实现：`users.js`、`groups.js`、`keepalive.js`、`rules.js`、`scheduled.js`、`attachments.js`、`outbox.js`、`inbound.js`、`messages.js`、`events.js`、`stats.js`、`user-secrets.js`（用户级凭据）+ `mappers.js`/`helpers.js` |
 | `server/src/shared/` | 领域共享层：`http-client.js`（SSRF/传输/钉 IP/响应读取）、`template.js`（模板引擎）、`response.js`（响应解析）、`http-execute.js`（渲染→HTTP→解析→渲染回复管线）、`credentials.js`（凭据引用收集/解析/渲染/脱敏）、`wechat-markdown.js`（微信 Markdown 兼容过滤，出站前使用） |
+| `server/src/inbound-quote.js` | 入站引用消息（quote / partial quote）最小解析：`ref_msg` 的 `title`/`message_item`/`partial_text` → 引用正文与媒体元数据（并入 `raw_json._quote`）；注入正文顺序 `extractBodyFromItemList`、`message_id` 回退等纯函数 |
 | `server/src/typing.js` | 「正在输入」状态（规则命中处理期间显示，含不请求模式直接回复）：`typing_ticket` 获取/缓存、刷新定时器、按用户引用计数、best-effort 失败忽略 |
 | `server/src/binding.js` / `monitor.js` / `dispatcher.js` / `keepalive.js` / `app-rules.js` / `scheduler.js` / `settings.js` / `auth.js` / `maintenance.js` | 领域层：扫码绑定状态机、入站长轮询、出站队列、会话保活、接口应用规则引擎、定时通知、运行配置与机密管理（`settings.js` façade + `settings/{schema,validate,apply,secrets,persistence}.js`）、认证与限流、数据生命周期维护 |
 | `server/src/app-rules/` / `scheduler/` | 领域模块拆分实现：`app-rules/{match,engine,index}.js`、`scheduler/{calc,index}.js`；根文件保留 façade |
@@ -51,11 +52,11 @@ Express（api.js 组合根：http/middleware → routes/*）── 静态页面(
    │
    ├─ binding.js ── iLink.getBotQrcode()/getQrcodeStatus() ──► 微信 ClawBot（ilinkai.weixin.qq.com）
    │      └─ confirmed → users upsert（按 wechat_user_id）+ monitor.start(user)
-   ├─ monitor.js ── notifyStart() + getUpdates() 长轮询（每账号一个循环）
-   │      └─ 入站消息 → 落库（context_token 加密保存、get_updates_buf 游标）+ 媒体下载 → 触发规则/通知
+   ├─ monitor.js ── notifyStart() + getUpdates() 长轮询（每账号一个循环；-14 暂停 1h 后自动继续）
+   │      └─ 入站消息（含 quote 最小解析、/echo）→ 落库（context_token 加密保存、游标每次落库）+ 媒体下载 → 触发规则/通知
    ├─ dispatcher.js（单循环 worker）── outbox queued → 每账号限流 → iLink.sendMessage
-   │      └─ 成功 sent / -2 退避重试 / -14 标记 pause 1h 并失败剩余
-   ├─ app-rules 引擎 ── 命中规则 → （可选）按触发用户解析凭据 → 外部 HTTP → 渲染回复入 outbox
+   │      └─ 成功 sent / -2 退避重试 / -14 暂停 1h（到期自动恢复轮询）/ 永久失败按开关提示用户
+   ├─ app-rules 引擎 ── 命中规则 → 显示「正在输入」→ （可选）按触发用户解析凭据 → 外部 HTTP → 渲染回复入 outbox → 取消 typing
    ├─ scheduler ── 到期任务 → （汇总模式 / 按用户模式）外部 HTTP → 通知入 outbox
    └─ auth.js ── 管理 Cookie 会话；v1 API Key；绑定页 IP 限流
 ```
@@ -123,28 +124,47 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
   创建按 IP 限流（`BINDING_IP_LIMIT_PER_HOUR`）、并发上限 `BINDING_MAX_ACTIVE`。
 - `confirmed`：按 `wechat_user_id` upsert 用户、清理旧凭证、加密保存 token/base_url/context_token，
   启动该用户入站监控；扫描状态表见 `docs/API.md` §1.2。
+- **网络容错（对齐官方）**：轮询中的网络/网关错误（长轮询超时、5xx/524、fetch 失败、ECONN* 等）不终止会话，
+  继续轮询到会话总 TTL；`BINDING_NETWORK_ERROR_LIMIT` 仅作为连续网络错误的告警阈值。
 
 ## 5. 出站队列与限流（`dispatcher.js` + `rate-limiter.js`）
 
 - outbox 队列模型：`queued → sending → sent | failed`；`attempts` 记录已尝试次数；服务重启把 `sending`
   重置为 `queued`（幂等重试）；用户级冷却（`-14`）时标记 `pause_until` 并失败剩余消息。
 - 每账号令牌桶限流（`RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`，默认 7 条 / 5 分钟）；
-  `-2` 按 `PUSH_RETRY_DELAYS_MS` 退避重试；`-2 prepare failed` 明确提示 context_token 失效，不按限流重试。
+  `-2` 按 `PUSH_RETRY_DELAYS_MS` 退避重试；`-2 prepare failed`（**服务端实测语义，官方 2.4.10 源码无此特判**）
+  明确提示 context_token 失效，不按限流重试。
+- **HTTP 401**：仅当响应体含 `ret/errcode=-14` 才按 token 失效暂停 1h；401 但 body 非 -14 只记 warn、
+  按普通失败退避（避免网关 401 误冷却）。
+- **发送失败用户提示**：outbox 永久失败（非 -14 暂停、非 prepare failed）时，按
+  `push.errorNoticeEnabled`（env `PUSH_ERROR_NOTICE_ENABLED`，默认 true）向该用户 best-effort 直接发送一次
+  「⚠️ 消息发送失败，请稍后重试」；提示不进 outbox 队列、不重试、同一 outbox 只提示一次（进程内去重防循环），
+  提示发送失败只记 debug。
 - 媒体消息最多两次 `sendmessage`：caption（文字）→ 媒体（上传 CDN 后发送）；`caption_sent_at` 防止重发。
 - 优雅退出：`stop()` 等待在途 `processOne()`（有上限），超时后不再写库，避免重复投递。
 
 ## 6. 入站监控与媒体（`monitor.js` + `media.js`）
 
-- 每账号独立 `getupdates` 长轮询（默认 35s），保存游标 `get_updates_buf` 与用户 `context_token`（加密）；
-  `-14` 冷却 1 小时并停止该账号轮询；连续失败指数退避。
+- 每账号独立 `getupdates` 长轮询（默认 35s），游标 `get_updates_buf` **每次变化即落库**、用户 `context_token` 加密保存；
+  `-14` 暂停 1 小时，worker 内等待冷却到期后**自动继续轮询**（对齐官方 session-guard；可被 stop 中止，
+  进程重启后冷却到期也会自动恢复监控）；连续失败按官方节奏退避（2s→2s→30s，达到阈值清零计数）；
+  `longpolling_timeout_ms` 合法值原样使用（仅无效值回退）。
+- **入站正文/引用/指令**：按 `item_list` 顺序首个可识别项决定正文（媒体占位不带文件名）；`message_id` 顶层为空时
+  回退 `item_list[].msg_id`；`ref_msg` 最小解析为 `raw_json._quote`（不改变规则匹配正文）；`/echo <内容>`
+  直接回显（`source=slash`，不进入规则引擎），其余官方 slash 指令不实现。
 - 入站消息统一落库（`inbound_messages`，`raw_json` 深度脱敏 context_token/aes_key），媒体附件：
-  - **下载 URL 校验**：仅 http/https、禁止 userinfo、主机白名单（iLink/CDN + `MEDIA_ALLOWED_HOSTS`），
-    生产默认拒绝本机/私网；重定向 `manual` 逐跳复验（≤3 跳）。
+  - **下载 URL 校验**：仅 http/https、禁止 userinfo、主机白名单（iLink/CDN + `MEDIA_ALLOWED_HOSTS`
+    + 默认可信后缀 `*.qq.com`/`*.weixin.qq.com`/`*.weixin.com`/`*.qpic.cn`/`*.wx.qq.com`），生产默认拒绝本机/私网；
+    重定向 `manual` 逐跳复验（≤3 跳），拒绝时日志记录 host/reason。
+  - **提取对齐**：主 item 无媒体时回退引用消息 `ref_msg.message_item` 并标记 `referenced`；voice 有 `voice_item.text`
+    时只保留文本不下载；缺 `media`/`aes_key`/可下载地址的 item 静默跳过；MIME 按文件名扩展名路由（含 `.avi`→`video/x-msvideo` 等）。
   - **有界并发**：进程级信号量（`INBOUND_MEDIA_MAX_CONCURRENT` 默认 2、排队 `INBOUND_MEDIA_MAX_QUEUE` 默认 64、
     排队超时），超限记附件 `failed`，不无限堆积。
   - **流式解密落盘**：AES-128-ECB + PKCS7 解密用 `createDecipheriv` + pipeline 写 `.part`，完成后原子 rename；
     单文件上限 `INBOUND_MEDIA_MAX_BYTES`（默认 100MB），失败不影响消息本身入库。
 - 入站消息保存失败分类处理：可重试错误保持游标重放，不可重试记录 `inbound_save_failed` 事件。
+- **有意差异**：同一消息最多下载 5 个媒体 item（官方只取一个主媒体）、25MB 出站/100MB 入站/60s 超时等加固
+  均为平台增强，详见 `docs/PROTOCOL.md` §8。
 
 ## 7. 用户级凭据与凭据占位符（`user_secrets` + `shared/credentials.js`）
 
@@ -174,7 +194,8 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
   SSRF 防护（默认拒绝私网/本机，`APP_RULES_ALLOWED_HOSTS` 白名单；连接层钉 IP + 重定向复验）。
 - 响应解析：`json`（点路径）或 `text`；回复模板用 `{{path}}`、`{{#each}}`（含 `where` 过滤、`@index`/`@number`）、
   `{{#if}}`/`{{default}}` 等指令；达到 `MAX_TEXT_LENGTH` 停止渲染；`{{noreply}}` 表示不发送（不使用兜底）。
-- **「正在输入」（typing indicator）**：**所有命中规则**（含 `request.mode=none` 直接回复）都显示。流程：
+- **「正在输入」（typing indicator）**：**所有命中规则**（含 `request.mode=none` 直接回复）都显示；
+  仅接口应用规则处理期间显示（官方对每条 AI 回复显示；定时通知/广播/保活不显示，属有意差异）。流程：
   命中 → `beginTyping()`（按触发用户；`getconfig`→`typing_ticket` 缓存 **24h 内随机刷新**（失败 2s 起
   指数退避 ×2、最大 1h；缓存 key 为 **userId**）→`sendtyping status=1`，按 `APP_RULE_TYPING_REFRESH_MS` 默认
   **5s**（对齐官方）刷新；请求超时固定 **10s**（对齐官方 `DEFAULT_CONFIG_TIMEOUT_MS`））→ 执行/预览/
@@ -212,14 +233,17 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
 - `app_settings(key, value, updated_at)` 只存被后台覆盖的字段；`.env` 仅作**首次启动默认值**。
   必须由 `.env` 管理的项：`APP_SECRET`、`DATA_DIR`、`MEDIA_DIR`、`PORT`、`HOST`、`NODE_ENV`
   （`DB_SYNCHRONOUS` 为启动期 SQLite 参数），其余均可在后台「运行配置」修改。
-- `SETTINGS_SCHEMA` 分组：`push`、`keepalive`、`appRules`、`scheduler`（含 `perUserConcurrency`、
-  `perUserMaxRecipients`）、`media`、`binding`、`server`、`security`、`ilink`、`monitor`；
+- `SETTINGS_SCHEMA` 分组：`push`（含 `errorNoticeEnabled` 发送失败提示开关）、`keepalive`、`appRules`、
+  `scheduler`（含 `perUserConcurrency`、`perUserMaxRecipients`）、`media`、`binding`、`server`、`security`、
+  `ilink`、`monitor`；
   字段元数据（类型/范围/默认/`restartRequired`）与 `docs/SETTINGS.md` 由 `npm run doc:lint` 双向校验。
 - `loadOverrides()` 启动时读取 DB 覆盖 `config`；`updateSettings()` 校验 → UPSERT → 覆盖 config →
   调用运行时 hooks（keepalive/scheduler 重启定时器、appRules 引擎启停、logger 级别）；多数即时生效，
   启动期创建的资源（令牌桶、body 解析上限、下载信号量、代理信任、监控账号池）标记 `restartRequired`。
 - 管理密码（scrypt 哈希）与 API Token（AES 密文）只由 DB 管理：首启自动生成并写 `data/` 文件（0600），
   后台「安全」卡片可修改/重置/轮换，接口绝不回显明文。
+- env-only 参数：`ILINK_CONFIG_TIMEOUT_MS`（轻量 iLink API 超时，默认 10000，未并入运行配置）、
+  `MAINTENANCE_*`（数据维护）等。
 
 ## 12. 安全约定
 
@@ -230,7 +254,8 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
 - 凭证加密：`bot_token`/`context_token`/规则与定时任务 Header/用户级凭据字段值/API Token 等
   AES-256-GCM 加密落库；管理密码 scrypt；`APP_SECRET` 为根密钥，可用 `npm run rotate-secret` 离线轮换。
 - 日志脱敏：按敏感键名替换；URL query（`token/api_key/authorization` 等）值替换为 `[redacted]`；
-  入站 `raw_json` 中 `context_token`/`aes_key` 脱敏；凭据值在预览/错误/事件中统一掩码。
+  入站 `raw_json` 中 `context_token`/`aes_key` 脱敏；凭据值在预览/错误/事件中统一掩码；发送失败用户提示
+  只包含固定文案（不含 token/内部错误），其发送失败仅 debug 日志。
 - SSRF：外部 HTTP 调用先 DNS 解析并判私网/环回/保留段，再把校验通过的 IP **固定到连接层**
   （`node:http(s).request` 的 `lookup`，Host/TLS servername 用原域名），重定向 `manual` 最多 3 跳、
   每跳重新校验；入站媒体下载同样做协议/主机白名单与逐跳复验。

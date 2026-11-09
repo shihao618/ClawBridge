@@ -115,6 +115,8 @@ const unitEnv = prepareUnitEnv({
     RATE_LIMIT_WINDOW_MS: '300000',
     PUSH_RETRY_DELAYS_MS: '10',
     PUSH_MAX_ATTEMPTS: '5',
+    // 本文件只验证媒体出站管线；发送失败用户提示的开关/行为由 backend-dispatcher-errors.test.js 覆盖。
+    PUSH_ERROR_NOTICE_ENABLED: 'false',
   },
 });
 

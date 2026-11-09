@@ -37,3 +37,5 @@ mock/.curl-live.log
 Thumbs.db
 .vscode/
 .idea/
+# 临时审计报告（不随代码发布）
+.audit/

@@ -203,6 +203,8 @@ typingIndicator, typingRefreshMs }`。
   start/stop 语义，无最小可见/延迟取消）；同一用户并发多个规则请求按引用计数只取消一次；日志不记录
   ticket/token。请求超时固定 **10s**（对齐官方 `DEFAULT_CONFIG_TIMEOUT_MS`）；协议细节见
   [`docs/PROTOCOL.md`](PROTOCOL.md) §5.6。
+- **触发范围**：仅接口应用规则处理期间显示（官方对每条 AI 回复显示）；定时通知、广播、保活与普通入站
+  消息不显示「正在输入」，属有意差异。
 
 ## 5. 响应解析与回复
 

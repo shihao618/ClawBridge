@@ -31,6 +31,8 @@ export class StreamingWechatMarkdownFilter {
   constructor() {
     this.buf = '';
     this.fence = false;
+    /** 围栏标记字符：` 或 ~（CommonMark 两种围栏都支持；~ 不作为删除线标记处理）。 */
+    this.fenceChar = '`';
     this.sol = true;
     this.inl = null;
   }
@@ -65,14 +67,16 @@ export class StreamingWechatMarkdownFilter {
     return out;
   }
 
-  /** 代码块内：原样传递（含围栏标记）。 */
+  /** 代码块内：原样传递（含围栏标记；``` 与 ~~~ 均支持）。 */
   pumpFence(eof) {
     if (this.sol) {
       if (this.buf.length < 3 && !eof) return '';
-      if (this.buf.startsWith('```')) {
+      const fenceMarker = String(this.fenceChar ?? '`').repeat(3);
+      if (this.buf.startsWith(fenceMarker)) {
         const nl = this.buf.indexOf('\n', 3);
         if (nl !== -1) {
           this.fence = false;
+          this.fenceChar = '`';
           const line = this.buf.slice(0, nl + 1);
           this.buf = this.buf.slice(nl + 1);
           this.sol = true;
@@ -80,6 +84,7 @@ export class StreamingWechatMarkdownFilter {
         }
         if (eof) {
           this.fence = false;
+          this.fenceChar = '`';
           const line = this.buf;
           this.buf = '';
           return line;
@@ -113,6 +118,29 @@ export class StreamingWechatMarkdownFilter {
         const nl = b.indexOf('\n', 3);
         if (nl !== -1) {
           this.fence = true;
+          this.fenceChar = '`';
+          const line = b.slice(0, nl + 1);
+          this.buf = b.slice(nl + 1);
+          this.sol = true;
+          return line;
+        }
+        if (eof) {
+          this.buf = '';
+          return b;
+        }
+        return '';
+      }
+      this.sol = false;
+      return '';
+    }
+    if (b[0] === '~') {
+      // `~~~` 围栏（CommonMark）原样保留；行内/普通 `~` 仍按“删除线标记丢弃”处理。
+      if (b.length < 3 && !eof) return '';
+      if (b.startsWith('~~~')) {
+        const nl = b.indexOf('\n', 3);
+        if (nl !== -1) {
+          this.fence = true;
+          this.fenceChar = '~';
           const line = b.slice(0, nl + 1);
           this.buf = b.slice(nl + 1);
           this.sol = true;
@@ -192,8 +220,10 @@ export class StreamingWechatMarkdownFilter {
         return out;
       }
       if (c === '~') {
-        i += 1;
-        continue;
+        // 与 server/src/shared/wechat-markdown.js 一致：丢弃删除线标记、保留文字（微信不渲染删除线）。
+        out += this.buf.slice(0, i);
+        this.buf = this.buf.slice(i + 1);
+        return out;
       }
       if (c === '*') {
         if (i + 2 < this.buf.length && this.buf[i + 1] === '*' && this.buf[i + 2] === '*') {
@@ -399,6 +429,7 @@ export function describeWechatMarkdownAdjustments(text) {
 
 /** 兼容性规则摘要（供帮助弹窗/预览提示复用）。 */
 export const WECHAT_MARKDOWN_SUPPORT = Object.freeze({
-  supported: ['代码块', '行内代码', '表格', '水平线', '粗体', '标题 H1–H4', '引用', '列表', '非中文斜体', '删除线'],
-  filtered: ['中文斜体（去标记）', 'H5/H6 标题（去 #）', '图片（整段移除）'],
+  // 微信不渲染删除线（官方过滤器丢弃 `~` 标记、保留文字），不能列为 supported。
+  supported: ['代码块', '行内代码', '表格', '水平线', '粗体', '标题 H1–H4', '引用', '列表', '非中文斜体'],
+  filtered: ['中文斜体（去标记）', 'H5/H6 标题（去 #）', '图片（整段移除）', '删除线（去标记，保留文字）'],
 });

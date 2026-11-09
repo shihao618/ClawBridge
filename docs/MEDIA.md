@@ -15,6 +15,12 @@
 
 缩略图：出站统一 `no_need_thumb: true`（官方上传原文件即可）；入站不下载缩略图（只取原图/原文件）。
 
+入站补充（v1.1.0 对齐官方）：主 `item_list` 无媒体时会回退到引用消息 `ref_msg.message_item` 下载（标记 `referenced`）；
+`voice_item.text` 非空时只保留文本、不下载媒体；缺 `media`/`aes_key`/可下载地址的 item 静默跳过（不建 failed 附件行）。
+
+> **有意差异**：ClawBridge 每条消息最多下载 5 个媒体 item（官方只取一个主媒体）、出站 25MB / 入站 100MB 上限、
+> 60s 超时、流式解密与主机白名单等均为产品/安全增强；协议对齐与差异总表见 [`docs/PROTOCOL.md`](PROTOCOL.md) §8。
+
 ## 1. 协议：CDN 上传（出站）
 
 ### 1.1 申请上传地址
@@ -59,7 +65,7 @@ Resp: 200；响应头 x-encrypted-param = <下载参数 encrypt_query_param>
 
 ```jsonc
 // 图片
-{"msg":{"from_user_id":"","to_user_id":"<user>","client_id":"cb-…","message_type":2,"message_state":2,
+{"msg":{"from_user_id":"","to_user_id":"<user>","client_id":"openclaw-weixin:<13位ms>-<8hex>","message_type":2,"message_state":2,
  "item_list":[{"type":2,"image_item":{
    "media":{"encrypt_query_param":"<x-encrypted-param>","aes_key":"<base64(hex 字符串)>","encrypt_type":1},
    "mid_size": <密文字节数>}}],
@@ -109,11 +115,14 @@ Resp: 200；响应头 x-encrypted-param = <下载参数 encrypt_query_param>
   - 图片若 `image_item.aeskey`（hex）存在则优先。
 - AES-128-ECB + PKCS7 解密（流式：`createDecipheriv` + `pipeline`，不把整个文件读入内存）。
 - 单个文件上限默认 100MB（`INBOUND_MEDIA_MAX_BYTES`），下载超时 60s；失败只记录日志，不影响消息本身入库。
-- **下载 URL 校验（SSRF 纵深，）**：仅允许 `http/https`、禁止 userinfo；主机白名单 = 配置的 iLink/CDN 主机
-  + `MEDIA_ALLOWED_HOSTS`（可后台配置）+ `*.qq.com`/`*.weixin.qq.com`；dev/test 环境自动放行 localhost 以对接 mock CDN，
-  生产环境默认拒绝本机/私网地址；http 仅白名单主机/本机或显式 `MEDIA_ALLOW_INSECURE_HTTP=true` 时允许。
-  `full_url` 与拼接 URL 同样校验。
+- **下载 URL 校验（SSRF 纵深）**：仅允许 `http/https`、禁止 userinfo；主机白名单 = 配置的 iLink/CDN 主机
+  + `MEDIA_ALLOWED_HOSTS`（可后台配置）+ 默认可信后缀 `*.qq.com`/`*.weixin.qq.com`/`*.weixin.com`/`*.qpic.cn`/`*.wx.qq.com`；
+  dev/test 环境自动放行 localhost 以对接 mock CDN，生产环境默认拒绝本机/私网地址；http 仅白名单主机/本机或
+  显式 `MEDIA_ALLOW_INSECURE_HTTP=true` 时允许。`full_url` 与拼接 URL 同样校验；被拒时日志记录 host/reason。
 - **重定向**：`redirect: 'manual'`，最多 3 跳，**每跳重新校验主机**；未授权主机直接失败不跟随。
+- **引用消息媒体**：主 `item_list` 无媒体时，回退解析 `item.ref_msg.message_item` 中的媒体并下载（附件标记 `referenced`）。
+- **跳过规则（对齐官方）**：`voice_item.text` 非空时只保留文本、不下载；缺 `media`/`encrypt_query_param`/`full_url`/
+  `aes_key` 的 item 静默跳过（不生成 failed 附件行）。
 - **资源上限**：进程级有界并发闸门（默认并发 2、排队 64、排队超时 60s）；超出排队上限或排队超时
   直接记 `attachments.status='failed'`，不会无限堆积；下载+解密为流式落盘（`.part` 临时文件 → 原子 rename）。
 
@@ -147,13 +156,17 @@ DATA_DIR/
 | `INBOUND_MEDIA_MAX_CONCURRENT` | `2` | 入站下载并发上限（进程级信号量；修改需重启） |
 | `INBOUND_MEDIA_MAX_QUEUE` | `64` | 入站下载排队上限（0=不排队；修改需重启） |
 | `INBOUND_MEDIA_QUEUE_TIMEOUT_MS` | 同下载超时 | 入站下载排队超时 |
-| `MEDIA_ALLOWED_HOSTS` | 空 | 入站下载额外允许的主机（逗号分隔） |
+| `MEDIA_ALLOWED_HOSTS` | 空 | 入站下载额外允许的主机（逗号分隔；默认可信后缀 `*.qq.com`/`*.weixin.qq.com`/`*.weixin.com`/`*.qpic.cn`/`*.wx.qq.com` 无需配置） |
 | `MEDIA_ALLOW_INSECURE_HTTP` | `false` | 允许入站媒体 http 下载（降低 SSRF 防护强度） |
 | `MEDIA_ALLOWED_IMAGE_MIME` / `MEDIA_ALLOWED_VIDEO_MIME` | `image/jpeg,image/png,image/gif,image/webp,image/bmp` / `video/mp4,video/quicktime,video/webm,video/x-matroska` | 逗号分隔；未命中按普通文件发送 |
 
 `config.media = { dir, outboundMaxBytes, inboundMaxBytes, downloadTimeoutMs, uploadTimeoutMs,
 inboundMaxConcurrent, inboundMaxQueue, inboundQueueTimeoutMs, allowedHosts, allowInsecureHttp,
 allowedImageMime, allowedVideoMime }`，`config.ilink.cdnBaseUrl`。
+
+出站 MIME 路由（对齐官方 `media/mime.js`）：按**文件名扩展名**映射——`image/*` 发图片消息、`video/*` 发视频消息、
+其余（含所有音频）按普通文件；已补齐 `.avi`→`video/x-msvideo`、`.m4v`→`video/mp4`、`.3gp`→`video/3gpp` 等常见扩展。
+产品增强：文件名无法识别时回退上传时声明的 MIME，且仅命中所配置图片/视频白名单才按图片/视频发送。
 
 ## 4. 数据库 Schema（当前 v1）
 
@@ -292,7 +305,7 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
    e. 成功 → `markOutboxSent`（server_message_id）+ `touchOutbound` + 事件/日志；
 4. 失败：
    - `-2`：退避重试（caption 不重发，`caption_sent_at` 已记录）；
-   - `-14`：现有冷却逻辑（失败该条 + 其余 queued）；
+   - `-14`：暂停该账号 1 小时（失败该条 + 其余 queued）；监控侧冷却到期会自动恢复轮询；
    - 其他：按 `PUSH_MAX_ATTEMPTS` 退避重试，媒体每次重试重新上传（官方无上传幂等接口）；
    - 文件缺失/附件不存在：直接 `failed`，错误说明清楚（不重试）。
 5. 媒体文件保留：发送成功后保留在 `DATA_DIR/media/outbound/`（便于审计/重发），不做自动删除；后续可加清理任务（不在本期范围）。
@@ -301,13 +314,16 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
 
 `processMessages` 在保存入站消息后，对每个媒体 item：
 
-1. 解析 item → `{kind, media, fileName, mime}`（按 item 类型；图片/文件/视频/语音）；
+1. 解析 item → `{kind, media, fileName, mime, referenced}`（按 item 类型；图片/文件/视频/语音；主 item 无媒体时
+   回退引用消息 `ref_msg.message_item` 并标记 `referenced`；voice 有 `text` 或缺少可下载参数的 item 跳过）；
 2. 下载+解密（§2，进程级有界闸门 + 流式落盘），超过 `inboundMaxBytes`、超时、URL 未通过主机校验、
    排队超限/排队超时 → 记录 `attachments.status='failed', error=…`（不抛错，不影响消息入库）；
 3. 成功 → 保存文件到 `media/inbound/<id><ext>`、`sha256` 记录、`attachments` 行（`direction=inbound`, 关联 `inbound_message_id`、`wechat_message_id`）；
-4. 同一消息多个媒体 item 逐个处理（最多 5 个，防御性上限）；
+4. 同一消息多个媒体 item 逐个处理（最多 5 个，防御性上限；官方只取一个主媒体，属有意差异）；
 5. `raw_json` 脱敏扩展：把 `media.aes_key`、`image_item.aeskey` 也替换为 `[redacted]`（与 context_token 同级处理）；
-6. 消息 `text` 仍为文本或 `[图片]/[视频]/[文件]/[语音]` 占位；`item_types` 保持。
+6. 消息 `text` 按官方 `bodyFromItemList` 语义：按 `item_list` 顺序首个可识别项决定正文（TEXT 文本 / VOICE 有
+   `text` 用文本 / 媒体占位 `[图片]/[视频]/[文件]/[语音]`，**不带文件名**）；`item_types` 保持；引用消息最小解析
+   并入 `raw_json._quote`（不改变规则匹配正文）。
 
 ## 8. 前端（web/admin.html + assets/admin.js）
 
@@ -333,7 +349,11 @@ Query: ?download=1 → Content-Disposition: attachment（默认 image/video inli
 - `POST /cdn/upload?filekey=…`：读取密文 body，按 aeskey 解密（mock 知道 getuploadurl 请求里的 hex key）并保存
   `{token, ciphertext, plaintextSha256, size}`；响应头 `x-encrypted-param: <token>`；
 - `GET /cdn/download?encrypted_query_param=<token>`：返回对应密文字节（404 未知 token）。
-- `sendmessage` 记录媒体消息结构（item_list 类型 2/4/5 及 media 参数），供断言。
+- `sendmessage` 记录媒体消息结构（item_list 类型 2/3/4/5 及 media 参数、voice `text`），供断言。
+- `POST /__mock/cdn-upload-url-mode {mode:"full"|"param"|"none"}`：切换 getuploadurl 返回形态，覆盖
+  「`upload_full_url` 优先 / `upload_param` 拼接回退 / 两者皆缺」三条路径。
+- 入站注入 `POST /__mock/accounts/{botId}/inbound-media` 支持 `{refMedia:true, ...}`（媒体放在
+  `ref_msg.message_item` 内，覆盖引用媒体回退）与 `voice` + `text`（覆盖「voice 带转写不下载」）、多 item 场景。
 
 控制面新增：
 

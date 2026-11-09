@@ -3,14 +3,17 @@
  *
  * 流程（docs/ARCHITECTURE.md §6 / docs/PROTOCOL.md §5.4）：
  *   notifyStart → getUpdates 长轮询 → 保存 get_updates_buf / 入站消息 / context_token；
- *   -14（token 失效）→ pause_until=now+1h + events('stale_token') + 停止该账号循环；
- *   其他错误按协议退避（连续 3 次 → 30s，否则 2s）；
+ *   -14（token 失效）→ pause_until=now+1h + events('stale_token')，worker 内等待冷却到期后
+ *   **继续轮询**（对齐官方 session-guard 语义，不再退出循环）；
+ *   其他错误按协议退避（连续 3 次 → 30s 并清零计数，否则 2s）；
+ *   每次收到非空 get_updates_buf 即持久化（对齐官方 sync-buf 语义）；
  *   客户端超时/主动中止属于正常控制流（ilink.getUpdates 已转为空响应）。
  *
  * start/stop 幂等，key = userId；stop 时 best-effort notifyStop。
  */
 import { config } from './config.js';
 import { isStaleTokenError } from './errors.js';
+import { extractBodyFromItemList, extractQuotedMessage } from './inbound-quote.js';
 import * as appRules from './app-rules.js';
 import * as ilink from './ilink.js';
 import { logger } from './logger.js';
@@ -20,14 +23,14 @@ import * as store from './store.js';
 
 const log = logger.child({ mod: 'monitor' });
 
-/** 收到消息后静默多久再落游标（连续聊天期间不写游标）。 */
+/** 历史防抖策略常量（轮询已改为“游标变化即落库”，保留给兼容测试/文档）。 */
 const MESSAGE_IDLE_FLUSH_MS = 15 * 60 * 1000;
-/** 一直无消息时，游标最多保留在内存多久后兜底落库。 */
+/** 历史防抖策略常量（轮询已改为“游标变化即落库”，保留给兼容测试/文档）。 */
 const CURSOR_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 /**
- * 游标是否应落库：有消息时等 15 分钟静默；无消息时最多 6 小时。
- * 纯函数便于测试（真实循环只负责调用）。
+ * 历史防抖策略（已不再用于真实轮询；官方 2.4.10 为每次收到非空游标即落盘）。
+ * 保留纯函数便于旧测试/文档引用。
  */
 export function cursorPersistDue({
   dirty,
@@ -80,36 +83,103 @@ function sleep(ms, signal) {
 
 /**
  * 判断是否为 bot_token 失效（-14）。
- * 兼容两种上游表达：① HTTP 200 + body.ret=-14；② HTTP 401 + body 中 ret/errcode=-14
- * （部分网关/模拟实现用 401 表示凭证失效）。
+ * 官方语义：仅 body 中的 `ret/errcode=-14` 视为 token 失效；HTTP 401 本身不构成失效
+ * （401 + body 非 -14 → 普通失败退避，不冷却 1 小时）。
  */
 function isStaleTokenLike(err) {
   if (isStaleTokenError(err)) return true;
   if (!err || err.name !== 'ILinkError') return false;
-  if (err.httpStatus === 401) return true;
   return typeof err.body === 'string' && /"?(?:ret|errcode)"?\s*:\s*-14/.test(err.body);
 }
 
-/** 提取消息的可读文本（无文本时按消息类型给占位）。 */
-export function extractMessageText(message) {
+/** notifyStart/notifyStop：协议返回 ret!=0 时只告警，不抛错（best-effort）。 */
+function warnNotifyRet(label, userId, resp) {
+  const ret = Number(resp?.ret ?? 0);
+  if (Number.isFinite(ret) && ret !== 0) {
+    log.warn(`${label} 返回非 0（忽略，不影响轮询）`, { userId, ret, errmsg: resp?.errmsg ?? '' });
+  }
+}
+
+/** 官方 getWeixinMessageId()：顶层 message_id 为空时回退 item_list[].msg_id。 */
+export function resolveInboundMessageId(message) {
+  const top = message?.message_id === null || message?.message_id === undefined ? '' : String(message.message_id).trim();
+  if (top) return top;
   const items = Array.isArray(message?.item_list) ? message.item_list : [];
-  let placeholder = '';
   for (const item of items) {
-    if (!item || typeof item !== 'object') continue;
-    if (item.type === 1 && typeof item.text_item?.text === 'string') return item.text_item.text;
-    if (item.type === 3 && typeof item.voice_item?.text === 'string' && item.voice_item.text.trim() !== '') {
-      return item.voice_item.text;
-    }
-    if (placeholder === '') {
-      if (item.type === 2) placeholder = '[图片]';
-      else if (item.type === 3) placeholder = '[语音]';
-      else if (item.type === 4) placeholder = item.file_item?.file_name ? `[文件] ${item.file_item.file_name}` : '[文件]';
-      else if (item.type === 5) placeholder = '[视频]';
-      else if (item.type === 11 || item.type === 12) placeholder = '[工具调用]';
-      else if (item.type) placeholder = '[消息]';
+    const raw = item?.msg_id;
+    if (raw === null || raw === undefined) continue;
+    const value = String(raw).trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+/** 官方 extractTextBody()（slash 指令探测用）：只取首个 TEXT item 的原始文本。 */
+export function extractFirstTextItem(message) {
+  const items = Array.isArray(message?.item_list) ? message.item_list : [];
+  for (const item of items) {
+    if (item && typeof item === 'object' && item.type === 1 && item.text_item && item.text_item.text !== null && item.text_item.text !== undefined) {
+      return String(item.text_item.text);
     }
   }
-  return placeholder;
+  return '';
+}
+
+/**
+ * 提取消息的可读正文（对齐官方 bodyFromItemList：按 item 顺序，首个可识别项决定正文；
+ * 媒体占位不带文件名）。工具调用占位为平台附加展示（官方无此文案），仅作为最终回退。
+ */
+export function extractMessageText(message) {
+  const items = Array.isArray(message?.item_list) ? message.item_list : [];
+  const body = extractBodyFromItemList(items);
+  if (body) return body;
+  return items.some((item) => item && (item.type === 11 || item.type === 12)) ? '[工具调用]' : '';
+}
+
+/** /echo 回显内容上限（防止超长入队/发送）。 */
+const ECHO_MAX_REPLY_LEN = 2000;
+
+/**
+ * 官方 slash-commands 简易版：命令从首个 TEXT item 取，大小写不敏感。
+ * 目前只实现 `/echo <内容>`（回显）；`/toggle-debug` 等其它命令不处理（交回规则流水线）。
+ * @param {string} content 首个 TEXT item 的原始文本
+ * @returns {{handled:boolean, command:string, reply:string}}
+ */
+export function parseEchoCommand(content) {
+  const text = String(content ?? '').trim();
+  if (!text.startsWith('/')) return { handled: false, command: '', reply: '' };
+  const spaceIndex = text.indexOf(' ');
+  const command = (spaceIndex === -1 ? text : text.slice(0, spaceIndex)).toLowerCase();
+  if (command !== '/echo') return { handled: false, command, reply: '' };
+  const args = spaceIndex === -1 ? '' : text.slice(spaceIndex + 1).trim();
+  const reply = args ? args.slice(0, ECHO_MAX_REPLY_LEN) : '（空）';
+  return { handled: true, command: '/echo', reply };
+}
+
+/**
+ * 失败退避节奏（对齐官方 monitor：连续失败达到阈值 → 30s 并清零计数，否则 2s；
+ * 清零后下次失败重新从 2s 开始，形成 2s→2s→30s→2s→2s→30s 节奏）。
+ * @param {number} failures 本次失败后的连续失败次数（>=1）
+ * @returns {{delayMs:number, nextFailures:number}}
+ */
+export function computeBackoff(
+  failures,
+  {
+    maxFailures = config.monitor.maxConsecutiveFailures,
+    backoffMs = config.monitor.backoffMs,
+    retryDelayMs = config.monitor.retryDelayMs,
+  } = {},
+) {
+  const count = Math.max(1, Math.floor(Number(failures) || 0));
+  const limit = Math.max(1, Math.floor(Number(maxFailures) || 1));
+  if (count >= limit) return { delayMs: Math.max(0, Number(backoffMs) || 0), nextFailures: 0 };
+  return { delayMs: Math.max(0, Number(retryDelayMs) || 0), nextFailures: count };
+}
+
+/** 官方 monitor：longpolling_timeout_ms 原样使用；仅无效值（<=0/NaN）回退当前值。 */
+export function resolveLongPollTimeout(serverValue, fallback) {
+  const value = Number(serverValue);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 /** 是否在运行。 */
@@ -120,6 +190,84 @@ export function isRunning(userOrId) {
 /** 当前运行的监控数量。 */
 export function runningCount() {
   return workers.size;
+}
+
+// ---------------------------------------------------------------------------
+// 冷却（-14）到期自动恢复
+// ---------------------------------------------------------------------------
+
+/** 冷却到期后自动恢复监控的定时器（key=userId）；stop/stopAll 会取消。 */
+const pausedResumeTimers = new Map();
+/** 生产进程内扫描冷却到期账号的间隔（重启恢复兜底；见 resumePausedMonitors）。 */
+const PAUSED_RESUME_SWEEP_MS = 60 * 1000;
+let pausedSweepTimer = null;
+
+function clearPausedResumeTimer(userId) {
+  const timer = pausedResumeTimers.get(userId);
+  if (!timer) return false;
+  clearTimeout(timer);
+  pausedResumeTimers.delete(userId);
+  return true;
+}
+
+/** 在 pause_until 到期后自动调用 start()。 */
+function schedulePausedStart(userId, pauseUntil) {
+  clearPausedResumeTimer(userId);
+  const delayMs = Math.max(0, Number(pauseUntil) - Date.now()) + 100;
+  const timer = setTimeout(() => {
+    pausedResumeTimers.delete(userId);
+    try {
+      start(userId);
+    } catch (err) {
+      log.warn('冷却结束后自动恢复入站监控失败', { userId, message: err?.message });
+    }
+  }, delayMs);
+  timer.unref?.();
+  pausedResumeTimers.set(userId, timer);
+}
+
+/**
+ * 重启恢复兜底：扫描 active 且 pause_until 已到期的账号并启动监控。
+ * index.js 的 restoreMonitors 只取 pause_until<=now 的用户，进程重启时仍处于冷却中的账号
+ * 需要这里在冷却到期后恢复（生产环境每 60s 自动扫描；测试可直接调用）。
+ * @returns {number} 本次成功启动的监控数量
+ */
+export function resumePausedMonitors() {
+  let rows;
+  try {
+    rows = store.getBroadcastTargets({ includePaused: true });
+  } catch (err) {
+    log.debug('扫描冷却账号失败（忽略）', { message: err?.message });
+    return 0;
+  }
+  const now = Date.now();
+  let started = 0;
+  for (const row of rows) {
+    const userId = String(row?.id ?? '');
+    if (!userId || workers.has(userId) || pausedResumeTimers.has(userId)) continue;
+    if (row.status !== 'active') continue;
+    const pauseUntil = Number(row.pause_until) || 0;
+    if (pauseUntil <= 0 || pauseUntil > now) continue;
+    try {
+      if (start(userId)) started += 1;
+    } catch (err) {
+      log.warn('恢复冷却到期的入站监控失败（忽略）', { userId, message: err?.message });
+    }
+  }
+  return started;
+}
+
+/** 仅生产环境启用自动扫描（避免测试/开发环境的后台定时器干扰）。 */
+function ensurePausedResumeSweeper() {
+  if (pausedSweepTimer || !config.isProduction) return;
+  pausedSweepTimer = setInterval(() => {
+    try {
+      resumePausedMonitors();
+    } catch (err) {
+      log.debug('冷却账号扫描异常（忽略）', { message: err?.message });
+    }
+  }, PAUSED_RESUME_SWEEP_MS);
+  pausedSweepTimer.unref?.();
 }
 
 /**
@@ -141,7 +289,9 @@ export function start(userOrId) {
     return false;
   }
   if (Number(row.pause_until) > Date.now()) {
-    log.info('账号冷却中，暂不启动入站监控', { userId, pauseUntil: row.pause_until });
+    // 对齐官方：冷却结束后继续轮询；这里安排到期自动 start（幂等，可被 stop 取消）
+    schedulePausedStart(userId, Number(row.pause_until));
+    log.info('账号冷却中，已安排冷却结束后自动恢复入站监控', { userId, pauseUntil: row.pause_until });
     return false;
   }
   const secrets = store.getUserSecrets(userId);
@@ -163,18 +313,22 @@ export function start(userOrId) {
   return true;
 }
 
-/** -14 处理：暂停 1 小时 + 事件 + 停止循环。 */
+/**
+ * -14 处理：暂停 1 小时 + 事件；worker 在循环内等待到 pause_until 后继续轮询（对齐官方）。
+ * @returns {number} pause_until（0 表示凭据代际已变化、忽略本次 -14）
+ */
 function pauseForStaleToken(userId, detail, isCurrentCredential = () => true) {
   // 凭据代际保护：旧 worker（换绑前启动）不得把已换绑的用户置为冷却
   if (!isCurrentCredential()) {
     log.info('凭据已变更，忽略旧 worker 的 -14（不写 paused）', { userId });
-    return;
+    return 0;
   }
   const pauseUntil = Date.now() + config.monitor.stalePauseMs;
-  const message = 'bot token 已失效（-14），需要用户重新扫码绑定';
+  const message = 'bot token 已失效（-14），已暂停 1 小时，到期后自动恢复轮询；若仍失效请重新扫码绑定';
   store.setUserPaused(userId, pauseUntil, message);
   store.addEvent({ type: 'stale_token', userId, detail: String(detail ?? '').slice(0, 500) });
-  log.warn('bot token 失效，账号进入 1 小时冷却', { userId, pauseUntil });
+  log.warn('bot token 失效，账号进入冷却（到期后自动继续轮询）', { userId, pauseUntil });
+  return pauseUntil;
 }
 
 /** 深度脱敏副本：敏感字段（context_token / aes_key / aeskey）不得进入 raw_json 明文。 */
@@ -330,7 +484,7 @@ export async function processMessages(userId, messages, { awaitMedia = true } = 
       if (!message || typeof message !== 'object') continue;
       const fromUserId = message.from_user_id ? String(message.from_user_id) : '';
       if (!fromUserId) continue; // 只处理用户发出的消息
-      messageId = message.message_id === null || message.message_id === undefined ? '' : String(message.message_id);
+      messageId = resolveInboundMessageId(message);
       const itemTypes = Array.isArray(message.item_list)
         ? message.item_list
             .map((item) => (item && item.type !== undefined ? item.type : null))
@@ -339,7 +493,10 @@ export async function processMessages(userId, messages, { awaitMedia = true } = 
         : '';
       const text = extractMessageText(message);
       const createdAt = Number(message.create_time_ms);
-      const rawJson = sanitizeInboundRawJson(message);
+      // 引用消息（quote / partial quote）：解析后并入 raw_json（原始 JSON 字段保留），
+      // 不改变规则匹配正文（对齐官方：引用上下文仅作为辅助信息）。
+      const quote = extractQuotedMessage(message);
+      const rawJson = sanitizeInboundRawJson(quote ? { ...message, _quote: quote } : message);
       const result = store.saveInbound({
         userId,
         wechatMessageId: messageId,
@@ -354,10 +511,22 @@ export async function processMessages(userId, messages, { awaitMedia = true } = 
       outcome.saved += 1;
       if (message.context_token) store.updateContextToken(userId, String(message.context_token), now);
       store.touchInbound(userId, now);
-      log.debug('收到入站消息', { userId, messageId, textLength: text.length });
+      log.debug('收到入站消息', { userId, messageId, textLength: text.length, hasQuote: Boolean(quote) });
 
-      // 接口应用：文本消息异步触发规则引擎（不阻塞 getupdates；异常不影响入站保存）
-      if (text.trim() !== '' && itemTypes.split(',').map((type) => type.trim()).includes('1')) {
+      // slash 指令（官方简易版）：/echo 直接回显入队（source='slash'），不进入规则引擎。
+      const slash = parseEchoCommand(extractFirstTextItem(message));
+      if (slash.handled) {
+        try {
+          store.enqueueMessage({ userId, text: slash.reply, source: 'slash' });
+          log.info('slash 指令已回显入队', { userId, messageId, command: slash.command, replyLength: slash.reply.length });
+        } catch (err) {
+          log.warn('slash 指令回显入队失败（忽略）', { userId, messageId, message: err?.message });
+        }
+      }
+
+      // 接口应用：文本消息异步触发规则引擎（不阻塞 getupdates；异常不影响入站保存）；
+      // slash 指令已处理时不进入规则流水线。
+      if (!slash.handled && text.trim() !== '' && itemTypes.split(',').map((type) => type.trim()).includes('1')) {
         appRules.handleInboundMessage({
           userId,
           inboundMessageId: result.id,
@@ -419,18 +588,15 @@ async function runLoop(row, token, controller, worker) {
   let consecutiveFailures = 0;
   let nextTimeoutMs = config.monitor.longPollTimeoutMs;
   let cursorDirty = false;
-  let lastMessageAt = 0;
-  let lastPersistAt = Date.now();
+  /** 是否刚从 -14 冷却恢复（恢复后的首个成功响应清除 DB pause_until/last_error）。 */
+  let pausedForStaleToken = false;
 
-  /** 落库当前内存游标；失败保留 dirty，下一轮重试。 */
+  /** 落库当前内存游标；失败保留 dirty，下一轮开头重试。 */
   const persistCursor = () => {
     if (!cursorDirty) return false;
-    const ts = Date.now();
     try {
-      store.updateGetUpdatesBuf(userId, getUpdatesBuf, ts);
+      store.updateGetUpdatesBuf(userId, getUpdatesBuf, Date.now());
       cursorDirty = false;
-      lastPersistAt = ts;
-      lastMessageAt = 0;
       return true;
     } catch (err) {
       log.warn('持久化 getupdates 游标失败（下一轮重试）', { userId, message: err?.message });
@@ -439,21 +605,37 @@ async function runLoop(row, token, controller, worker) {
   };
 
   /**
-   * 两个落库窗口：
-   * 1) 收到消息后静默 15 分钟；
-   * 2) 一直无消息时最多 6 小时兜底一次（游标未变化则不写）。
+   * 失败退避（对齐官方 monitor）：2s→2s→30s（达到阈值时清零计数），
+   * 清零后下一次失败重新从 2s 开始，形成 2s→2s→30s→2s→2s→30s 节奏。
+   * @param {object} detail 日志附加字段
    */
-  const maybePersistCursor = () => {
-    if (!cursorDirty) return;
-    if (cursorPersistDue({
-      dirty: cursorDirty,
-      now: Date.now(),
-      lastMessageAt,
-      lastPersistAt,
-    })) {
-      persistCursor();
-    }
+  const deferForFailure = async (detail) => {
+    consecutiveFailures += 1;
+    const failures = consecutiveFailures;
+    const { delayMs, nextFailures } = computeBackoff(failures);
+    consecutiveFailures = nextFailures;
+    log.warn('getupdates 失败，准备退避重试', {
+      userId,
+      failures,
+      delayMs,
+      ...detail,
+    });
+    await sleep(delayMs, signal);
   };
+
+  /**
+   * -14 冷却：写 DB pause_until + 事件后，在本 worker 内等待到冷却到期再继续轮询
+   * （对齐官方 session-guard：不退出循环，可被 stop 中止）。
+   * @param {string} detail 事件/日志详情
+   */
+  const enterStalePause = async (detail) => {
+    const pauseUntil = pauseForStaleToken(userId, detail, isCurrentCredential);
+    if (signal.aborted || pauseUntil <= 0) return;
+    pausedForStaleToken = true;
+    consecutiveFailures = 0;
+    await sleep(Math.max(0, pauseUntil - Date.now()), signal);
+  };
+
   // 凭据代际：worker 启动时捕获 token_enc；换绑/解绑会改写 DB，旧 worker 必须静默退出，
   // 且不得再写 get_updates_buf / 入站消息 / last_poll / paused（docs M1 修复）。
   const initialTokenEnc = row.token_enc ?? null;
@@ -462,9 +644,10 @@ async function runLoop(row, token, controller, worker) {
     return Boolean(current && current.status === 'active' && (current.token_enc ?? null) === initialTokenEnc);
   };
 
-  // best-effort：通道启动通知，失败不阻塞轮询
+  // best-effort：通道启动通知，失败不阻塞轮询；ret!=0 只告警（对齐官方 channel.startAccount）
   try {
-    await ilink.notifyStart({ baseUrl: row.base_url, token });
+    const startResp = await ilink.notifyStart({ baseUrl: row.base_url, token });
+    warnNotifyRet('notifystart', userId, startResp);
     log.debug('notifystart 已发送', { userId });
   } catch (err) {
     if (signal.aborted) return;
@@ -477,7 +660,8 @@ async function runLoop(row, token, controller, worker) {
       log.info('监控凭据已变更或解绑，旧循环退出', { userId });
       return;
     }
-    maybePersistCursor();
+    // 上一轮游标落库失败则先重试（变化即落库；失败不丢，继续使用旧游标请求）
+    if (cursorDirty) persistCursor();
     metrics.incCounter('monitor.poll.total');
     let resp;
     try {
@@ -497,17 +681,18 @@ async function runLoop(row, token, controller, worker) {
       if (isStaleTokenLike(err)) {
         metrics.incCounter('monitor.poll.errors.total');
         metrics.incCounter('monitor.stale_token.total');
-        pauseForStaleToken(userId, err.message, isCurrentCredential);
-        return;
+        await enterStalePause(err.message);
+        continue;
+      }
+      if (err?.httpStatus === 401) {
+        // 官方语义：HTTP 401 但 body 未携带 ret/errcode=-14 → 不是 token 失效，按普通失败退避（不冷却）。
+        log.warn('getupdates HTTP 401 但 body 未带 -14，按普通失败退避（不冷却）', {
+          userId,
+          body: String(err?.body ?? '').slice(0, 200),
+        });
       }
       metrics.incCounter('monitor.poll.errors.total');
-      consecutiveFailures += 1;
-      const delayMs =
-        consecutiveFailures >= config.monitor.maxConsecutiveFailures
-          ? config.monitor.backoffMs
-          : config.monitor.retryDelayMs;
-      log.warn('getupdates 失败，准备退避重试', { userId, failures: consecutiveFailures, delayMs, message: err?.message });
-      await sleep(delayMs, signal);
+      await deferForFailure({ message: err?.message });
       continue;
     }
     if (signal.aborted) break;
@@ -529,40 +714,35 @@ async function runLoop(row, token, controller, worker) {
     if (ret === -14 || errcode === -14) {
       metrics.incCounter('monitor.poll.errors.total');
       metrics.incCounter('monitor.stale_token.total');
-      pauseForStaleToken(userId, resp?.errmsg || 'getupdates 返回 -14', isCurrentCredential);
-      return;
+      await enterStalePause(resp?.errmsg || 'getupdates 返回 -14');
+      continue;
     }
     if (ret !== 0 || errcode !== 0) {
       metrics.incCounter('monitor.poll.errors.total');
-      consecutiveFailures += 1;
-      const delayMs =
-        consecutiveFailures >= config.monitor.maxConsecutiveFailures
-          ? config.monitor.backoffMs
-          : config.monitor.retryDelayMs;
-      log.warn('getupdates 返回业务错误，准备退避重试', {
-        userId,
-        ret,
-        errcode,
-        errmsg: resp?.errmsg,
-        failures: consecutiveFailures,
-        delayMs,
-      });
-      await sleep(delayMs, signal);
+      await deferForFailure({ ret, errcode, errmsg: resp?.errmsg });
       continue;
     }
 
+    // 成功响应：清零失败计数；若刚从 -14 冷却恢复，清除 DB pause_until/last_error
+    //（官方 session-guard 的暂停窗口到期后自动失效语义）。
     consecutiveFailures = 0;
+    if (pausedForStaleToken) {
+      pausedForStaleToken = false;
+      try {
+        store.clearUserPause(userId);
+        log.info('token 冷却结束，入站监控恢复轮询', { userId });
+      } catch (err) {
+        log.debug('清除冷却状态失败（忽略）', { userId, message: err?.message });
+      }
+    }
+
     const newBuf = typeof resp?.get_updates_buf === 'string' ? resp.get_updates_buf : '';
     const bufChanged = Boolean(newBuf && newBuf !== getUpdatesBuf);
-    const serverTimeout = Number(resp?.longpolling_timeout_ms);
-    if (Number.isFinite(serverTimeout) && serverTimeout > 0) {
-      // 服务端建议值优先，但限制在合理区间
-      nextTimeoutMs = Math.min(Math.max(1000, serverTimeout), 120000);
-    }
+    // 官方：longpolling_timeout_ms 原样使用；仅无效值回退当前值。
+    nextTimeoutMs = resolveLongPollTimeout(resp?.longpolling_timeout_ms, nextTimeoutMs);
     const messages = Array.isArray(resp?.msgs) ? resp.msgs : [];
     let inboundOutcome = null;
     if (messages.length > 0) {
-      lastMessageAt = Date.now();
       // await 仅覆盖“消息落库”阶段（媒体下载在后台有界执行），以便按落库结果决定是否推进游标。
       inboundOutcome = await processMessages(userId, messages, { awaitMedia: false });
     }
@@ -570,26 +750,17 @@ async function runLoop(row, token, controller, worker) {
       // 可重试的落库失败不推进游标，下一轮 getUpdates 用旧 buf 重放同一批消息。
       metrics.incCounter('monitor.poll.errors.total');
       metrics.incCounter('monitor.inbound_save_retry.total');
-      consecutiveFailures += 1;
-      const delayMs =
-        consecutiveFailures >= config.monitor.maxConsecutiveFailures
-          ? config.monitor.backoffMs
-          : config.monitor.retryDelayMs;
-      log.warn('入站消息落库失败（可重试），暂不推进游标并重试同一批消息', {
-        userId,
-        failures: consecutiveFailures,
-        delayMs,
-      });
-      await sleep(delayMs, signal);
+      await deferForFailure({ reason: 'inbound_save_retry' });
       continue;
     }
-    // 落库处理完成（成功或不可重试失败已记事件）后才推进内存游标
+    // 落库处理完成（成功或不可重试失败已记事件）后才推进内存游标，并立即持久化
+    //（官方 sync-buf 语义：每次收到非空 get_updates_buf 即落盘）。
     if (bufChanged) {
       getUpdatesBuf = newBuf;
       cursorDirty = true;
     }
     worker.pendingBuf = getUpdatesBuf;
-    maybePersistCursor();
+    if (bufChanged) persistCursor();
     worker.lastPollAt = Date.now();
   }
 }
@@ -602,6 +773,8 @@ async function runLoop(row, token, controller, worker) {
  */
 export async function stop(userOrId, { notify = true, reason = '' } = {}) {
   const userId = toUserId(userOrId);
+  // 手动 stop 同时取消“冷却到期自动恢复”的定时器（避免停止后又被自动拉起）
+  clearPausedResumeTimer(userId);
   const worker = workers.get(userId);
   if (!worker) return false;
   workers.delete(userId);
@@ -612,7 +785,7 @@ export async function stop(userOrId, { notify = true, reason = '' } = {}) {
   }
   // 最多等待 5 秒让循环收尾（在途请求可能未被中止）
   await Promise.race([worker.promise.catch(() => {}), sleep(5000)]);
-  // 仅在优雅退出时补写一次内存游标，避免重启后重复回放；日常空闲不写盘。
+  // 仅在优雅退出时补写一次内存游标（正常轮询已“变化即落库”，这里是兜底）。
   if (reason === 'shutdown' && worker.pendingBuf) {
     try {
       const row = store.getUserRow(userId);
@@ -628,7 +801,8 @@ export async function stop(userOrId, { notify = true, reason = '' } = {}) {
       const row = store.getUserRow(userId);
       const secrets = store.getUserSecrets(userId);
       if (row?.base_url && secrets?.token) {
-        await ilink.notifyStop({ baseUrl: row.base_url, token: secrets.token });
+        const stopResp = await ilink.notifyStop({ baseUrl: row.base_url, token: secrets.token });
+        warnNotifyRet('notifystop', userId, stopResp);
         log.debug('notifystop 已发送', { userId });
       }
     } catch (err) {
@@ -641,7 +815,11 @@ export async function stop(userOrId, { notify = true, reason = '' } = {}) {
 
 /** 停止全部监控（优雅退出 / 测试清理）。 */
 export async function stopAll(options = {}) {
+  for (const userId of [...pausedResumeTimers.keys()]) clearPausedResumeTimer(userId);
   const ids = [...workers.keys()];
   await Promise.all(ids.map((id) => stop(id, options).catch(() => false)));
   return ids.length;
 }
+
+// 生产环境启动“冷却到期自动恢复”扫描（index.restoreMonitors 只恢复非冷却用户，这里兜底）。
+ensurePausedResumeSweeper();

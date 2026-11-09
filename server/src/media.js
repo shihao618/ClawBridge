@@ -5,6 +5,13 @@
  *   - 出站：getuploadurl → AES-128-ECB(PKCS7) 加密 → POST CDN（读 x-encrypted-param）
  *   - 入站：media.full_url 或 {cdn}/download?encrypted_query_param=… → AES-128-ECB 解密
  * 详细契约见 docs/MEDIA.md。本模块只做协议/IO/存储，不访问数据库。
+ *
+ * 与官方实现的差异（有意保留，非缺陷；对齐项见各函数注释）：
+ *  - 多媒体：官方每条消息只下载一个主媒体（IMAGE>VIDEO>FILE>VOICE 优先），我们最多下载
+ *    MAX_MEDIA_ITEMS_PER_MESSAGE 个 item（产品需要，官方 process-message.js:72-102 为单媒体）；
+ *  - SSRF 加固：官方直接 fetch CDN URL，我们对入站 URL 做协议/主机白名单 + 逐跳校验（F-P1-01）；
+ *  - 资源加固：官方无下载超时、整段读入内存，我们 60s 超时 + 流式落盘 + 大小上限；
+ *  - 引用消息媒体回退（ref_msg）与「voice 带转写不下载」已对齐官方（见 extractInboundMediaItems）。
  */
 import crypto from 'node:crypto';
 import { createWriteStream } from 'node:fs';
@@ -21,15 +28,23 @@ import * as metrics from './metrics.js';
 const log = logger.child({ mod: 'media' });
 
 export const MediaKind = Object.freeze({ IMAGE: 'image', VIDEO: 'video', FILE: 'file', VOICE: 'voice' });
-/** 入站单条消息最多处理的媒体 item 数（防御性上限）。 */
+/**
+ * 入站单条消息最多处理的媒体 item 数（防御性上限）。
+ * 产品增强（有意差异）：官方只取一个主媒体（process-message.js:72-102），我们保留多 item。
+ */
 export const MAX_MEDIA_ITEMS_PER_MESSAGE = 5;
 const CDN_UPLOAD_MAX_RETRIES = 3;
 
 // 入站下载 URL 校验与重定向限制。
 const INBOUND_MAX_REDIRECTS = 3;
 const INBOUND_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-/** 默认信任的 iLink / 微信 CDN 域名后缀（仅 https 默认放行；http 需显式配置或本机）。 */
-const TRUSTED_MEDIA_HOST_SUFFIXES = ['.qq.com', '.weixin.qq.com'];
+/**
+ * 默认信任的 iLink / 微信 CDN 域名后缀（F-P1-01：按官方常见媒体域补齐，仅 https 默认放行；
+ * http 需显式白名单主机/本机或 media.allowInsecureHttp）。
+ * 说明：官方 pic-decrypt.js 对 CDN URL 不做任何主机限制；我们保留白名单作为 SSRF 加固，
+ * 并覆盖微信图片 CDN（*.qpic.cn）、iLink/CDN（*.weixin.qq.com / *.weixin.com）、wx.qq.com 等。
+ */
+const TRUSTED_MEDIA_HOST_SUFFIXES = ['.qq.com', '.weixin.qq.com', '.qpic.cn', '.weixin.com', '.wx.qq.com'];
 const LOOPBACK_HOSTS = new Set(['localhost', '::1', '0:0:0:0:0:0:0:1']);
 
 // 入站媒体下载进程级有界并发闸门（默认并发 2 / 排队 64，超出直接失败）。
@@ -56,7 +71,14 @@ const EXTENSION_TO_MIME = {
   '.mp3': 'audio/mpeg',
   '.ogg': 'audio/ogg',
   '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.opus': 'audio/opus',
+  '.amr': 'audio/amr',
   '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.3gp': 'video/3gpp',
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
   '.mkv': 'video/x-matroska',
@@ -64,6 +86,8 @@ const EXTENSION_TO_MIME = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.jpe': 'image/jpeg',
+  '.jfif': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.bmp': 'image/bmp',
@@ -81,9 +105,15 @@ const MIME_TO_EXTENSION = {
   'video/webm': '.webm',
   'video/x-matroska': '.mkv',
   'video/x-msvideo': '.avi',
+  'video/3gpp': '.3gp',
   'audio/mpeg': '.mp3',
   'audio/ogg': '.ogg',
   'audio/wav': '.wav',
+  'audio/mp4': '.m4a',
+  'audio/aac': '.aac',
+  'audio/flac': '.flac',
+  'audio/opus': '.opus',
+  'audio/amr': '.amr',
   'audio/silk': '.silk',
   'application/pdf': '.pdf',
   'application/zip': '.zip',
@@ -129,19 +159,24 @@ export function sanitizeFileName(rawName, fallback = 'file.bin') {
 }
 
 /**
- * 根据 MIME / 文件名判断出站媒体类型。
- * 只有在 config.media.allowedImageMime / allowedVideoMime 白名单内的类型才会按图片/视频发送，
- * 其余（如 image/svg+xml、image/tiff、未知扩展名）一律按普通文件发送（与 docs/MEDIA.md §3.2 一致）。
+ * 判断出站媒体类型（与官方 send-media.js 的路由语义对齐，官方依据 media/mime.js）。
+ *
+ * 官方 send-media.js:15-52 的规则：`getMimeFromFilename(filePath)` → image/* 发图片消息、
+ * video/* 发视频消息、其余（含所有音频）发普通文件；EXTENSION_TO_MIME 已补齐常见视频
+ * （.avi→video/x-msvideo、.m4v→video/mp4、.3gp）与音频扩展（音频仍按文件发送）。
+ *
+ * 产品增强（有意差异）：文件名扩展名无法识别时，回退到上传时声明的 MIME，且仅当命中
+ * config.media.allowedImageMime / allowedVideoMime 白名单时才按图片/视频发送——避免
+ * svg/tiff 等微信不保证渲染的 image/* 被当图片发出（官方此时也会落到 file，行为一致）。
  */
 export function detectKind({ mime, fileName } = {}) {
-  const normalized = normalizeMime(mime);
-  if (config.media.allowedImageMime.includes(normalized)) return MediaKind.IMAGE;
-  if (config.media.allowedVideoMime.includes(normalized)) return MediaKind.VIDEO;
   const byName = getMimeFromFilename(fileName);
-  if (byName !== 'application/octet-stream') {
-    if (config.media.allowedImageMime.includes(byName)) return MediaKind.IMAGE;
-    if (config.media.allowedVideoMime.includes(byName)) return MediaKind.VIDEO;
-  }
+  if (byName.startsWith('video/')) return MediaKind.VIDEO;
+  if (byName.startsWith('image/')) return MediaKind.IMAGE;
+  if (byName !== 'application/octet-stream') return MediaKind.FILE;
+  const declared = normalizeMime(mime);
+  if (config.media.allowedImageMime.includes(declared)) return MediaKind.IMAGE;
+  if (config.media.allowedVideoMime.includes(declared)) return MediaKind.VIDEO;
   return MediaKind.FILE;
 }
 
@@ -259,11 +294,17 @@ function isSuffixTrustedHostname(hostname) {
   return TRUSTED_MEDIA_HOST_SUFFIXES.some((suffix) => hostname === suffix.slice(1) || hostname.endsWith(suffix));
 }
 
+/** 记录被拒绝的入站下载 URL（F-P1-01 可观测性：必须能从日志定位 host/reason）。 */
+function logRejectedInboundUrl(reason, details = {}) {
+  log.warn('入站媒体下载 URL 被拒绝', { reason, ...details });
+}
+
 /**
  * 校验入站媒体下载 URL：
  * - 仅允许 http/https，禁止 userinfo；
  * - 主机必须在白名单：iLink/CDN 配置主机、media.allowedHosts、微信 CDN 域名后缀、本机（非生产）；
  * - http 只允许指向显式白名单主机/本机，或显式开启 media.allowInsecureHttp。
+ * 拒绝时记录 warn 日志（reason + host，便于线上排查 CDN 域名变化），再抛出异常。
  * @param {string|URL} rawUrl
  * @param {{cdnBaseUrl?:string}} [options]
  * @returns {URL}
@@ -273,12 +314,17 @@ export function assertInboundDownloadUrl(rawUrl, { cdnBaseUrl = config.ilink.cdn
   try {
     url = rawUrl instanceof URL ? new URL(rawUrl.toString()) : new URL(String(rawUrl));
   } catch {
+    logRejectedInboundUrl('invalid-url', { raw: String(rawUrl).slice(0, 120) });
     throw new Error(`媒体下载 URL 非法：${String(rawUrl).slice(0, 200)}`);
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    logRejectedInboundUrl('protocol', { protocol: url.protocol, hostname: normalizeHostname(url.hostname) });
     throw new Error(`媒体下载 URL 协议不支持（仅允许 http/https）：${url.protocol}`);
   }
-  if (url.username || url.password) throw new Error('媒体下载 URL 不允许包含 userinfo（user:pass@）');
+  if (url.username || url.password) {
+    logRejectedInboundUrl('userinfo', { hostname: normalizeHostname(url.hostname) });
+    throw new Error('媒体下载 URL 不允许包含 userinfo（user:pass@）');
+  }
   const hostname = normalizeHostname(url.hostname);
   const explicit = explicitTrustedHosts(cdnBaseUrl).has(hostname);
   const loopback = isLoopbackHostname(hostname);
@@ -287,9 +333,11 @@ export function assertInboundDownloadUrl(rawUrl, { cdnBaseUrl = config.ilink.cdn
   // 生产环境默认不允许访问本机；开发/测试环境放行（mock/demo 场景），也可由 allowInsecureHttp 显式开启。
   const loopbackAllowed = loopback && (config.isProduction ? allowInsecureHttp : true);
   if (!explicit && !suffixTrusted && !loopbackAllowed) {
+    logRejectedInboundUrl('host-not-allowed', { hostname: hostname || '(空)', hint: '可用 MEDIA_ALLOWED_HOSTS 显式放行' });
     throw new Error(`媒体下载 URL 主机不在允许列表：${hostname || '(空)'}`);
   }
   if (url.protocol === 'http:' && !explicit && !loopbackAllowed && !allowInsecureHttp) {
+    logRejectedInboundUrl('http-not-allowed', { hostname });
     throw new Error(`媒体下载 URL 仅允许 https：${hostname}`);
   }
   return url;
@@ -661,43 +709,109 @@ export async function runInboundDownloadWithSlot(task, { timeoutMs = config.medi
   }
 }
 
+/** 媒体 item 是否带可下载参数（与官方 media-download.js 的 hasDownloadableMedia 同语义）。 */
+function hasDownloadableMedia(media) {
+  return Boolean(media && typeof media === 'object' && (media.encrypt_query_param || media.full_url));
+}
+
+/**
+ * 同步预检下载 URL（F-P1-01）：官方直接 fetch CDN URL，我们复用 SSRF 白名单/协议校验；
+ * 不合法时 assertInboundDownloadUrl 会记录 host/reason 日志，调用方直接跳过该 item。
+ */
+function preflightInboundMediaUrl(media) {
+  assertInboundDownloadUrl(media.full_url || buildCdnDownloadUrl(media.encrypt_query_param));
+}
+
+/**
+ * 单个媒体 item → 可下载描述；返回 null 表示按官方语义静默跳过（不生成 failed 附件）。
+ *
+ * 官方依据（media-download.js:15-95、process-message.js:72-102）：
+ *  - 图片：有 encrypt_query_param 或 full_url 即可；无 aes_key 时按明文下载（官方 image-plain 分支）；
+ *  - 语音/文件/视频：还必须带 media.aes_key；
+ *  - 语音若有 voice_item.text（语音转文字），官方不下载媒体、只用文本；
+ *  - 缺 media/encrypt_query_param/full_url/aes_key 的 item 官方直接跳过。
+ */
+function toInboundMediaEntry(item, { referenced = false } = {}) {
+  const kindByType = { 2: MediaKind.IMAGE, 3: MediaKind.VOICE, 4: MediaKind.FILE, 5: MediaKind.VIDEO };
+  const kind = kindByType[Number(item?.type)];
+  if (!kind) return null;
+  const source =
+    kind === MediaKind.IMAGE
+      ? item.image_item
+      : kind === MediaKind.VOICE
+        ? item.voice_item
+        : kind === MediaKind.FILE
+          ? item.file_item
+          : item.video_item;
+  if (!source || typeof source !== 'object') return null;
+  const media = source.media && typeof source.media === 'object' ? source.media : null;
+  if (!hasDownloadableMedia(media)) return null;
+  if (kind !== MediaKind.IMAGE && !media.aes_key) return null;
+  if (kind === MediaKind.VOICE && typeof source.text === 'string' && source.text.trim() !== '') return null;
+  try {
+    preflightInboundMediaUrl(media);
+  } catch (err) {
+    log.debug('入站媒体 item 跳过：下载 URL 未通过校验', { kind, message: err?.message });
+    return null;
+  }
+  /** referenced=true：来自引用消息（ref_msg.message_item），与官方 referencedMedia 标记对应。 */
+  const entry = { kind, media, referenced: Boolean(referenced) };
+  if (kind === MediaKind.IMAGE) {
+    return {
+      ...entry,
+      fileName: '',
+      mime: '',
+      // 图片的 image_item.aeskey 是 hex 形态，优先于 media.aes_key（官方 media-download.js:19-21）。
+      ...(source.aeskey ? { aesKeyOverride: Buffer.from(String(source.aeskey), 'hex').toString('base64') } : {}),
+    };
+  }
+  if (kind === MediaKind.VOICE) return { ...entry, fileName: 'voice.silk', mime: 'audio/silk' };
+  if (kind === MediaKind.FILE) {
+    const fileName = sanitizeFileName(source.file_name || 'file.bin');
+    return { ...entry, fileName, mime: getMimeFromFilename(fileName) };
+  }
+  return { ...entry, fileName: 'video.mp4', mime: 'video/mp4' };
+}
+
 /**
  * 从 WeixinMessage 中提取可下载的媒体 item（最多 MAX_MEDIA_ITEMS_PER_MESSAGE 个）。
- * 返回 [{kind, media, fileName, mime, aesKeyOverride, text}]
+ *
+ * 与官方对齐（F-P1-02/F-P2）：
+ *  - 单 item 按官方规则过滤：缺 media/encrypt_query_param/full_url/aes_key 的 item 静默跳过，
+ *    voice 带转写文本不下载（保留消息文本），URL 未通过主机白名单的 item 跳过并记 warn 日志；
+ *  - 主 item_list 完全没有可下载媒体时，回退到引用消息 `item.ref_msg.message_item` 并标记 referenced
+ *    （官方 process-message.js:82-88 的引用回退）。
+ * 产品增强（有意差异）：主 item_list 有多媒体时全部提取（官方只取一个主媒体，见文件头注释）。
+ * @returns {Array<{kind:string, media:object, fileName:string, mime:string,
+ *   aesKeyOverride?:string, referenced:boolean}>}
  */
 export function extractInboundMediaItems(message) {
-  const items = [];
   const list = Array.isArray(message?.item_list) ? message.item_list : [];
+  const direct = [];
+  const quoted = [];
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
-    if (items.length >= MAX_MEDIA_ITEMS_PER_MESSAGE) break;
     try {
-      if (item.type === 2 && item.image_item) {
-        const img = item.image_item;
-        const media = img.media ?? {};
-        const aesKeyOverride = img.aeskey ? Buffer.from(String(img.aeskey), 'hex').toString('base64') : undefined;
-        items.push({ kind: MediaKind.IMAGE, media, fileName: '', mime: '', aesKeyOverride });
-      } else if (item.type === 3 && item.voice_item) {
-        const voice = item.voice_item;
-        items.push({
-          kind: MediaKind.VOICE,
-          media: voice.media ?? {},
-          fileName: 'voice.silk',
-          mime: 'audio/silk',
-          text: voice.text ? String(voice.text) : '',
-        });
-      } else if (item.type === 4 && item.file_item) {
-        const file = item.file_item;
-        const fileName = sanitizeFileName(file.file_name || 'file.bin');
-        items.push({ kind: MediaKind.FILE, media: file.media ?? {}, fileName, mime: getMimeFromFilename(fileName) });
-      } else if (item.type === 5 && item.video_item) {
-        items.push({ kind: MediaKind.VIDEO, media: item.video_item.media ?? {}, fileName: 'video.mp4', mime: 'video/mp4' });
+      if (direct.length < MAX_MEDIA_ITEMS_PER_MESSAGE) {
+        const entry = toInboundMediaEntry(item);
+        if (entry) {
+          direct.push(entry);
+          continue;
+        }
+      }
+      // 引用回退候选：官方只考虑 ref_msg.message_item（内嵌媒体 item），此处先收集、按需返回。
+      const refItem = item.ref_msg?.message_item;
+      if (refItem && typeof refItem === 'object') {
+        const entry = toInboundMediaEntry(refItem, { referenced: true });
+        if (entry) quoted.push(entry);
       }
     } catch (err) {
       log.warn('解析入站媒体 item 失败（忽略）', { message: err?.message });
     }
   }
-  return items;
+  // 与官方一致：主 item_list 有可下载媒体时不下载引用消息里的媒体；否则才回退。
+  if (direct.length > 0) return direct;
+  return quoted.slice(0, MAX_MEDIA_ITEMS_PER_MESSAGE);
 }
 
 // ---------------------------------------------------------------------------

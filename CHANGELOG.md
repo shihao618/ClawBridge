@@ -3,6 +3,55 @@
 ClawBridge 采用自托管单仓库发布（Docker 镜像 + 源码），版本号以 `package.json` 为准。
 本文件从 **1.0.0 全新基线**开始记录；更早的开发历史保留在 git 标签/历史中，不再写入本文件。
 
+## [1.1.0] - 2026-11-09
+
+### 官方协议对齐（对照官方插件 `@tencent-weixin/openclaw-weixin@2.4.10`）
+
+- **请求头矩阵**：POST（含未鉴权的 `get_bot_qrcode`）恒带 `Content-Type`/`AuthorizationType=ilink_bot_token`/
+  `X-WECHAT-UIN` + 公共头；GET（`get_qrcode_status`）只带公共头（`iLink-App-Id`/`ClientVersion` + 可选 `SKRouteTag`）。
+- **`client_id`**：改为官方格式 `openclaw-weixin:<毫秒时间戳>-<8位hex>`。
+- **`bot_agent`**：逐字移植官方 `sanitizeBotAgent`（多 product token、注释最长 64 字符、空白归一、
+  256 字节逐 token 截断、空回退 `OpenClaw`）。
+- **版本常量**：`clientVersion` 未显式设置 `ILINK_CLIENT_VERSION` 时由 `channelVersion` 自动派生
+  （`(major<<16)|(minor<<8)|patch`，2.4.10→132106）；启动日志打印 channelVersion/clientVersion/appId。
+- **轻量 API 超时**：`getconfig`/`sendtyping`/`notifystart`/`notifystop` 默认 **10s**（新 env
+  `ILINK_CONFIG_TIMEOUT_MS`，默认 10000）；其它 API 保持 15s。
+- **绑定轮询容错**：网络/网关错误（长轮询超时、5xx/524、fetch 失败、ECONN* 等）不再终止绑定会话，
+  继续轮询到会话 TTL；`BINDING_NETWORK_ERROR_LIMIT` 改为连续网络错误告警阈值。
+- **`-14` 自动恢复**：token 失效暂停 1h 后在 worker 内等待到期**自动继续轮询**（对齐官方 session-guard）；
+  进程重启后冷却到期也会自动恢复监控，不再需要人工「重连」。
+- **监控细节**：失败退避计数清零（2s→2s→30s→2s…）、`longpolling_timeout_ms` 合法值原样使用、
+  `get_updates_buf` 每次变化即落库、`message_id` 顶层为空回退 `item_list[].msg_id`、
+  `notifystart/notifystop` 返回 `ret!=0` 只告警。
+- **入站正文**：按 `item_list` 顺序首个可识别项（TEXT / VOICE 转写 / 媒体占位 `[图片]`…，不带文件名）。
+- **引用消息**：quote/partial_quote 最小解析（`ref_msg` 的 title/message_item/partial_text）并入
+  `raw_json._quote`，不改变规则匹配正文。
+- **`/echo 内容`**：入站指令直接回显（`source=slash`，不进入接口应用规则）；`/toggle-debug` 等不实现。
+- **Markdown**：删除线由 supported 移到 filtered（过滤 `~~` 保留文字，`~~~` 围栏保留）；换行布局明确为
+  ClawBridge 额外行为（官方不调整换行）。
+- **媒体对齐**：入站白名单扩展 `*.qpic.cn`/`*.weixin.com`/`*.wx.qq.com`（保留逐跳校验与拒绝日志）；
+  引用消息 `ref_msg.message_item` 媒体回退下载（标记 `referenced`）；voice 带 `text` 不下载；
+  缺 `media`/`aes_key` 的 item 静默跳过；MIME 路由按官方（`.avi` 等→视频）；mock 增强。
+- **发送失败用户提示**：outbox 永久失败（非 `-14` 暂停、非 `prepare failed`）时向该用户 best-effort
+  发一次「⚠️ 消息发送失败，请稍后重试」（不进队列、不重试、每条一次）；新 env `PUSH_ERROR_NOTICE_ENABLED`
+  （默认 true）+ 运行配置 `push.errorNoticeEnabled`（即时生效）。
+- **HTTP 401**：仅响应体含 `ret/errcode=-14` 才按 token 失效暂停；401 但 body 非 -14 只 warn，
+  按普通失败退避（避免网关 401 误冷却账号）。
+- **`prepare failed`**：文档改为服务端实测语义（官方 2.4.10 源码无该特判）。
+
+### 配置与文档
+
+- `.env.example` 新增 `ILINK_CONFIG_TIMEOUT_MS`、`PUSH_ERROR_NOTICE_ENABLED`；`BINDING_NETWORK_ERROR_LIMIT`
+  语义更新（告警阈值）。
+- `docs/SETTINGS.md` 新增 `push.errorNoticeEnabled`（即时生效）、更新 binding.networkErrorLimit 语义；
+  `docs/PROTOCOL.md` §3/§5/§8、`docs/MEDIA.md`、`docs/MARKDOWN_WECHAT.md`、`docs/ARCHITECTURE.md`、
+  各规则/定时文档与 README 同步；README 新增「与官方插件 2.4.10 的兼容性」与差异汇总。
+
+### 测试
+
+- 官方差异对应单测/e2e 补齐（typing、绑定容错、监控恢复/退避、入站 quote//echo、媒体 ref_msg/白名单/
+  voice-text、dispatcher 失败提示/401、markdown 删除线）。
+
 ## [1.0.5] - 2026-11-09
 
 ### 调整

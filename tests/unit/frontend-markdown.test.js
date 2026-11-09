@@ -312,12 +312,14 @@ test('表格：单元格内转义竖线', () => {
 
 /* ---------------------------- 行内 ---------------------------- */
 
-test('行内：粗体/英文斜体/删除线/行内代码；中文斜体按微信规则去标记', () => {
+test('行内：粗体/英文斜体/删除线标记过滤/行内代码；中文斜体按微信规则去标记', () => {
   const root = renderMarkdownPreview('**粗体** 与 *italic* 与 ~~删除~~ 与 `code` 与 *中文斜体*');
   assert.equal(findAll(root, 'STRONG')[0].textContent, '粗体');
   assert.equal(findAll(root, 'EM')[0].textContent, 'italic');
   assert.equal(findAll(root, 'EM').length, 1, '中文内容不渲染斜体，不应生成 EM');
-  assert.equal(findAll(root, 'S')[0].textContent, '删除');
+  // 微信不渲染删除线：过滤阶段丢弃 `~~` 标记、保留文字（不再生成 S 元素）
+  assert.equal(findAll(root, 'S').length, 0, '删除线标记应被过滤，不生成 S 元素');
+  assert.ok(findAll(root, 'P')[0].textContent.includes('删除'));
   assert.equal(findAll(root, 'CODE')[0].textContent, 'code');
   assert.ok(findAll(root, 'P')[0].textContent.includes('中文斜体'));
   assert.ok(!findAll(root, 'P')[0].textContent.includes('*中文斜体*'));

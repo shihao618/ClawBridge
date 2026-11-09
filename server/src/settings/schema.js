@@ -18,6 +18,7 @@ export const GROUPS = [
       { key: 'rateLimitWindowMs', label: '限流窗口（毫秒）', type: 'number', min: 1000, max: 86400000, restartRequired: true, description: '令牌桶窗口，修改后需重启生效' },
       { key: 'tickMs', label: '出站队列扫描间隔（毫秒）', type: 'number', min: 50, max: 60000, description: 'dispatcher 无活时休眠间隔，每轮实时读取（即时生效）' },
       { key: 'maxAttempts', label: '最大重试次数', type: 'number', min: 1, max: 20, description: '单条消息发送失败后的最大尝试次数' },
+      { key: 'errorNoticeEnabled', label: '发送失败时通知用户', type: 'boolean', description: '消息最终发送失败（非 -14 暂停／非 prepare failed）时向用户 best-effort 发送一条简短失败提示；不进入队列、不重试（即时生效）' },
       { key: 'apiRateLimitPerMinute', label: '对外 API 每分钟上限', type: 'number', min: 1, max: 10000, description: 'API Key 限流器每请求实时同步（即时生效）' },
       { key: 'maxTextLength', label: '消息最大长度', type: 'number', min: 1, max: 20000, description: '单条文本消息最大字符数' },
       { key: 'retryDelaysMs', label: '重试间隔（毫秒，逗号分隔）', type: 'numberArray', min: 0, max: 300000, description: '例如 5000,15000,30000,60000' },

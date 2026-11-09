@@ -562,7 +562,6 @@ async function handleStatus(session, resp) {
 /** 会话 worker 主循环。 */
 async function runWorker(session) {
   session.workerStarted = true;
-  let consecutiveNetworkErrors = 0;
 
   while (!TERMINAL.has(session.status)) {
     const now = Date.now();
@@ -592,29 +591,35 @@ async function runWorker(session) {
         baseUrl: session.apiBaseUrl,
         timeoutMs: pollTimeoutFor(session),
       });
-      consecutiveNetworkErrors = 0;
+      session.networkErrors = 0;
       session.lastPollAt = Date.now();
     } catch (err) {
       if (TERMINAL.has(session.status)) return;
-      if (err?.timeout === true) {
+      // 官方语义（login-qr.js pollQRStatus）：除主动中止外，任何网络/网关错误（长轮询超时、5xx、网关 524、
+      // fetch 失败、ECONN* 等）都视为「继续等待」——不终止会话，持续轮询到会话总 TTL。
+      // BINDING_NETWORK_ERROR_LIMIT 仅作为连续网络错误的日志告警阈值，不再用于结束绑定会话；
+      // 只有真正的协议错误（二维码过期/未知会话/验证码错误上限等）才会结束会话。
+      if (err?.aborted === true) {
+        log.debug('扫码状态轮询被中止（继续轮询）', { sessionId: session.id });
+      } else if (err?.timeout === true) {
         // 官方语义：客户端长轮询超时属正常控制流，继续轮询（不计入连续网络错误）
         log.debug('扫码状态长轮询超时，继续轮询', { sessionId: session.id });
-      } else if (err?.aborted === true) {
-        if (TERMINAL.has(session.status)) return;
       } else {
-        consecutiveNetworkErrors += 1;
-        session.networkErrors = consecutiveNetworkErrors;
-        log.warn('扫码状态轮询失败', {
-          sessionId: session.id,
-          errors: consecutiveNetworkErrors,
-          message: err?.message,
-        });
-        if (consecutiveNetworkErrors >= config.binding.networkErrorLimit) {
-          finishSession(session, 'error', '绑定失败，请重试', `网络错误：${err?.message ?? '未知错误'}`);
-          return;
+        session.networkErrors = (Number(session.networkErrors) || 0) + 1;
+        const warnThreshold = Math.max(1, Number(config.binding.networkErrorLimit) || 5);
+        if (session.networkErrors === warnThreshold) {
+          log.warn('扫码状态轮询连续网络错误（继续轮询，不终止绑定）', {
+            sessionId: session.id,
+            errors: session.networkErrors,
+            message: err?.message,
+          });
+        } else {
+          log.debug('扫码状态轮询失败（可恢复，继续轮询）', {
+            sessionId: session.id,
+            errors: session.networkErrors,
+            message: err?.message,
+          });
         }
-        await sleep(Math.min(1000 * consecutiveNetworkErrors, 5000));
-        continue;
       }
     }
 

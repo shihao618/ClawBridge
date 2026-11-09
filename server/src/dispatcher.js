@@ -10,7 +10,9 @@
  *        caption 与媒体各消耗 1 个限流令牌；
  *      - 纯文本：一次 sendText；
  *   5. 成功 → sent + last_outbound_at；失败 ret=-2 限流退避重试；ret=-2 prepare failed 直接失败（context_token 失效）；
- *      -14 冷却 1h 并失败剩余；其他错误退避到上限。
+ *      -14 冷却 1h 并失败剩余；HTTP 401 仅当响应体含 ret/errcode=-14 才视为 token 失效，其余按普通失败退避到上限。
+ *   6. 永久失败（非 -14/非 prepare failed）时按 PUSH_ERROR_NOTICE_ENABLED 向用户 best-effort 发一条简短失败提示；
+ *      提示直接发送、不进入 outbox 队列、不重试、同一 outbox 只提示一次（防循环）。
  * 启动时把残留 sending 重置为 queued。
  */
 import { config } from './config.js';
@@ -90,14 +92,55 @@ function sleep(ms, signal) {
 
 /**
  * 判断是否为 bot_token 失效（-14）。
- * 兼容两种上游表达：① HTTP 200 + body.ret=-14；② HTTP 401 + body 中 ret/errcode=-14
- * （部分网关/模拟实现用 401 表示凭证失效）。
+ * 与官方 session-guard.js 一致：只认响应体中的 ret/errcode=-14。
+ * HTTP 401 但 body 未带 -14 时不算 token 失效（避免网关/代理 401 误冷却账号）；
+ * 兼容两种上游表达：① HTTP 200 + body.ret=-14；② HTTP 401 + body 中 ret/errcode=-14。
  */
 function isStaleTokenLike(err) {
   if (isStaleTokenError(err)) return true;
   if (!err || err.name !== 'ILinkError') return false;
-  if (err.httpStatus === 401) return true;
-  return typeof err.body === 'string' && /"?(?:ret|errcode)"?\s*:\s*-14/.test(err.body);
+  return typeof err.body === 'string' && /"?(?:ret|errcode)"?\s*:\s*-14(?:[^0-9]|$)/.test(err.body);
+}
+
+/** 发送失败提示文案（仅告知结果，不包含 token/内部错误细节）。 */
+const ERROR_NOTICE_TEXT = '⚠️ 消息发送失败，请稍后重试';
+/** 已发送过失败提示的 outbox id（同一消息只提示一次；进程内有界去重，防止提示本身失败造成循环）。 */
+const errorNoticeSent = new Set();
+const ERROR_NOTICE_DEDUPE_LIMIT = 1000;
+
+/**
+ * 出站消息永久失败时，向用户 best-effort 发送一条失败提示（对齐官方 error-notice.js）。
+ * - 直接调用 ilink.sendText，不进入 outbox 队列、不重试、失败只记 debug；
+ * - -14（需重新绑定）与 prepare failed（context_token 失效）由调用方跳过；
+ * - 同一 outbox 只提示一次（进程内去重）。
+ * @returns {Promise<boolean>} 是否实际尝试并成功发送
+ */
+async function sendErrorNotice({ user, candidate, secrets }) {
+  if (!config.push.errorNoticeEnabled || dbClosing) return false;
+  const outboxId = candidate?.id;
+  if (!outboxId || errorNoticeSent.has(outboxId)) return false;
+  const userSecrets = secrets ?? store.getUserSecrets(user.id);
+  if (!userSecrets?.token) return false;
+  errorNoticeSent.add(outboxId);
+  if (errorNoticeSent.size > ERROR_NOTICE_DEDUPE_LIMIT) {
+    errorNoticeSent.delete(errorNoticeSent.values().next().value);
+  }
+  try {
+    await ilink.sendText({
+      baseUrl: user.base_url,
+      token: userSecrets.token,
+      toUserId: user.wechat_user_id,
+      text: ERROR_NOTICE_TEXT,
+      contextToken: userSecrets.contextToken || undefined,
+    });
+    metrics.incCounter('dispatcher.error_notice.sent');
+    log.debug('已向用户发送发送失败提示', { outboxId, userId: user.id });
+    return true;
+  } catch (err) {
+    metrics.incCounter('dispatcher.error_notice.failed');
+    log.debug('发送失败提示失败（忽略）', { outboxId, userId: user.id, message: err?.message });
+    return false;
+  }
 }
 
 /** 启动 worker（幂等）。 */
@@ -222,6 +265,7 @@ export async function processOne(now = Date.now()) {
       store.markOutboxFailed(candidate.id, { error: '媒体附件不存在或未就绪，无法发送', ts: now, incrementAttempts: false });
       metrics.incCounter('dispatcher.failed.total');
       log.warn('消息投递失败：媒体附件缺失/未就绪', { outboxId: candidate.id, mediaId: candidate.media_id });
+      void sendErrorNotice({ user, candidate });
       return true;
     }
   }
@@ -325,9 +369,10 @@ export async function processOne(now = Date.now()) {
       store.markOutboxFailed(candidate.id, { error: reason, ts: Date.now() });
       metrics.incCounter('dispatcher.failed.total');
       log.warn('消息投递失败（不可重试）', { outboxId: candidate.id, userId: user.id, message: reason });
+      void sendErrorNotice({ user, candidate, secrets });
       return true;
     }
-    handleFailure({ candidate, user, err });
+    handleFailure({ candidate, user, err, secrets });
   }
   return true;
 }
@@ -382,8 +427,8 @@ async function sendMediaAttachment({ user, token, attachment, contextToken }) {
   return { resp, kind };
 }
 
-/** 发送失败处理：-14 冷却 / -2 退避 / 其他错误退避到上限。 */
-function handleFailure({ candidate, user, err }) {
+/** 发送失败处理：-14 冷却 / -2 退避 / 其他错误退避到上限；永久失败发用户提示。 */
+function handleFailure({ candidate, user, err, secrets }) {
   if (dbClosing) {
     log.warn('退出 drain 超时：跳过失败状态写库', { outboxId: candidate.id, userId: user.id });
     return;
@@ -407,6 +452,15 @@ function handleFailure({ candidate, user, err }) {
       alsoFailed: failedCount,
     });
     return;
+  }
+
+  // HTTP 401 但响应体未带 -14：不是 token 失效（对齐官方 session-guard），只告警不冷却，按普通失败处理。
+  if (err?.name === 'ILinkError' && err.httpStatus === 401) {
+    log.warn('HTTP 401 但响应体未包含 -14：不视为 token 失效、不冷却账号', {
+      outboxId: candidate.id,
+      userId: user.id,
+      body: String(err.body ?? '').slice(0, 200),
+    });
   }
 
   // iLink 的 ret=-2 有两种语义：真正限流，以及 prepare failed（context_token 缺失/失效）。
@@ -434,6 +488,7 @@ function handleFailure({ candidate, user, err }) {
       maxAttempts: config.push.maxAttempts,
       message,
     });
+    void sendErrorNotice({ user, candidate, secrets });
     return;
   }
 

@@ -165,7 +165,7 @@ test('ilink.buildTextMessage: 字段与官方一致', () => {
   assert.equal(msg.message_state, 2);
   assert.deepEqual(msg.item_list, [{ type: 1, text_item: { text: 'hello' } }]);
   assert.equal(msg.context_token, 'ctx_1');
-  assert.ok(msg.client_id.startsWith('clawbridge-'));
+  assert.ok(/^openclaw-weixin:\d{13}-[0-9a-f]{8}$/.test(msg.client_id), 'client_id 应为官方格式');
   const noCtx = ilink.buildTextMessage({ toUserId: 'u', text: 'x' });
   assert.equal('context_token' in noCtx, false);
 });

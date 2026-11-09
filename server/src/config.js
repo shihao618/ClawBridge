@@ -49,6 +49,20 @@ function resolveDataDir(env) {
   return path.isAbsolute(raw) ? raw : path.resolve(ROOT_DIR, raw);
 }
 
+/**
+ * iLink-App-ClientVersion：uint32 编码 0x00MMNNPP（高位 8bit 固定 0，其余 major<<16|minor<<8|patch），
+ * 与官方 `api/api.js` 的 buildClientVersion() 一致（如 2.4.10 → 0x02040A = 132106）。
+ * @param {string} version 形如 "2.4.10"（非数字段按 0 处理）
+ * @returns {number}
+ */
+export function deriveClientVersion(version) {
+  const parts = String(version ?? '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10));
+  const [major = 0, minor = 0, patch = 0] = parts.map((value) => (Number.isFinite(value) ? value : 0));
+  return (((major & 0xff) << 16) | ((minor & 0xff) << 8) | (patch & 0xff)) >>> 0;
+}
+
 /** 读取持久化 secret；不存在则生成并写盘（0600）。 */
 function readOrCreateSecret(dataDir, filename, generate, { env, name }) {
   const filePath = path.join(dataDir, filename);
@@ -99,17 +113,26 @@ export function loadConfig(env = process.env) {
   const publicBaseUrl = envStr(env, 'PUBLIC_BASE_URL', '').replace(/\/+$/, '');
   const trustProxy = envBool(env, 'TRUST_PROXY', false);
 
+  // iLink 渠道/客户端版本：channelVersion 显式配置；clientVersion 未显式设置 ILINK_CLIENT_VERSION 时
+  // 由 channelVersion 按官方公式自动派生（官方 2.4.10 → 132106），升级渠道版本时无需手改两个值。
+  const channelVersion = envStr(env, 'CHANNEL_VERSION', '2.4.10');
+  const explicitClientVersion = envStr(env, 'ILINK_CLIENT_VERSION', '');
+  const clientVersion =
+    explicitClientVersion === '' ? deriveClientVersion(channelVersion) : envInt(env, 'ILINK_CLIENT_VERSION', deriveClientVersion(channelVersion));
+
   const ilink = {
     loginBaseUrl: envStr(env, 'ILINK_LOGIN_BASE_URL', 'https://ilinkai.weixin.qq.com').replace(/\/+$/, ''),
     defaultBaseUrl: envStr(env, 'ILINK_BASE_URL', 'https://ilinkai.weixin.qq.com').replace(/\/+$/, ''),
     cdnBaseUrl: envStr(env, 'ILINK_CDN_BASE_URL', 'https://novac2c.cdn.weixin.qq.com/c2c').replace(/\/+$/, ''),
     appId: envStr(env, 'ILINK_APP_ID', 'bot'),
-    clientVersion: envInt(env, 'ILINK_CLIENT_VERSION', 132106),
-    channelVersion: envStr(env, 'CHANNEL_VERSION', '2.4.10'),
+    clientVersion,
+    channelVersion,
     botAgent: envStr(env, 'BOT_AGENT', 'OpenClaw'),
     botType: envStr(env, 'ILINK_BOT_TYPE', '3'),
     routeTag: envStr(env, 'ILINK_ROUTE_TAG', ''),
     requestTimeoutMs: envInt(env, 'ILINK_REQUEST_TIMEOUT_MS', 15000),
+    // 轻量 API（getconfig/sendtyping/notifystart/notifystop）默认超时（官方 DEFAULT_CONFIG_TIMEOUT_MS=10s）。
+    configTimeoutMs: envInt(env, 'ILINK_CONFIG_TIMEOUT_MS', 10000),
     qrPollTimeoutMs: envInt(env, 'ILINK_QR_POLL_TIMEOUT_MS', 35000),
     longPollTimeoutMs: envInt(env, 'ILINK_LONGPOLL_TIMEOUT_MS', 35000),
   };
@@ -152,6 +175,8 @@ export function loadConfig(env = process.env) {
     maxRefreshes: envInt(env, 'BINDING_MAX_REFRESHES', 3),
     maxActiveSessions: envInt(env, 'BINDING_MAX_ACTIVE', 50),
     ipLimitPerHour: envInt(env, 'BINDING_IP_LIMIT_PER_HOUR', 20),
+    // 连续网络错误“告警阈值”：仅用于日志告警，不再终止绑定会话（可恢复网络错误会持续轮询到会话 TTL；
+    // 仅二维码过期/未知会话/验证码错误上限等真正的协议错误才结束会话）。
     networkErrorLimit: envInt(env, 'BINDING_NETWORK_ERROR_LIMIT', 5),
     pollGapMs: envInt(env, 'BINDING_POLL_GAP_MS', 1000),
     verifyTimeoutMs: envInt(env, 'BINDING_VERIFY_TIMEOUT_MS', 2 * 60 * 1000),
@@ -167,6 +192,8 @@ export function loadConfig(env = process.env) {
     rateLimitWindowMs: envInt(env, 'RATE_LIMIT_WINDOW_MS', 5 * 60 * 1000),
     tickMs: envInt(env, 'DISPATCH_TICK_MS', 250),
     maxAttempts: envInt(env, 'PUSH_MAX_ATTEMPTS', 5),
+    // 出站消息永久失败时向用户 best-effort 发送一条简短失败提示（不进入 outbox 队列、不重试）。
+    errorNoticeEnabled: envBool(env, 'PUSH_ERROR_NOTICE_ENABLED', true),
     retryDelaysMs: retryDelaysMs.length > 0 ? retryDelaysMs : [5000, 15000, 30000, 60000],
     maxTextLength: envInt(env, 'MAX_TEXT_LENGTH', 4000),
     apiRateLimitPerMinute: envInt(env, 'API_RATE_LIMIT_PER_MINUTE', 60),

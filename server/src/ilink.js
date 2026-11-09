@@ -12,9 +12,18 @@ import { logger } from './logger.js';
 import { filterWechatMarkdown, layoutWechatText } from './shared/wechat-markdown.js';
 
 const log = logger.child({ mod: 'ilink' });
+
+// 启动日志：打印协议关键参数，便于与官方插件版本对照（官方运行时读 package.json 派生）。
+log.info('iLink 协议参数', {
+  channelVersion: config.ilink.channelVersion,
+  clientVersion: config.ilink.clientVersion,
+  appId: config.ilink.appId,
+});
+
 const LOSSLESS_ID_FIELDS = new Set(['message_id', 'msg_id', 'svr_id']);
 const DEFAULT_BOT_AGENT = 'OpenClaw';
-const BOT_AGENT_RE = /^[A-Za-z0-9_.-]{1,32}\/[A-Za-z0-9_.+-]{1,32}(?: \([\x20-\x27\x2A-\x7E]{1,64}\))?$/;
+/** bot_agent 清洗后的最大字节数（官方 BOT_AGENT_MAX_LEN）。 */
+const BOT_AGENT_MAX_LEN = 256;
 
 export const MessageType = Object.freeze({ NONE: 0, USER: 1, BOT: 2 });
 export const MessageItemType = Object.freeze({
@@ -28,12 +37,84 @@ export const MessageItemType = Object.freeze({
   TOOL_CALL_RESULT: 12,
 });
 export const MessageState = Object.freeze({ NEW: 0, GENERATING: 1, FINISH: 2 });
+/** typing 状态（官方 api/types.js TypingStatus）：1=正在输入，2=取消。 */
+export const TypingStatus = Object.freeze({ TYPING: 1, CANCEL: 2 });
 
-/** bot_agent 必须是合法 UA token，否则回退默认值（与官方 sanitizeBotAgent 语义一致）。 */
+/** UA product 语法（官方 sanitizeBotAgent 的 productRe）。 */
+const BOT_AGENT_PRODUCT_RE = /^[A-Za-z0-9_.-]{1,32}\/[A-Za-z0-9_.+-]{1,32}$/;
+/** UA 注释字符语法（官方 sanitizeBotAgent 的 commentCharRe；可打印 ASCII，排除括号）。 */
+const BOT_AGENT_COMMENT_RE = /^[\x20-\x27\x2A-\x7E]{1,64}$/;
+
+/**
+ * 移植官方 `api/api.js` sanitizeBotAgent()（逐字对齐 2.4.10 算法）：
+ * - 语法：`product *( SP product )`；product = name/version [ SP "(" comment ")" ]；
+ * - 支持多个 product token 与跨空格的 `(comment)`（注释 ≤64 可打印字符，排除括号）；
+ * - 解析失败/空输入 → `OpenClaw`；超过 256 字节时逐个丢弃尾部 token 截断；
+ * - 空白归一（按空白切分后重新以单空格拼接）。
+ * @param {unknown} raw
+ * @returns {string}
+ */
 export function sanitizeBotAgent(raw) {
-  const value = typeof raw === 'string' ? raw.trim() : '';
-  if (!value) return DEFAULT_BOT_AGENT;
-  return BOT_AGENT_RE.test(value) && Buffer.byteLength(value, 'utf8') <= 256 ? value : DEFAULT_BOT_AGENT;
+  if (!raw || typeof raw !== 'string') return DEFAULT_BOT_AGENT;
+  const trimmed = raw.trim();
+  if (!trimmed) return DEFAULT_BOT_AGENT;
+
+  // Tokenize on whitespace, but keep `(comment)` glued to the preceding product.
+  const rawTokens = trimmed.split(/\s+/);
+  const tokens = [];
+  for (let i = 0; i < rawTokens.length; i += 1) {
+    const tok = rawTokens[i];
+    if (tok.startsWith('(') && !tok.endsWith(')')) {
+      // 跨空格的注释：贪婪收集到遇到右括号
+      let acc = tok;
+      while (i + 1 < rawTokens.length && !acc.endsWith(')')) {
+        i += 1;
+        acc += ' ' + rawTokens[i];
+      }
+      tokens.push(acc);
+    } else {
+      tokens.push(tok);
+    }
+  }
+
+  const accepted = [];
+  let pendingProduct = null;
+  for (const tok of tokens) {
+    if (tok.startsWith('(') && tok.endsWith(')')) {
+      const inner = tok.slice(1, -1);
+      if (pendingProduct && BOT_AGENT_COMMENT_RE.test(inner)) {
+        accepted.push(`${pendingProduct} (${inner})`);
+        pendingProduct = null;
+      } else {
+        if (pendingProduct) {
+          accepted.push(pendingProduct);
+          pendingProduct = null;
+        }
+      }
+      continue;
+    }
+    if (pendingProduct) {
+      accepted.push(pendingProduct);
+      pendingProduct = null;
+    }
+    if (BOT_AGENT_PRODUCT_RE.test(tok)) pendingProduct = tok;
+  }
+  if (pendingProduct) accepted.push(pendingProduct);
+  if (accepted.length === 0) return DEFAULT_BOT_AGENT;
+
+  const joined = accepted.join(' ');
+  if (Buffer.byteLength(joined, 'utf8') <= BOT_AGENT_MAX_LEN) return joined;
+
+  // 超过 256 字节：逐个 token 丢弃尾部，直到不超限
+  const truncated = [];
+  let len = 0;
+  for (const token of accepted) {
+    const add = (truncated.length === 0 ? 0 : 1) + Buffer.byteLength(token, 'utf8');
+    if (len + add > BOT_AGENT_MAX_LEN) break;
+    truncated.push(token);
+    len += add;
+  }
+  return truncated.length > 0 ? truncated.join(' ') : DEFAULT_BOT_AGENT;
 }
 
 export function buildBaseInfo() {
@@ -49,19 +130,30 @@ function randomWechatUin() {
   return Buffer.from(String(uint32), 'utf8').toString('base64');
 }
 
-/** 构造请求头。token 为空时是未鉴权请求（二维码接口）。 */
+/** 公共请求头（官方 buildCommonHeaders：GET 与 POST 都用；GET 仅带这些）。 */
+export function buildCommonHeaders() {
+  const headers = {
+    'iLink-App-Id': config.ilink.appId,
+    'iLink-App-ClientVersion': String(config.ilink.clientVersion),
+  };
+  if (config.ilink.routeTag) headers.SKRouteTag = config.ilink.routeTag;
+  return headers;
+}
+
+/**
+ * POST 请求头（官方 buildHeaders）：恒带 Content-Type / AuthorizationType / X-WECHAT-UIN + 公共头，
+ * 仅 token 非空时带 Authorization。未鉴权的 POST（如 get_bot_qrcode）同样使用本矩阵。
+ */
 export function buildHeaders({ token } = {}) {
   const headers = {
     'Content-Type': 'application/json',
-    'iLink-App-Id': config.ilink.appId,
-    'iLink-App-ClientVersion': String(config.ilink.clientVersion),
+    AuthorizationType: 'ilink_bot_token',
     'X-WECHAT-UIN': randomWechatUin(),
+    ...buildCommonHeaders(),
   };
-  if (token) {
+  if (token && String(token).trim()) {
     headers.Authorization = `Bearer ${String(token).trim()}`;
-    headers.AuthorizationType = 'ilink_bot_token';
   }
-  if (config.ilink.routeTag) headers.SKRouteTag = config.ilink.routeTag;
   return headers;
 }
 
@@ -196,9 +288,11 @@ async function requestJson({ method, baseUrl, endpoint, body, token, timeoutMs =
 
   try {
     log.debug(`${label} → ${method} ${base}${endpoint}`, { token: token ? 'present' : 'none' });
+    // 官方请求头矩阵：GET 仅公共头；所有 POST 用完整 POST 头（含未鉴权的 get_bot_qrcode）。
+    const headers = String(method).toUpperCase() === 'GET' ? buildCommonHeaders() : buildHeaders({ token });
     const res = await fetch(url, {
       method,
-      headers: buildHeaders({ token }),
+      headers,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });
@@ -302,8 +396,9 @@ export async function getUpdates({
   }
 }
 
+/** 生成出站消息 client_id（官方 util/random.js generateId 格式：`openclaw-weixin:<ts>-<8hex>`）。 */
 export function createClientId() {
-  return `clawbridge-${crypto.randomUUID()}`;
+  return `openclaw-weixin:${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 }
 
 /** 构造单条文本消息（SendMessageReq.msg）。 */
@@ -428,7 +523,7 @@ export async function sendMediaMessage({ baseUrl, token, toUserId, item, context
 // 通道生命周期 / 配置
 // ---------------------------------------------------------------------------
 
-export async function notifyStart({ baseUrl, token, timeoutMs = config.ilink.requestTimeoutMs } = {}) {
+export async function notifyStart({ baseUrl, token, timeoutMs = config.ilink.configTimeoutMs } = {}) {
   return requestJson({
     method: 'POST',
     baseUrl,
@@ -440,7 +535,7 @@ export async function notifyStart({ baseUrl, token, timeoutMs = config.ilink.req
   });
 }
 
-export async function notifyStop({ baseUrl, token, timeoutMs = config.ilink.requestTimeoutMs } = {}) {
+export async function notifyStop({ baseUrl, token, timeoutMs = config.ilink.configTimeoutMs } = {}) {
   return requestJson({
     method: 'POST',
     baseUrl,
@@ -466,7 +561,7 @@ export async function getConfig({
   token,
   ilinkUserId,
   contextToken,
-  timeoutMs = config.ilink.requestTimeoutMs,
+  timeoutMs = config.ilink.configTimeoutMs,
 } = {}) {
   const resp = await requestJson({
     method: 'POST',
@@ -502,10 +597,10 @@ export async function sendTyping({
   ilinkUserId,
   typingTicket,
   status,
-  timeoutMs = config.ilink.requestTimeoutMs,
+  timeoutMs = config.ilink.configTimeoutMs,
 } = {}) {
   const normalizedStatus = Number(status);
-  if (normalizedStatus !== 1 && normalizedStatus !== 2) {
+  if (normalizedStatus !== TypingStatus.TYPING && normalizedStatus !== TypingStatus.CANCEL) {
     throw new ILinkError('sendtyping status 只能是 1|2', { endpoint: 'sendtyping' });
   }
   const resp = await requestJson({

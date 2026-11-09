@@ -8,6 +8,9 @@
  *    按接收端逻辑 base64 decode → 32 hex chars → hex decode 16B 后能解密 mock CDN 密文；
  *  - 入站：mock 控制面注入 image/file/video → 后台消息记录 attachments 可见 →
  *    GET /api/admin/media/{id} 字节与原内容一致（含 ?download=1 与 Range）；
+ *  - 入站官方对齐/增强：引用消息 ref_msg 媒体回退下载、voice 带转写不下载、
+ *    一条消息多个 media item 全部下载（产品增强）；
+ *  - 出站回退：getuploadurl 仅返回 upload_param 时按官方拼接 URL 上传成功；
  *  - 鉴权/校验：未登录/错误 Key 401、缺文件名 400、语音出站 400、超限 413、非 active 用户 409；
  *  - 对外 API：POST /api/v1/media 上传 → POST /api/v1/messages 发送 → GET /api/v1/media/{id} 读取。
  *
@@ -42,6 +45,7 @@ const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
 const md5 = (buffer) => createHash('md5').update(buffer).digest('hex');
 /** AES-128-ECB/PKCS7 密文长度。 */
 const cfCipherSize = (plainSize) => Math.floor(plainSize / 16) * 16 + 16;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 从 mock CDN 下载密文并按接收端逻辑解析 aes_key 解密（helper 复用，证明出站 aes_key 格式正确）。 */
 const decryptMockCdnCiphertext = (cdnToken, aesKeyBase64) => e2e.decryptMockCdnCiphertext(cdnToken, aesKeyBase64);
@@ -325,6 +329,103 @@ test('入站媒体：注入 image/file/video → 后台 attachments 可见 → G
   const detail = await e2e.waitUser(mediaUser.user.id, (data) => data.user.hasContextToken === true);
   assert.ok(detail.recentInbound.some((row) => Array.isArray(row.attachments) && row.attachments.length > 0));
   await e2e.waitQueueDrained();
+});
+
+test('入站媒体：引用消息（ref_msg.message_item）内的媒体会下载并可见（官方回退）', async () => {
+  await e2e.ensureAdmin();
+  const image = makePng(1200, 61);
+  const injected = await e2e.mockInboundMedia(mediaUser.account.botId, {
+    kind: 'image',
+    fileName: 'quoted.png',
+    mime: 'image/png',
+    contentBase64: image.toString('base64'),
+    refMedia: true,
+    text: '引用了一张图片',
+  });
+  assert.equal(injected.ok, true);
+  assert.equal(injected.refMedia, true);
+  const ready = await e2e.waitAttachmentsReady(
+    (row) => row.direction === 'inbound' && row.serverMessageId === injected.message.message_id,
+    { direction: 'inbound', kind: 'image', label: '引用消息图片附件 ready' },
+  );
+  assert.equal(ready.attachments.length, 1);
+  assert.equal(ready.attachments[0].status, 'ready');
+  const read = await e2e.getAdminMedia(ready.attachments[0].id);
+  assert.equal(read.status, 200);
+  assert.deepEqual(read.buffer, image, '引用消息图片字节应与注入内容一致');
+});
+
+test('入站媒体：voice 带转写文本时不下载附件（官方对齐，保留文本）', async () => {
+  await e2e.ensureAdmin();
+  const injected = await e2e.mockInboundMedia(mediaUser.account.botId, {
+    kind: 'voice',
+    fileName: 'voice-with-text.silk',
+    mime: 'audio/silk',
+    contentBase64: Buffer.from('[fake-silk-with-text]').toString('base64'),
+    text: '语音转写内容',
+  });
+  const message = await e2e.waitAdminMessage(
+    (row) => row.direction === 'inbound' && row.serverMessageId === injected.message.message_id,
+    { direction: 'inbound', label: '带转写语音入站消息' },
+  );
+  assert.equal(message.text, '语音转写内容', '消息文本应保留语音转写');
+  await sleep(1200); // 留出异步下载窗口，确认确实没有产生附件
+  const after = await e2e.waitAdminMessage(
+    (row) => row.direction === 'inbound' && row.serverMessageId === injected.message.message_id,
+    { direction: 'inbound', label: '复核带转写语音附件' },
+  );
+  const voiceAttachments = (after.attachments ?? []).filter((item) => item.kind === 'voice');
+  assert.equal(voiceAttachments.length, 0, '带转写的 voice 不应下载/落库附件');
+});
+
+test('入站媒体：一条消息多个 media item 全部下载（产品增强，官方只取一个）', async () => {
+  await e2e.ensureAdmin();
+  const fileBytes = makeBytes(500, 62);
+  const image = makePng(800, 63);
+  const injected = await e2e.mockInboundMedia(mediaUser.account.botId, {
+    items: [
+      { kind: 'file', fileName: 'multi.pdf', mime: 'application/pdf', contentBase64: fileBytes.toString('base64') },
+      { kind: 'image', fileName: 'multi.png', mime: 'image/png', contentBase64: image.toString('base64') },
+    ],
+  });
+  assert.equal(injected.ok, true);
+  assert.equal(injected.items.length, 2);
+  const ready = await e2e.waitAttachmentsReady(
+    (row) => row.direction === 'inbound' && row.serverMessageId === injected.message.message_id && (row.attachments ?? []).length === 2,
+    { direction: 'inbound', label: '多 item 入站附件 ready' },
+  );
+  assert.deepEqual(ready.attachments.map((item) => item.kind).sort(), ['file', 'image']);
+  const fileAttachment = ready.attachments.find((item) => item.kind === 'file');
+  const imageAttachment = ready.attachments.find((item) => item.kind === 'image');
+  assert.deepEqual((await e2e.getAdminMedia(fileAttachment.id)).buffer, fileBytes);
+  assert.deepEqual((await e2e.getAdminMedia(imageAttachment.id)).buffer, image);
+});
+
+test('出站：getuploadurl 只返回 upload_param 时按官方回退 URL 上传成功', async () => {
+  await e2e.ensureAdmin();
+  const image = makeBytes(600, 64);
+  await e2e.mockRequest('POST', '/__mock/cdn-upload-url-mode', { mode: 'param' });
+  try {
+    const upload = await e2e.uploadAdminMedia(image, { fileName: 'param.png', mime: 'image/png' });
+    assert.equal(upload.status, 201, `上传应 201：${upload.status} ${upload.text}`);
+    const send = await e2e.adminWrite('POST', `/api/admin/users/${mediaUser.user.id}/messages`, {
+      text: '',
+      mediaId: upload.json.media.id,
+    });
+    assert.equal(send.status, 202, `发送应 202：${send.status} ${send.text}`);
+    const queued = send.json.queued[0];
+    const record = await e2e.waitMockUpload(
+      (entry) => entry.mediaType === 1 && entry.uploadUrlMode === 'param',
+      { label: 'param 模式 getuploadurl 记录' },
+    );
+    assert.equal(record.uploadFullUrl, '', 'param 模式不应返回 upload_full_url');
+    assert.match(String(record.token), /^mock_cdn_/, '客户端应使用拼接 URL 上传成功（x-encrypted-param token）');
+    const outbox = await e2e.waitOutbox(queued.outboxId, 'sent');
+    assert.equal(outbox.status, 'sent');
+    assert.equal(outbox.attempts, 1);
+  } finally {
+    await e2e.mockRequest('POST', '/__mock/cdn-upload-url-mode', { mode: 'full' });
+  }
 });
 
 test('鉴权 / 校验 / 语音出站错误路径：401、400、404', async () => {

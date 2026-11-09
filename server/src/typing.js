@@ -21,7 +21,7 @@
  */
 import { config } from './config.js';
 import { getUserRow, getUserSecrets } from './data/users.js';
-import { getConfig as ilinkGetConfig, sendTyping as ilinkSendTyping } from './ilink.js';
+import { TypingStatus, getConfig as ilinkGetConfig, sendTyping as ilinkSendTyping } from './ilink.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ mod: 'typing' });
@@ -31,8 +31,8 @@ const TICKET_TTL_MS = 24 * 60 * 60 * 1000;
 /** 失败重试初始间隔 2s、指数翻倍、最大 1h（对齐官方 CONFIG_CACHE_INITIAL_RETRY_MS / MAX_RETRY_MS）。 */
 const CONFIG_RETRY_INITIAL_MS = 2000;
 const CONFIG_RETRY_MAX_MS = 60 * 60 * 1000;
-/** getconfig/sendtyping 超时：固定 10s（对齐官方 DEFAULT_CONFIG_TIMEOUT_MS）。 */
-const TYPING_REQUEST_TIMEOUT_MS = 10_000;
+/** getconfig/sendtyping 超时（对齐官方 DEFAULT_CONFIG_TIMEOUT_MS=10s；可用 ILINK_CONFIG_TIMEOUT_MS 覆盖）。 */
+const TYPING_REQUEST_TIMEOUT_FALLBACK_MS = 10_000;
 
 const defaultDependencies = {
   getConfig: ilinkGetConfig,
@@ -92,7 +92,8 @@ function nowMs() {
 }
 
 function typingTimeoutMs() {
-  return TYPING_REQUEST_TIMEOUT_MS;
+  const configured = Number(config.ilink.configTimeoutMs);
+  return Number.isFinite(configured) && configured > 0 ? configured : TYPING_REQUEST_TIMEOUT_FALLBACK_MS;
 }
 
 /**
@@ -186,7 +187,7 @@ function startRefreshTimer(session) {
 async function refreshSession(session) {
   if (session.stopped || sessions.get(session.userId) !== session) return;
   try {
-    await sendStatus(session, 1);
+    await sendStatus(session, TypingStatus.TYPING);
   } catch (err) {
     debug('刷新「正在输入」失败（忽略）', { userId: session.userId, message: err?.message });
   }
@@ -195,7 +196,7 @@ async function refreshSession(session) {
 /** 发送取消（best-effort）：发送 status=2。 */
 async function cancelSession(session) {
   try {
-    await sendStatus(session, 2);
+    await sendStatus(session, TypingStatus.CANCEL);
   } catch (err) {
     debug('取消「正在输入」失败（忽略）', { userId: session.userId, message: err?.message });
   }
@@ -212,7 +213,7 @@ async function startSession(session) {
   if (session.stopped) return;
   if (!session.ticket) return; // 空 ticket（未取到/官方缓存允许空）→ 静默跳过 sendtyping
   try {
-    await sendStatus(session, 1);
+    await sendStatus(session, TypingStatus.TYPING);
   } catch (err) {
     debug('发送「正在输入」失败（忽略）', { userId: session.userId, message: err?.message });
   }

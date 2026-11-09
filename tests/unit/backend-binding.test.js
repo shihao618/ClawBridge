@@ -27,6 +27,9 @@ const state = {
   holdCount: 0,
   /** 置 true 后，下一个二维码的首次（wait 阶段）轮询会被挂起（用于取消竞态测试） */
   holdPhase0: false,
+  /** 前 N 次 get_qrcode_status 返回 503（模拟弱网/网关抖动），用于网络错误容错测试 */
+  failStatusPolls: 0,
+  statusFailuresServed: 0,
   releaseHolds: () => {
     for (const qr of state.qrs.values()) {
       if (qr.release) {
@@ -51,6 +54,14 @@ const fake = http.createServer(async (req, res) => {
   }
   const qrcode = url.searchParams.get('qrcode') || '';
   const verifyCode = url.searchParams.get('verify_code') || '';
+
+  // 弱网/网关抖动：前 N 次状态轮询直接 503（官方会继续轮询，不终止绑定）
+  if (url.pathname === '/ilink/bot/get_qrcode_status' && state.failStatusPolls > 0) {
+    state.failStatusPolls -= 1;
+    state.statusFailuresServed += 1;
+    sendJson(res, 503, { ret: -1, errmsg: 'gateway error' });
+    return;
+  }
 
   if (url.pathname === '/ilink/bot/get_bot_qrcode') {
     state.qrSeq += 1;
@@ -356,4 +367,47 @@ test('绑定成功但 monitor.start 失败 → session 带告警字段并记录 
   } finally {
     config.monitor.maxAccounts = originalMaxAccounts;
   }
+});
+
+// ---------------------------------------------------------------------------
+// OA-01：可恢复网络错误不终止绑定（对齐官方 login-qr.js pollQRStatus 语义）
+// ---------------------------------------------------------------------------
+
+test('网络错误持续轮询不终止：连续错误超过阈值仍继续，网络恢复后完成绑定', async () => {
+  const failureCount = Math.max(1, config.binding.networkErrorLimit) + 3;
+  state.failStatusPolls = failureCount;
+  state.statusFailuresServed = 0;
+
+  const created = await binding.createSession({ displayName: '弱网用户' });
+  const session = () => binding.getSession({ sessionId: created.sessionId, token: created.token });
+
+  // 连续网络错误达到/超过告警阈值时，会话必须仍是非终态（继续轮询）
+  await waitFor(() => state.statusFailuresServed >= Math.max(1, config.binding.networkErrorLimit) + 1);
+  const during = session();
+  assert.notEqual(during.status, 'error', '网络错误不应终止绑定会话');
+  assert.notEqual(during.status, 'timeout', '网络错误不应让会话超时结束');
+  assert.ok(
+    ['waiting', 'wait', 'need_verifycode', 'scanned'].includes(during.status),
+    `网络错误期间应继续轮询（实际 status=${during.status}）`,
+  );
+
+  // 网络恢复：进入 need_verifycode 后提交配对码，最终 confirmed
+  await waitFor(() => {
+    const snapshot = session();
+    if (snapshot.status === 'error' || snapshot.status === 'timeout') {
+      throw new Error(`会话异常终止: ${snapshot.status} ${snapshot.error ?? ''}`);
+    }
+    return snapshot.status === 'need_verifycode' ? snapshot : null;
+  });
+  binding.submitVerifyCode({ sessionId: created.sessionId, token: created.token, code: CORRECT_CODE });
+  const confirmed = await waitFor(() => {
+    const snapshot = session();
+    if (snapshot.status === 'confirmed') return snapshot;
+    if (snapshot.status === 'error' || snapshot.status === 'timeout') {
+      throw new Error(`会话异常终止: ${snapshot.status} ${snapshot.error ?? ''}`);
+    }
+    return null;
+  });
+  assert.equal(confirmed.status, 'confirmed');
+  assert.ok(state.statusFailuresServed >= failureCount, '应实际经历全部网络错误');
 });

@@ -12,6 +12,7 @@ import { test } from 'node:test';
 
 import {
   StreamingWechatMarkdownFilter,
+  WECHAT_MARKDOWN_SUPPORT,
   describeWechatMarkdownAdjustments,
   filterWechatMarkdown,
   layoutWechatText,
@@ -125,4 +126,18 @@ test('换行布局：列表前后普通文本补空行，列表项缩进续行�
 test('发送文本 = 过滤 + 换行布局', () => {
   const md = '##### 小标题\n第一行\n第二行';
   assert.equal(layoutWechatText(filterWechatMarkdown(md)), '小标题\n\n第一行\n\n第二行');
+});
+
+// ---------------------------------------------------------------------------
+// OA-17：删除线不在 supported（官方同样过滤 `~`，仅保留文字）
+// ---------------------------------------------------------------------------
+
+test('WECHAT_MARKDOWN_SUPPORT：删除线为 filtered（官方不渲染删除线，仅保留文字）', () => {
+  assert.equal(WECHAT_MARKDOWN_SUPPORT.supported.includes('删除线'), false, 'supported 不应宣称支持删除线');
+  assert.ok(
+    WECHAT_MARKDOWN_SUPPORT.filtered.some((item) => String(item).includes('删除线')),
+    '删除线应列在 filtered',
+  );
+  assert.equal(filterWechatMarkdown('~~删除线~~'), '删除线', '删除线标记被移除、文字保留');
+  assert.equal(filterWechatMarkdown('~a~b'), 'ab', '单独的 ~ 字符直接丢弃（与官方一致）');
 });
