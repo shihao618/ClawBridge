@@ -349,6 +349,9 @@ export async function processOne(now = Date.now()) {
       ts: Date.now(),
     });
     store.touchOutbound(user.id, Date.now());
+    try {
+      store.clearContextTokenStale(user.id, Date.now());
+    } catch { /* 忽略标记清理失败，不影响发送成功 */ }
     metrics.incCounter('dispatcher.sent.total');
     metrics.observeHistogram('dispatcher.send_latency_ms', Date.now() - sendStartedAt);
     log.info('消息投递完成', {
@@ -469,6 +472,10 @@ function handleFailure({ candidate, user, err, secrets }) {
     const reason =
       '消息发送失败：context_token 缺失或已失效，需要用户先给 bot 发一条消息刷新会话（iLink prepare failed）';
     store.markOutboxFailed(candidate.id, { error: reason, ts: now });
+    // 绑定仍有效，但 context_token 已失效：标记为“待用户刷新会话”，后台不再显示可推送
+    try {
+      store.markContextTokenStale(user.id, now);
+    } catch { /* 忽略标记失败，不影响失败落库 */ }
     metrics.incCounter('dispatcher.failed.total');
     log.warn('消息投递失败：context_token 缺失/失效（prepare failed），不重试', {
       outboxId: candidate.id,

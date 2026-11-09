@@ -142,6 +142,30 @@ test('users: 列表筛选（active/paused/unbound/all）、搜索与分页', () 
   assert.equal(store.listUsers({ status: 'all', q: '不存在的关键词' }).total, 0);
 });
 
+test('users: 推送状态按 context_token 失效标记/最近失败推导，入站刷新后恢复', () => {
+  const { user } = createUser({ wechatUserId: 'wx_push_state', botToken: 'push-state-token' });
+  store.updateContextToken(user.id, 'ctx-push-state', Date.now() - 60_000);
+  assert.equal(store.getUserWithCounts(user.id).pushable, true);
+
+  // 升级前已有的失败：没有 users.last_error 标记，但最近 outbox 失败是 prepare failed
+  const queued = store.enqueueMessage({ userId: user.id, text: '旧失败' });
+  store.markOutboxFailed(queued.id, {
+    error: '消息发送失败：context_token 缺失或已失效，需要用户先给 bot 发一条消息刷新会话（iLink prepare failed）',
+    ts: Date.now() - 30_000,
+  });
+  const stale = store.getUserWithCounts(user.id);
+  assert.equal(stale.contextTokenStale, true, '最近 outbox prepare failed 应推导为待刷新');
+  assert.equal(stale.pushable, false);
+
+  // 显式标记 + 入站刷新清除
+  store.markContextTokenStale(user.id);
+  assert.equal(store.getUserWithCounts(user.id).contextTokenStale, true);
+  store.updateContextToken(user.id, 'ctx-refreshed-after-failure', Date.now() + 1000);
+  const refreshed = store.getUserWithCounts(user.id);
+  assert.equal(refreshed.contextTokenStale, false);
+  assert.equal(refreshed.pushable, true);
+});
+
 test('users: getUserWithCounts / 解绑清空凭证 / 监控候选列表', () => {
   const { user } = createUser({ wechatUserId: 'wx_counts_1', botToken: 'count-token' });
   store.enqueueMessage({ userId: user.id, text: 'a' });

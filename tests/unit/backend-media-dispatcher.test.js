@@ -312,6 +312,18 @@ test('发送失败：ret=-2 prepare failed 不按限流重试，直接 failed �
   assert.match(outbox.error, /context_token/i);
   assert.match(outbox.error, /prepare failed/i);
   assert.equal(state.sendRequests.length, 1);
+
+  // 后台用户视图应显示“待刷新会话/不可推送”，而不是仍然可推送
+  const staleView = store.getUserWithCounts(user.id);
+  assert.equal(staleView.contextTokenStale, true);
+  assert.equal(staleView.pushable, false);
+  assert.match(staleView.lastError, /context_token/i);
+
+  // 用户发一条消息刷新 context_token 后恢复可推送
+  store.updateContextToken(user.id, 'ctx-refreshed');
+  const refreshed = store.getUserWithCounts(user.id);
+  assert.equal(refreshed.contextTokenStale, false);
+  assert.equal(refreshed.pushable, true);
 });
 
 test('媒体发送：caption 发送被 -2 限流时整条退避重试', async () => {

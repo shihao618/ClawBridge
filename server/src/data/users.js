@@ -20,6 +20,22 @@ export function getUserRow(id) {
   return get('SELECT * FROM users WHERE id = ?', String(id ?? ''));
 }
 
+/** context_token 失效（iLink prepare failed）时的用户提示；UI 用它判断“暂不可推送”。 */
+export const CONTEXT_TOKEN_STALE_MARKER =
+  'context_token 已失效，等待用户先给 bot 发一条消息刷新会话';
+
+/** 标记用户的 context_token 已失效（绑定仍有效，只是需要用户先发消息刷新会话）。 */
+export function markContextTokenStale(id, ts = nowMs()) {
+  const result = run('UPDATE users SET last_error = ?, updated_at = ? WHERE id = ?', CONTEXT_TOKEN_STALE_MARKER, ts, String(id ?? ''));
+  return Number(result.changes) > 0;
+}
+
+/** 发送成功/收到新消息刷新 context_token 后，清除“待刷新会话”标记。 */
+export function clearContextTokenStale(id, ts = nowMs()) {
+  const result = run('UPDATE users SET last_error = \'\', updated_at = ? WHERE id = ? AND last_error = ?', ts, String(id ?? ''), CONTEXT_TOKEN_STALE_MARKER);
+  return Number(result.changes) > 0;
+}
+
 /** 按微信用户 ID 读取原始行（换绑判定用）。 */
 export function getUserRowByWechatId(wechatUserId) {
   return get('SELECT * FROM users WHERE wechat_user_id = ?', String(wechatUserId ?? ''));
@@ -44,7 +60,10 @@ export function getUserWithCounts(id, { now = nowMs() } = {}) {
     `SELECT u.*,
        (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'queued') AS queued_count,
        (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'sent') AS sent_count,
-       (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'failed') AS failed_count
+       (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'failed') AS failed_count,
+       (SELECT o.status FROM outbox o WHERE o.user_id = u.id ORDER BY o.updated_at DESC, o.id DESC LIMIT 1) AS last_outbox_status,
+       (SELECT o.error FROM outbox o WHERE o.user_id = u.id ORDER BY o.updated_at DESC, o.id DESC LIMIT 1) AS last_outbox_error,
+       (SELECT o.updated_at FROM outbox o WHERE o.user_id = u.id ORDER BY o.updated_at DESC, o.id DESC LIMIT 1) AS last_outbox_updated_at
      FROM users u WHERE u.id = ?`,
     String(id ?? ''),
   );
@@ -128,7 +147,7 @@ export function upsertBoundUser({ wechatUserId, displayName = '', ilinkBotId = '
 export function updateContextToken(userId, contextToken, ts = nowMs()) {
   if (!contextToken) return false;
   const result = run(
-    'UPDATE users SET context_token_enc = ?, context_token_updated_at = ?, updated_at = ? WHERE id = ?',
+    "UPDATE users SET context_token_enc = ?, context_token_updated_at = ?, updated_at = ?, last_error = '' WHERE id = ?",
     encryptSecret(String(contextToken)),
     ts,
     ts,
@@ -329,7 +348,10 @@ export function listUsers({ status = 'active', q = '', groupId = '', limit = 50,
     `SELECT u.*,
        (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'queued') AS queued_count,
        (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'sent') AS sent_count,
-       (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'failed') AS failed_count
+       (SELECT COUNT(*) FROM outbox o WHERE o.user_id = u.id AND o.status = 'failed') AS failed_count,
+       (SELECT o.status FROM outbox o WHERE o.user_id = u.id ORDER BY o.updated_at DESC, o.id DESC LIMIT 1) AS last_outbox_status,
+       (SELECT o.error FROM outbox o WHERE o.user_id = u.id ORDER BY o.updated_at DESC, o.id DESC LIMIT 1) AS last_outbox_error,
+       (SELECT o.updated_at FROM outbox o WHERE o.user_id = u.id ORDER BY o.updated_at DESC, o.id DESC LIMIT 1) AS last_outbox_updated_at
      FROM users u ${whereSql}
      ORDER BY u.bound_at DESC, u.id ASC
      LIMIT ? OFFSET ?`,

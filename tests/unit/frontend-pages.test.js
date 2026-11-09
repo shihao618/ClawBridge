@@ -1768,6 +1768,14 @@ test('1.0.0 新功能：用户凭据对话框 / {credential:} 提示 / 定时按
   }
 });
 
+test('用户列表：context_token 失效时显示「待刷新会话」而不是可推送', async () => {
+  const usersJs = await readAsset('admin/views/users.js');
+  assert.match(usersJs, /user\.contextTokenStale/, '用户列表应使用后端 contextTokenStale');
+  assert.match(usersJs, /待刷新会话/, '失效时应显示待刷新会话');
+  assert.match(usersJs, /不可推送/, '失效时不应再显示可推送');
+  assert.match(usersJs, /需要用户先给 bot 发一条消息刷新会话/, '应提示用户先发消息刷新');
+});
+
 test('运行配置：消息最大长度与重试间隔同排，重试间隔为单行输入', async () => {
   const [settingsJs, css] = await Promise.all([
     readAsset('admin/views/settings.js'),

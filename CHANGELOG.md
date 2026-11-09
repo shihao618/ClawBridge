@@ -1,3 +1,15 @@
+## [1.1.9] - 2026-11-10
+
+### 修复
+
+- **用户列表推送状态不准**：此前只根据 hasContextToken 显示「可推送」，即使最近发送已经因
+  context_token 失效（iLink prepare failed） 失败，仍显示「活跃 + 可推送」。
+  现在：
+  - sendmessage 返回 prepare failed 时，标记用户为 contextTokenStale（绑定仍 active，但需要用户先发消息刷新会话）；
+  - 用户视图新增 pushable / contextTokenStale / lastError；后台显示「待刷新会话」警告徽章（不改变绑定状态）；
+  - 用户发新消息刷新 context_token 或发送成功后自动清除标记；
+  - 兼容升级前已发生的失败：根据最近一次 outbox 失败（prepare failed 且晚于当前 context_token）推导；
+  - 回归测试覆盖 prepare failed → 不可推送 → 用户刷新后恢复可推送。
 ## [1.1.8] - 2026-11-10
 
 ### 优化

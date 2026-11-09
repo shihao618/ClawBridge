@@ -14,6 +14,19 @@ import { DEFAULT_MEDIA_URL_PREFIX, toNumber } from './helpers.js';
 export function mapUserRow(row, { now = nowMs() } = {}) {
   if (!row) return null;
   const paused = row.status === 'active' && toNumber(row.pause_until) > now;
+  const hasContextToken = Boolean(row.context_token_enc);
+  const lastError = row.last_error ?? '';
+  const prepareFailedPattern = /context_token.*(?:失效|缺失)|prepare failed/i;
+  const lastOutboxError = row.last_outbox_error ?? '';
+  const lastOutboxStatus = row.last_outbox_status ?? '';
+  // 兼容升级前已发生的失败：最近一次 outbox 失败是 prepare failed，且发生在当前 context_token 之后
+  const outboxAfterToken =
+    toNumber(row.last_outbox_updated_at) > toNumber(row.context_token_updated_at);
+  const contextTokenStale =
+    hasContextToken &&
+    (prepareFailedPattern.test(lastError) ||
+      (lastOutboxStatus === 'failed' && outboxAfterToken && prepareFailedPattern.test(lastOutboxError)));
+  const pushable = row.status === 'active' && !paused && hasContextToken && !contextTokenStale;
   return {
     id: row.id,
     displayName: row.display_name ?? '',
@@ -24,7 +37,10 @@ export function mapUserRow(row, { now = nowMs() } = {}) {
     updatedAt: toNumber(row.updated_at),
     lastInboundAt: toNumber(row.last_inbound_at),
     lastOutboundAt: toNumber(row.last_outbound_at),
-    hasContextToken: Boolean(row.context_token_enc),
+    hasContextToken,
+    contextTokenStale,
+    pushable,
+    lastError,
     queuedCount: toNumber(row.queued_count),
     sentCount: toNumber(row.sent_count),
     failedCount: toNumber(row.failed_count),
