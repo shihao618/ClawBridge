@@ -1,6 +1,6 @@
 {
   "name": "clawbridge",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "ClawBridge - 多用户微信 ClawBot 扫码绑定与消息推送平台",
   "type": "module",
   "private": true,

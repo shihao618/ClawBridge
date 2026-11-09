@@ -199,6 +199,7 @@ export function loadConfig(env = process.env) {
     apiRateLimitPerMinute: envInt(env, 'API_RATE_LIMIT_PER_MINUTE', 60),
   };
 
+  const rawMonitorMetaFlushMs = envInt(env, 'MONITOR_META_FLUSH_MS', 6 * 60 * 60 * 1000);
   const monitor = {
     longPollTimeoutMs: envInt(env, 'MONITOR_LONGPOLL_TIMEOUT_MS', 35000),
     maxAccounts: envInt(env, 'MONITOR_MAX_ACCOUNTS', 200),
@@ -207,8 +208,12 @@ export function loadConfig(env = process.env) {
     retryDelayMs: 2000,
     stalePauseMs: 60 * 60 * 1000,
     // 空闲轮询（无消息）时，get_updates_buf / last_poll_at 的落盘间隔：
-    // 降低 NAS/SD 卡等设备上的 SQLite 写入频率；有消息仍立即落盘。
-    metaFlushMs: Math.max(1000, Math.min(6 * 60 * 60 * 1000, envInt(env, 'MONITOR_META_FLUSH_MS', 5 * 60 * 1000))),
+    // 默认 6 小时（机械盘/存储卡可长时间休眠）；有消息仍立即落盘。
+    // 范围 1s–24h；设为 0 = 空闲不写（仅消息/退出时落盘，最省盘）。
+    metaFlushMs:
+      rawMonitorMetaFlushMs <= 0
+        ? 0
+        : Math.max(1000, Math.min(24 * 60 * 60 * 1000, rawMonitorMetaFlushMs)),
   };
 
   // 24h 会话保活（docs/KEEPALIVE.md）：对开启 keepalive 的用户，在最后一条入站消息

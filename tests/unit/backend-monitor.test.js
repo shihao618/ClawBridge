@@ -448,6 +448,31 @@ test('空闲轮询：空响应游标按 metaFlushMs 节流写库，到期后才�
   }
 });
 
+test('metaFlushMs=0：空闲轮询完全不写盘（仅消息/退出时落盘）', async () => {
+  const prev = config.monitor.metaFlushMs;
+  config.monitor.metaFlushMs = 0;
+  const token = 'token-monitor-cursor-no-idle';
+  const user = createUser({ wechatUserId: 'wx_monitor_cursor_no_idle', token });
+  const baseline = Date.now() - 10_000;
+  store.touchPoll(user.id, baseline);
+  queueUpdates({
+    resp: { ret: 0, errcode: 0, errmsg: '', msgs: [], get_updates_buf: 'no-idle-write-buf', longpolling_timeout_ms: 60 },
+  });
+  const callsBefore = fakeState.updateCalls.filter((call) => call.token === token).length;
+  assert.equal(monitor.start(user.id), true);
+  try {
+    await waitFor(() => fakeState.updateCalls.filter((call) => call.token === token).length >= callsBefore + 2, {
+      timeoutMs: 8000,
+    });
+    const row = store.getUserRow(user.id);
+    assert.equal(row.get_updates_buf, '', 'metaFlushMs=0 时空闲游标不应写盘');
+    assert.equal(Number(row.last_poll_at), baseline, 'metaFlushMs=0 时空闲 last_poll_at 不应写盘');
+  } finally {
+    config.monitor.metaFlushMs = prev;
+    await monitor.stop(user.id, { notify: false }).catch(() => {});
+  }
+});
+
 test('空闲轮询：较新的 last_poll_at 不会被每轮 UPDATE 覆盖（只按 metaFlushMs 写）', async () => {
   const prev = config.monitor.metaFlushMs;
   config.monitor.metaFlushMs = 60000;

@@ -589,7 +589,10 @@ async function runLoop(row, token, controller, worker) {
   let consecutiveFailures = 0;
   let nextTimeoutMs = config.monitor.longPollTimeoutMs;
   let cursorDirty = false;
-  const metaFlushMs = Math.max(1000, Number(config.monitor.metaFlushMs) || 5 * 60 * 1000);
+  const rawMetaFlushMs = Number(config.monitor.metaFlushMs);
+  // 0 = 空闲不写盘（仅消息/退出时落盘）；默认 6 小时；上限 24 小时。
+  const metaFlushMs =
+    rawMetaFlushMs <= 0 ? 0 : Math.max(1000, Math.min(24 * 60 * 60 * 1000, rawMetaFlushMs || 6 * 60 * 60 * 1000));
   /** 上次把轮询元数据（游标 / last_poll_at）落盘的时间；空闲轮询按 metaFlushMs 节流。 */
   let lastDiskFlushAt = Number(row.last_poll_at) || 0;
   /** 是否刚从 -14 冷却恢复（恢复后的首个成功响应清除 DB pause_until/last_error）。 */
@@ -763,15 +766,16 @@ async function runLoop(row, token, controller, worker) {
     worker.pendingBuf = getUpdatesBuf;
     worker.lastPollAt = Date.now();
     const now = Date.now();
+    const idleFlushDue = metaFlushMs > 0 && now - lastDiskFlushAt >= metaFlushMs;
     let persisted = false;
     if (cursorDirty) {
-      const flushDue = messages.length > 0 || now - lastDiskFlushAt >= metaFlushMs;
+      const flushDue = messages.length > 0 || idleFlushDue;
       if (flushDue) {
         persisted = persistCursor();
         if (persisted) lastDiskFlushAt = now;
       }
     }
-    if (!persisted && now - lastDiskFlushAt >= metaFlushMs) {
+    if (!persisted && idleFlushDue) {
       try {
         store.touchPoll(userId, now);
         lastDiskFlushAt = now;

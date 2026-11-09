@@ -114,7 +114,7 @@ POST  /api/admin/settings/reset      Body: { "group": "appRules" } → 200 { ok:
 > **例外（尚未并入后台运行配置）**：数据维护（`server/src/maintenance.js`：孤儿附件 / 日志保留 GC）
 > 的参数目前从 env 读取（`MAINTENANCE_*`，默认开启、每天一次），见 [`docs/UPGRADE.md`](UPGRADE.md) §8
 > 「数据维护」。另有 env-only 可选项 `ILINK_CONFIG_TIMEOUT_MS`（轻量 iLink API 超时，默认 10000），
-> `MONITOR_META_FLUSH_MS`（空闲轮询时游标/`last_poll_at` 落盘间隔，默认 300000ms；有消息仍立即落盘），
+> `MONITOR_META_FLUSH_MS`（空闲轮询时游标/`last_poll_at` 落盘间隔，默认 21600000ms=6 小时、范围 1s–24h；0=空闲不写、仅消息/退出时落盘；有消息仍立即落盘），
 > 未进运行配置；此类参数后续可并入 settings 分组。
 
 ### 7.2 新增设置分组/字段（全部 DB 可改）

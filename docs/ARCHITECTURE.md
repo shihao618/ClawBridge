@@ -145,7 +145,7 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
 
 ## 6. 入站监控与媒体（`monitor.js` + `media.js`）
 
-- 每账号独立 `getupdates` 长轮询（默认 35s），游标 `get_updates_buf` **有消息立即落库、空闲按 5 分钟节流落库**、用户 `context_token` 加密保存；
+- 每账号独立 `getupdates` 长轮询（默认 35s），游标 `get_updates_buf` **有消息立即落库、空闲按 6 小时（可配置，0=空闲不写）节流落库**、用户 `context_token` 加密保存；
   `-14` 暂停 1 小时，worker 内等待冷却到期后**自动继续轮询**（对齐官方 session-guard；可被 stop 中止，
   进程重启后冷却到期也会自动恢复监控）；连续失败按官方节奏退避（2s→2s→30s，达到阈值清零计数）；
   `longpolling_timeout_ms` 合法值原样使用（仅无效值回退）。
