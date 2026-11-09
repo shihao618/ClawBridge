@@ -1767,3 +1767,15 @@ test('1.0.0 新功能：用户凭据对话框 / {credential:} 提示 / 定时按
     assert.ok(templates.includes(token), `模板语法帮助应说明凭据/按用户模式：${token}`);
   }
 });
+
+test('运行配置：消息最大长度与重试间隔同排，重试间隔为单行输入', async () => {
+  const [settingsJs, css] = await Promise.all([
+    readAsset('admin/views/settings.js'),
+    readAsset('style.css'),
+  ]);
+  assert.match(settingsJs, /key === 'push\.retryDelaysMs'/, '重试间隔应有专用单行输入分支');
+  assert.match(settingsJs, /class: 'input settings-array'/, '重试间隔应渲染为 input 而非 textarea');
+  assert.match(settingsJs, /key === 'push\.maxTextLength'\) \{\s*\/\/[^\n]*\n\s*fieldsBox\.append\(el\('div', \{ class: 'settings-row-break'/, '消息最大长度前应强制换行，与重试间隔同排');
+  assert.match(settingsJs, /key === 'push\.maxTextLength' \|\| key === 'push\.retryDelaysMs'/, '两个字段应各占半行');
+  assert.match(css, /input\.settings-array\s*\{[\s\S]*?min-height:\s*44px/, '单行数组输入应覆盖 textarea 的多行高度');
+});

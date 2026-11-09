@@ -3327,6 +3327,11 @@ body.admin-authed .admin-main {
   min-height: 62px;
 }
 
+/* 重试间隔等短列表使用单行输入，不再套用 textarea 的多行高度 */
+input.settings-array {
+  min-height: 44px;
+}
+
 .settings-switch {
   align-self: flex-start;
 }

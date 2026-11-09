@@ -129,6 +129,17 @@ function buildSettingControl(group, field, type, value) {
     if (field.max !== undefined && field.max !== null) input.max = String(field.max);
     return input;
   }
+  if (key === 'push.retryDelaysMs') {
+    // 重试间隔是短数字列表：用单行输入（逗号分隔），避免多行 textarea 占满整行
+    return el('input', {
+      id,
+      class: 'input settings-array',
+      type: 'text',
+      value: formatArrayInput(value),
+      placeholder: '逗号分隔，例如 5000,15000,30000,60000',
+      dataset: { settingKey: key },
+    });
+  }
   if (type === 'array') {
     return el('textarea', {
       id,
@@ -227,16 +238,22 @@ function renderSettings() {
       const control = buildSettingControl(group, field, meta.type, state.settings.draft.get(key));
       const settingsSpanClass = key === 'keepalive.text'
         ? ' settings-field--full'
-        : key === 'media.allowedImageMime' || key === 'media.allowedVideoMime'
+        : key === 'push.maxTextLength' || key === 'push.retryDelaysMs'
           ? ' settings-field--half'
-          : meta.type === 'array'
-            ? ' settings-field--full'
-            : '';
+          : key === 'media.allowedImageMime' || key === 'media.allowedVideoMime'
+            ? ' settings-field--half'
+            : meta.type === 'array'
+              ? ' settings-field--full'
+              : '';
       const minMax =
         field.min !== undefined && field.min !== null || field.max !== undefined && field.max !== null
           ? `范围：${field.min ?? '—'} ~ ${field.max ?? '—'}`
           : '';
       if (key === 'media.allowedImageMime') {
+        fieldsBox.append(el('div', { class: 'settings-row-break', 'aria-hidden': 'true' }));
+      }
+      if (key === 'push.maxTextLength') {
+        // 消息最大长度 + 重试间隔固定同一行（各占半行）
         fieldsBox.append(el('div', { class: 'settings-row-break', 'aria-hidden': 'true' }));
       }
       if (key === 'ilink.requestTimeoutMs') {
