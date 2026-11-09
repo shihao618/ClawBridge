@@ -1,13 +1,16 @@
 /**
  * 单元测试：typing.js —— 规则命中期间的微信「正在输入」状态（docs/PROTOCOL.md §5.6）。
  *
- * 参数对齐官方微信插件（v1.0.4）：5s 续期、typing_ticket 24h 随机刷新 + 失败 2s 起指数退避（最大 1h）、
- * getconfig/sendtyping 官方 10s 超时（本实现保留 3s 安全上限）；另保留最小可见 500ms（官方无此概念）。
+ * 参数语义对齐官方微信插件（v1.0.5）：
+ * - 5s 续期（keepaliveIntervalMs=5000）；
+ * - typing_ticket **按 userId** 缓存：24h 随机刷新 + 失败 2s 起指数退避（x2，最大 1h），空 ticket 缓存；
+ * - getconfig/sendtyping 超时固定 10_000ms（官方 DEFAULT_CONFIG_TIMEOUT_MS）；
+ * - start/stop 语义：结束立即 status=2，无最小可见时长/延迟取消。
  *
  * 注入 fake getConfig/sendTyping/now（不触真实网络/不等真实时间），覆盖：
- * 开启→status1 / 结束→status2、刷新定时、实时开关、无 token/无 wechatUserId 静默、
- * getconfig/sendtyping 失败不影响、引用计数、ticket 24h 缓存、失败指数退避（含 1h 上限）、
- * 空 ticket 不 sendTyping、最小可见时长、等待取消期间复用。
+ * begin→status1 / end→status2（立即）、刷新定时、实时开关、无 token/无 wechatUserId 静默、
+ * getconfig/sendtyping 失败不影响、引用计数、24h 缓存（按 userId，含不同 baseUrl 复用）、
+ * 失败指数退避（含 1h 上限）、空 ticket 不 sendTyping、未知/重复 handle 安全、超时参数 10s。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -64,21 +67,20 @@ function fakeSendTyping(options) {
   return Promise.resolve({ ret: 0 });
 }
 
-/** 重新注入 fake 依赖（minVisibleMs 默认 0：保持既有用例即时 status=2 语义）。 */
-function configureFake(minVisibleMs = 0) {
+/** 重新注入 fake 依赖。 */
+function configureFake() {
   typing.configureTypingDependencies({
     getConfig: fakeGetConfig,
     sendTyping: fakeSendTyping,
-    minVisibleMs,
     now: fakeNowFn,
   });
 }
 
-configureFake(0);
+configureFake();
 
 function resetState() {
   typing.clearTypingState();
-  configureFake(0);
+  configureFake();
   calls.getConfig.length = 0;
   calls.sendTyping.length = 0;
   failGetConfig = false;
@@ -103,7 +105,7 @@ function createUser(displayName = '') {
 
 const statuses = () => calls.sendTyping.map((item) => item.status);
 
-test('beginTyping → sendtyping(1) → endTyping → sendtyping(2)（携带 ticket/context_token）', async () => {
+test('beginTyping → sendtyping(1) → endTyping → 立即 sendtyping(2)（官方 start/stop 语义）', async () => {
   resetState();
   const user = createUser('基础用户');
   store.updateContextToken(user.id, 'ctx-typing-1');
@@ -120,8 +122,22 @@ test('beginTyping → sendtyping(1) → endTyping → sendtyping(2)（携带 tic
   assert.equal(calls.sendTyping[0].typingTicket, `ticket-${user.wechatUserId}`);
 
   await typing.endTyping(handle);
+  // 无最小可见/延迟取消：await 返回时 status=2 已发送
   assert.deepEqual(statuses(), [1, 2]);
   assert.equal(calls.sendTyping[1].typingTicket, `ticket-${user.wechatUserId}`);
+});
+
+test('getconfig/sendtyping 超时固定为 10000ms（对齐官方 DEFAULT_CONFIG_TIMEOUT_MS）', async () => {
+  resetState();
+  const user = createUser();
+  const handle = await typing.beginTyping(user);
+  await typing.endTyping(handle);
+  assert.equal(calls.getConfig.length, 1);
+  assert.equal(calls.getConfig[0].timeoutMs, 10_000, 'getConfig 超时应为 10s');
+  assert.equal(calls.sendTyping.length, 2);
+  for (const call of calls.sendTyping) {
+    assert.equal(call.timeoutMs, 10_000, 'sendTyping 超时应为 10s');
+  }
 });
 
 test('实时开关：config.appRules.typingIndicator=false 时静默返回 null 且不发请求', async () => {
@@ -199,6 +215,24 @@ test('ticket 缓存 24h 随机刷新：同用户再次请求不重复 getconfig�
     await typing.endTyping(h2);
     assert.equal(calls.getConfig.length, 1, '24h 随机刷新窗口内复用缓存 ticket，不重复 getconfig');
     assert.deepEqual(statuses(), [1, 2, 1, 2]);
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+test('ticket 缓存按 userId：同用户不同 baseUrl 仍复用缓存（官方 per-user 缓存）', async () => {
+  resetState();
+  const originalRandom = Math.random;
+  Math.random = () => 0.5;
+  try {
+    const user = createUser();
+    const h1 = await typing.beginTyping(user);
+    await typing.endTyping(h1);
+    // 换一个 baseUrl（例如用户重新绑定到另一账号）仍应命中同一个 userId 缓存
+    const h2 = await typing.beginTyping({ ...user, baseUrl: 'https://other.example.test' });
+    await typing.endTyping(h2);
+    assert.equal(calls.getConfig.length, 1, '缓存 key 只有 userId，不应因 baseUrl 不同而重取');
+    assert.equal(calls.sendTyping[2].baseUrl, 'https://other.example.test', 'sendtyping 使用当前 baseUrl');
   } finally {
     Math.random = originalRandom;
   }
@@ -307,68 +341,4 @@ test('未知/重复 handle 安全：endTyping 不抛错且不重复取消', asyn
   await typing.endTyping(null);
   await typing.endTyping({ userId: 'u_unknown' });
   assert.deepEqual(statuses(), [1, 2]);
-});
-
-// ---------------------------------------------------------------------------
-// 最小可见时长（v1.0.3）：直接回复规则也能短暂看到「正在输入」
-// ---------------------------------------------------------------------------
-
-test('最小可见时长：不足时不立即取消，到期后 status=2 且只取消一次', async () => {
-  resetState();
-  configureFake(80);
-  const user = createUser();
-  const handle = await typing.beginTyping(user);
-  assert.deepEqual(statuses(), [1]);
-  await typing.endTyping(handle);
-  assert.deepEqual(statuses(), [1], '可见时长不足时不得立即取消');
-
-  await sleep(30);
-  assert.deepEqual(statuses(), [1], '等待期间仍不取消');
-
-  await sleep(120);
-  assert.deepEqual(statuses(), [1, 2], '超过最小可见时长后应发送 status=2');
-
-  await sleep(60);
-  assert.deepEqual(statuses(), [1, 2], '取消只发送一次');
-});
-
-test('最小可见时长注入 0：endTyping 立即发送 status=2', async () => {
-  resetState();
-  configureFake(0);
-  const user = createUser();
-  const handle = await typing.beginTyping(user);
-  await typing.endTyping(handle);
-  assert.deepEqual(statuses(), [1, 2]);
-});
-
-test('默认最小可见时长为 500ms（未显式注入 minVisibleMs 时）', async () => {
-  resetState();
-  typing.configureTypingDependencies({ getConfig: fakeGetConfig, sendTyping: fakeSendTyping });
-  const user = createUser();
-  const handle = await typing.beginTyping(user);
-  await typing.endTyping(handle);
-  assert.deepEqual(statuses(), [1], '默认 500ms 内不应立即取消');
-  typing.clearTypingState();
-});
-
-test('等待取消期间再次 begin：复用会话、清除待取消定时器、最终只取消一次', async () => {
-  resetState();
-  configureFake(120);
-  const user = createUser();
-  const h1 = await typing.beginTyping(user);
-  const getConfigCalls = calls.getConfig.length;
-  await typing.endTyping(h1);
-  assert.deepEqual(statuses(), [1], '引用归零后进入最小可见等待');
-
-  const h2 = await typing.beginTyping(user); // 等待取消期间再次开始 → 复用会话
-  assert.deepEqual(statuses(), [1], '复用会话不重复 status=1');
-  assert.equal(calls.getConfig.length, getConfigCalls, '复用会话不重新 getconfig');
-
-  await sleep(180);
-  assert.deepEqual(statuses(), [1], '待取消定时器应被清除（等待期间不得取消）');
-
-  await typing.endTyping(h2);
-  assert.deepEqual(statuses(), [1, 2], '最终正常取消一次');
-  await sleep(80);
-  assert.deepEqual(statuses(), [1, 2], '不再重复取消');
 });

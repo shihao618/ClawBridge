@@ -3,6 +3,21 @@
 ClawBridge 采用自托管单仓库发布（Docker 镜像 + 源码），版本号以 `package.json` 为准。
 本文件从 **1.0.0 全新基线**开始记录；更早的开发历史保留在 git 标签/历史中，不再写入本文件。
 
+## [1.0.5] - 2026-11-09
+
+### 调整
+
+- **「正在输入」参数完全对齐官方微信插件**：
+  - `getconfig`/`sendtyping` 请求超时固定 **10s**（对齐官方 `DEFAULT_CONFIG_TIMEOUT_MS = 10_000`；
+    删除原 3s 安全上限）。
+  - `typing_ticket` 缓存 key 改为**按用户（userId）**（对齐官方 per-user，不再包含 baseUrl）；保留
+    24 小时随机刷新、失败 2s 起指数退避（×2、最大 1h）、空 ticket 静默跳过。
+  - **删除「最小可见时长约 500ms」与延迟取消**：`endTyping` 引用归零时**立即**发送
+    `sendtyping status=2`（与官方 start/stop 语义一致，不再延迟取消）。
+  - 保留：刷新间隔默认 5000ms（可配置、对齐官方 `keepaliveIntervalMs`）、`typingIndicator` 开关、
+    内部引用计数（仅用于同一用户并发时避免相互取消）。
+- 环境变量/运行配置字段名不变；无 API/数据库 schema 变更，可直接原地升级。
+
 ## [1.0.4] - 2026-11-09
 
 ### 调整

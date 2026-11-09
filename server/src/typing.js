@@ -6,19 +6,18 @@
  *   POST {baseUrl}/ilink/bot/sendtyping  body {ilink_user_id, typing_ticket, status:1|2, base_info} → {ret:0}
  *   status：1=正在输入，2=取消。
  *
- * 参数对齐官方微信插件（@tencent-weixin/openclaw-weixin）：
- * - 续期间隔：官方 keepaliveIntervalMs=5000 → APP_RULE_TYPING_REFRESH_MS 默认 5000；
- * - typing_ticket 缓存：官方 api/config-cache.js 语义——成功后 24h 内随机刷新
- *   （nextFetchAt = now + Math.random()*24h），失败 2s 起指数退避（x2，最大 1h）；
- *   缓存可为空 ticket（空 ticket 时静默跳过 sendtyping，等同官方 hasTypingTicket=false）；
- * - 请求超时：官方 getConfig/sendTyping 默认 10s；此处为**避免拖慢规则执行**保留 3s 安全上限（有意差异）。
+ * 参数语义与官方微信插件（@tencent-weixin/openclaw-weixin）一致：
+ * - 续期间隔：官方 process-message.js `keepaliveIntervalMs=5000` → APP_RULE_TYPING_REFRESH_MS 默认 5000；
+ * - typing_ticket 缓存：官方 api/config-cache.js 语义——**按 userId** 缓存，成功后 24h 内随机刷新
+ *   （nextFetchAt = now + Math.random()*24h），失败 2s 起指数退避（x2，最大 1h）；缓存可为空 ticket
+ *   （空 ticket 时静默跳过 sendtyping，等同官方 hasTypingTicket=false）；未到 nextFetchAt 直接复用；
+ * - 请求超时：官方 api/api.js `DEFAULT_CONFIG_TIMEOUT_MS = 10_000`（10s），这里固定使用 10s；
+ * - start/stop：官方只有取得 ticket 后 start(status=1)、结束 stop(status=2)，无最小可见时长/延迟取消；
+ *   引用归零即立即 sendtyping(2)。
  *
- * 本实现额外保留（官方无此概念，为满足“所有规则命中都显示”需求）：
- * - 最小可见时长 minVisibleMs（默认 500ms）：首次 status=1 成功后引用归零且可见不足时延迟 status=2；
- * - 按用户引用计数：同一用户并发多条规则时只在最后一个结束时取消一次。
- *
- * 所有错误只 log.debug，绝不抛出、不阻塞规则执行；日志不记录 token/ticket；
- * 依赖可注入（configureTypingDependencies / resetTypingDependencies），便于单测替换网络/时钟。
+ * 与官方仅有的差异：内部按用户引用计数（同一用户并发多条规则时防相互取消；单次 start/stop 可观测行为
+ * 与官方一致），以及开关/刷新间隔两个可配置项（默认值与官方一致）。所有错误只 log.debug，绝不抛出、
+ * 不阻塞规则执行；日志不记录 token/ticket；依赖可注入（configureTypingDependencies / resetTypingDependencies）。
  */
 import { config } from './config.js';
 import { getUserRow, getUserSecrets } from './data/users.js';
@@ -32,35 +31,28 @@ const TICKET_TTL_MS = 24 * 60 * 60 * 1000;
 /** 失败重试初始间隔 2s、指数翻倍、最大 1h（对齐官方 CONFIG_CACHE_INITIAL_RETRY_MS / MAX_RETRY_MS）。 */
 const CONFIG_RETRY_INITIAL_MS = 2000;
 const CONFIG_RETRY_MAX_MS = 60 * 60 * 1000;
-/** getconfig/sendtyping 的单次超时上限：官方 10s，这里为不拖慢规则改为 3s（有意差异）。 */
-const TYPING_REQUEST_TIMEOUT_CAP_MS = 3000;
-/** 「正在输入」默认最小可见时长（毫秒）：避免直接回复规则一闪而过；测试可注入 0。 */
-const DEFAULT_MIN_VISIBLE_MS = 500;
+/** getconfig/sendtyping 超时：固定 10s（对齐官方 DEFAULT_CONFIG_TIMEOUT_MS）。 */
+const TYPING_REQUEST_TIMEOUT_MS = 10_000;
 
 const defaultDependencies = {
   getConfig: ilinkGetConfig,
   sendTyping: ilinkSendTyping,
-  minVisibleMs: DEFAULT_MIN_VISIBLE_MS,
   /** 可注入时钟（缓存/退避判定用）；默认 Date.now。 */
   now: () => Date.now(),
 };
 let dependencies = { ...defaultDependencies };
 
-/**
- * userId -> {userId, wechatUserId, baseUrl, token, contextToken, count, timer, ticket, stopped,
- *            cacheKey, startedAt, minVisibleMs, cancelTimer}
- * count=0 且存在 cancelTimer 表示「最小可见时长等待取消中」，期间新 begin 会复用该会话。
- */
+/** userId -> {userId, wechatUserId, baseUrl, token, contextToken, count, timer, ticket, stopped} */
 const sessions = new Map();
 /**
- * `${userId}|${baseUrl}` -> {ticket, everSucceeded, nextFetchAt, retryDelayMs}
- * 对齐官方 WeixinConfigManager：到达 nextFetchAt 才重新 getconfig；失败按指数退避。
+ * userId -> {ticket, everSucceeded, nextFetchAt, retryDelayMs}
+ * 对齐官方 WeixinConfigManager：按 userId 缓存；到达 nextFetchAt 才重新 getconfig；失败按指数退避。
  */
 const ticketCache = new Map();
 
 /**
- * 注入测试依赖（可覆盖 getConfig/sendTyping/minVisibleMs/now；minVisibleMs 默认 500）。
- * @param {{getConfig?:Function, sendTyping?:Function, minVisibleMs?:number, now?:Function}} [overrides]
+ * 注入测试依赖（可覆盖 getConfig/sendTyping/now）。
+ * @param {{getConfig?:Function, sendTyping?:Function, now?:Function}} [overrides]
  */
 export function configureTypingDependencies(overrides = {}) {
   dependencies = { ...defaultDependencies, ...(overrides ?? {}) };
@@ -71,13 +63,11 @@ export function resetTypingDependencies() {
   dependencies = { ...defaultDependencies };
 }
 
-/** 清空内存会话、待取消定时器与 ticket 缓存（测试辅助；生产无调用方）。 */
+/** 清空内存会话与 ticket 缓存（测试辅助；生产无调用方）。 */
 export function clearTypingState() {
   for (const session of sessions.values()) {
     if (session.timer) clearInterval(session.timer);
-    if (session.cancelTimer) clearTimeout(session.cancelTimer);
     session.timer = null;
-    session.cancelTimer = null;
     session.stopped = true;
   }
   sessions.clear();
@@ -101,18 +91,8 @@ function nowMs() {
   }
 }
 
-function ticketCacheKey(userId, baseUrl) {
-  return `${userId}|${baseUrl}`;
-}
-
 function typingTimeoutMs() {
-  const base = Number(config.ilink.requestTimeoutMs) || 15000;
-  return Math.max(100, Math.min(TYPING_REQUEST_TIMEOUT_CAP_MS, base));
-}
-
-function sessionMinVisibleMs() {
-  const value = Number(dependencies.minVisibleMs);
-  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_MIN_VISIBLE_MS;
+  return TYPING_REQUEST_TIMEOUT_MS;
 }
 
 /**
@@ -123,7 +103,7 @@ function sessionMinVisibleMs() {
  * 失败不抛错（返回可能为空的旧 ticket）。
  */
 async function resolveTicket(session) {
-  const key = session.cacheKey;
+  const key = session.userId;
   const now = nowMs();
   const cached = ticketCache.get(key);
   if (cached && now < Number(cached.nextFetchAt ?? 0)) {
@@ -221,7 +201,7 @@ async function cancelSession(session) {
   }
 }
 
-/** 首次启动会话：取 ticket → sendtyping(1) → 记录 startedAt → 启动刷新定时器。 */
+/** 首次启动会话：取 ticket → sendtyping(1) → 启动刷新定时器（官方 start 语义）。 */
 async function startSession(session) {
   if (session.stopped) return;
   try {
@@ -233,8 +213,6 @@ async function startSession(session) {
   if (!session.ticket) return; // 空 ticket（未取到/官方缓存允许空）→ 静默跳过 sendtyping
   try {
     await sendStatus(session, 1);
-    // 首次 status=1 成功后才开始计算「可见时长」（失败/空 ticket 不需要延迟取消）
-    if (!session.startedAt) session.startedAt = Date.now();
   } catch (err) {
     debug('发送「正在输入」失败（忽略）', { userId: session.userId, message: err?.message });
   }
@@ -243,7 +221,7 @@ async function startSession(session) {
 }
 
 /**
- * 开始显示「正在输入」（引用计数 +1）。
+ * 开始显示「正在输入」（引用计数 +1；首次发 status=1）。
  * 开关关闭 / 用户无 token / 无 wechatUserId / 任何异常 → 返回 null（静默，不影响规则）。
  * @param {object} user 用户视图（需含 id、wechatUserId；baseUrl 可选）或任意 user-like 对象
  * @returns {Promise<{userId:string}|null>} handle（传给 endTyping；null 表示未开始）
@@ -268,14 +246,7 @@ export async function beginTyping(user) {
 
     const existing = sessions.get(userId);
     if (existing) {
-      // 等待取消期间再次开始：清除待取消定时器并复用会话（不会重复 status=1）
-      if (existing.cancelTimer) {
-        clearTimeout(existing.cancelTimer);
-        existing.cancelTimer = null;
-      }
       existing.count += 1;
-      existing.stopped = false;
-      startRefreshTimer(existing);
       return { userId };
     }
 
@@ -290,10 +261,6 @@ export async function beginTyping(user) {
       timer: null,
       ticket: '',
       stopped: false,
-      cacheKey: ticketCacheKey(userId, baseUrl),
-      startedAt: 0,
-      minVisibleMs: sessionMinVisibleMs(),
-      cancelTimer: null,
     };
     sessions.set(userId, session);
     await startSession(session);
@@ -306,10 +273,8 @@ export async function beginTyping(user) {
 
 /**
  * 结束「正在输入」（引用计数 -1）。
- * - 仍有余量：不做任何请求；
- * - 归零：清除刷新定时器；若已可见时长不足 minVisibleMs，则延迟 setTimeout 后再 status=2
- *   （不阻塞调用方；等待期间新 begin 会复用会话并清除定时器）；
- * - 未知/重复 handle 安全，best-effort 不抛错。
+ * 归零时立即清除刷新定时器并 sendtyping(2)（对齐官方 start/stop 语义，无最小可见延迟）；
+ * 未知/重复 handle 安全，best-effort 不抛错。
  * @param {{userId:string}|null|undefined} handle beginTyping 返回值
  */
 export async function endTyping(handle) {
@@ -321,29 +286,13 @@ export async function endTyping(handle) {
     session.count -= 1;
     if (session.count > 0) return;
 
+    sessions.delete(userId);
+    session.stopped = true;
     if (session.timer) {
       clearInterval(session.timer);
       session.timer = null;
     }
-    const minVisibleMs = Math.max(0, Number(session.minVisibleMs) || 0);
-    const visibleMs = session.startedAt ? Date.now() - session.startedAt : 0;
-    if (!session.startedAt || visibleMs >= minVisibleMs) {
-      sessions.delete(userId);
-      session.stopped = true;
-      await cancelSession(session);
-      return;
-    }
-
-    // 可见时长不足：延迟取消，期间会话保留（count=0），新 begin 复用并清除待取消定时器。
-    const delayMs = Math.max(1, minVisibleMs - visibleMs);
-    session.cancelTimer = setTimeout(() => {
-      session.cancelTimer = null;
-      if (sessions.get(userId) !== session || session.count > 0) return;
-      sessions.delete(userId);
-      session.stopped = true;
-      void cancelSession(session);
-    }, delayMs);
-    session.cancelTimer.unref?.();
+    await cancelSession(session);
   } catch (err) {
     debug('结束「正在输入」失败（忽略）', { message: err?.message });
   }

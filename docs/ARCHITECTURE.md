@@ -176,11 +176,11 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
   `{{#if}}`/`{{default}}` 等指令；达到 `MAX_TEXT_LENGTH` 停止渲染；`{{noreply}}` 表示不发送（不使用兜底）。
 - **「正在输入」（typing indicator）**：**所有命中规则**（含 `request.mode=none` 直接回复）都显示。流程：
   命中 → `beginTyping()`（按触发用户；`getconfig`→`typing_ticket` 缓存 **24h 内随机刷新**（失败 2s 起
-  指数退避 ×2、最大 1h）→`sendtyping status=1`，按 `APP_RULE_TYPING_REFRESH_MS` 默认 **5s**（对齐官方）刷新；
-  请求超时 3s 安全上限，官方默认 10s，差异见 PROTOCOL §5.6）→ 执行/预览/`{{noreply}}`/失败/成功 → 回复入队
-  （或明确不回复）→ finally `endTyping()` 发 `status=2`；可见时长不足约 500ms（内部固定值）时延迟取消，
-  **不阻塞规则执行与回复入队**；等待取消期间再次命中会复用会话、只取消一次。best-effort，失败只 debug
-  日志、不影响规则。实现见 `server/src/typing.js`（依赖可注入便于单测）。
+  指数退避 ×2、最大 1h；缓存 key 为 **userId**）→`sendtyping status=1`，按 `APP_RULE_TYPING_REFRESH_MS` 默认
+  **5s**（对齐官方）刷新；请求超时固定 **10s**（对齐官方 `DEFAULT_CONFIG_TIMEOUT_MS`））→ 执行/预览/
+  `{{noreply}}`/失败/成功 → 回复入队（或明确不回复）→ finally `endTyping()` **立即**发 `status=2`（官方
+  start/stop 语义，无最小可见/延迟取消）；引用计数仅用于同一用户并发时避免相互取消。best-effort，失败只
+  debug 日志、不影响规则。实现见 `server/src/typing.js`（依赖可注入便于单测）。
 - 执行队列：进程内 worker（`APP_RULES_WORKER_CONCURRENCY`）+ 有界队列（`APP_RULE_MAX_QUEUE`），
   失败只记录该次运行；运行日志写 `app_rule_logs`（参数/请求/响应预览均已脱敏，不含凭据值）。
 

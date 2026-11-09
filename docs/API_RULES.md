@@ -195,15 +195,13 @@ typingIndicator, typingRefreshMs }`。
   发送文字/入队同样需要时间）：命中 → 显示（`getconfig` 取 `typing_ticket` → `sendtyping status=1`）→
   执行/预览/`{{noreply}}`/失败/成功 → 回复入队（或明确不回复）→ 在 finally 中 `sendtyping status=2` 取消；
   **长请求期间按刷新间隔持续显示**。
-- **最小可见时长约 500ms**（内部固定值，非运行配置）：处理流程短于约 500ms 时延迟取消（status=2），
-  直接回复规则也能看到短暂「正在输入」；延迟由内部定时器处理，**不阻塞规则执行与回复入队**；等待取消期间
-  同一用户再次命中规则会复用会话，最终只取消一次。
 - 默认**开启**；后台「运行配置 → 接口应用」可关闭（`appRules.typingIndicator`），或调整刷新间隔
   （`appRules.typingRefreshMs`，默认 **5000ms（5s，对齐官方插件 keepalive 间隔）**、范围 1000–30000，即时生效）。
 - **best-effort**：开关关闭 / 用户无 token / `getconfig`/`sendtyping` 失败或超时均静默跳过（仅 debug 日志），
-  **不影响规则执行**；`typing_ticket` 缓存 **24 小时内随机刷新**（获取失败 2s 起指数退避，×2、最大 1h；
-  空 ticket 静默跳过 `sendtyping`）；同一用户并发多个规则请求按引用计数只取消一次；日志不记录 ticket/token。
-  请求超时使用 **3s 安全上限**（官方默认 10s，有意缩短以免拖慢规则）；协议细节见
+  **不影响规则执行**；`typing_ticket` 按 **userId 缓存**、**24 小时内随机刷新**（获取失败 2s 起指数退避，
+  ×2、最大 1h；空 ticket 静默跳过 `sendtyping`）；取消在引用归零时**立即** `sendtyping status=2`（官方
+  start/stop 语义，无最小可见/延迟取消）；同一用户并发多个规则请求按引用计数只取消一次；日志不记录
+  ticket/token。请求超时固定 **10s**（对齐官方 `DEFAULT_CONFIG_TIMEOUT_MS`）；协议细节见
   [`docs/PROTOCOL.md`](PROTOCOL.md) §5.6。
 
 ## 5. 响应解析与回复
