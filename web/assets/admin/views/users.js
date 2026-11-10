@@ -206,10 +206,18 @@ function renderUsers() {
 function buildUserRow(user) {
   const status = typeof user.status === 'string' ? user.status : 'active';
   const statusMeta = USER_STATUS_META[status] || { label: status || '未知', className: 'badge-muted' };
-  // 绑定仍 active，但 context_token 失效时不显示“活跃/可推送”，避免误导为可群发
-  const displayStatusMeta = user.contextTokenStale
-    ? { label: '待刷新会话', className: 'badge-warning' }
-    : statusMeta;
+  // 单一状态徽章：绑定状态和会话状态合并，避免同时出现「活跃 + 可推送」的重复信息
+  let displayStatusMeta = statusMeta;
+  let statusTitle = '';
+  if (status === 'active') {
+    if (user.contextTokenStale) {
+      displayStatusMeta = { label: '待刷新会话', className: 'badge-warning' };
+      statusTitle = '最近推送失败：context_token 已失效，需要用户先给 bot 发一条消息刷新会话';
+    } else if (!user.hasContextToken) {
+      displayStatusMeta = { label: '待首条消息', className: 'badge-info' };
+      statusTitle = '用户还没给 bot 发过消息，暂时无法主动推送';
+    }
+  }
 
   // 昵称行：昵称 + 分组标签（分组标签紧跟昵称之后）
   const nameRow = el('div', { class: 'user-name-row' }, el('span', {
@@ -223,15 +231,10 @@ function buildUserRow(user) {
   const userCell = el('td', {}, nameRow);
 
   const statusChildren = [
-    el('span', { class: `badge ${displayStatusMeta.className}`, text: displayStatusMeta.label }),
     el('span', {
-      class: `badge badge-soft ${
-        user.contextTokenStale ? 'badge-muted' : user.hasContextToken ? 'badge-success' : 'badge-muted'
-      }`,
-      text: user.contextTokenStale ? '不可推送' : user.hasContextToken ? '可推送' : '待首条消息',
-      title: user.contextTokenStale
-        ? '最近推送失败：context_token 已失效，需要用户先给 bot 发一条消息刷新会话'
-        : undefined,
+      class: `badge ${displayStatusMeta.className}`,
+      text: displayStatusMeta.label,
+      title: statusTitle || undefined,
     }),
   ];
   if (status === 'paused' && user.pauseUntil) {
@@ -411,21 +414,24 @@ function buildUserDetailNodes(user, recentInbound, recentOutbound) {
     label: user.status || '未知',
     className: 'badge-muted',
   };
-  const displayStatus = user.contextTokenStale
-    ? { label: '待刷新会话', className: 'badge-warning' }
-    : status;
+  let displayStatus = status;
+  let statusTitle = '';
+  if (user.status === 'active') {
+    if (user.contextTokenStale) {
+      displayStatus = { label: '待刷新会话', className: 'badge-warning' };
+      statusTitle = '最近推送失败：context_token 已失效，需要用户先给 bot 发一条消息刷新会话';
+    } else if (!user.hasContextToken) {
+      displayStatus = { label: '待首条消息', className: 'badge-info' };
+      statusTitle = '用户还没给 bot 发过消息，暂时无法主动推送';
+    }
+  }
   const head = el(
     'div',
     { class: 'user-detail-head' },
-    el('span', { class: `badge ${displayStatus.className}`, text: displayStatus.label }),
     el('span', {
-      class: `badge badge-soft ${
-        user.contextTokenStale ? 'badge-muted' : user.hasContextToken ? 'badge-success' : 'badge-muted'
-      }`,
-      text: user.contextTokenStale ? '不可推送' : user.hasContextToken ? '可主动推送' : '待首条消息',
-      title: user.contextTokenStale
-        ? '最近推送失败：context_token 已失效，需要用户先给 bot 发一条消息刷新会话'
-        : undefined,
+      class: `badge ${displayStatus.className}`,
+      text: displayStatus.label,
+      title: statusTitle || undefined,
     }),
     el('span', {
       class: `badge badge-soft ${user.status === 'paused' && user.pauseUntil ? 'badge-warning' : 'badge-muted'}`,
@@ -442,6 +448,18 @@ function buildUserDetailNodes(user, recentInbound, recentOutbound) {
     ['绑定时间', formatDateTime(user.boundAt)],
     ['最近入站', formatRelative(user.lastInboundAt)],
     ['最近出站', formatRelative(user.lastOutboundAt)],
+    [
+      '推送状态',
+      user.status === 'unbound'
+        ? '已解绑'
+        : user.status === 'paused'
+          ? '暂停中（不可推送）'
+          : user.contextTokenStale
+            ? '不可推送（等待用户发消息刷新会话）'
+            : user.hasContextToken
+              ? '可推送'
+              : '不可推送（等待用户首条消息）',
+    ],
     ['消息保活', user.keepaliveEnabled === true ? '已开启' : '未开启'],
     [
       '最近保活发送',
