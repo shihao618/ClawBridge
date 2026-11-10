@@ -49,7 +49,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 
-const VERSION = '1.1.11';
+const VERSION = '1.1.12';
 const STARTED_AT = Date.now();
 
 // ---------------------------------------------------------------------------

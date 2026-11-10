@@ -92,8 +92,6 @@ function buildScheduledTaskRow(task) {
       'td',
       {},
       el('div', { class: 'cell-strong', text: task.name || '（未命名任务）' }),
-      el('div', { class: 'cell-muted cell-mono', text: task.id }),
-      el('div', { class: 'cell-muted', text: `${task.request?.method || 'GET'} ${task.request?.url || ''}` }),
       task.perUserMode === true || task.per_user_mode === true
         ? el(
             'div',

@@ -9,7 +9,7 @@ import { buildTemplateTools } from '../templates.js';
 import { buildRequestRow, buildResponseRow, buildSwitch, createTableClickHandler, emptyRow, formField, formSection, rowActionButton, setupTablist } from '../ui.js';
 import { $$, apiFetch, clearNode, confirmDialog, el, formatDateTime, formatNumber, formatRelative, setHidden, toast, toastError } from '../../common.js';
 import { parseKeywordsInput } from '../../lib/parse.js';
-import { RULE_MATCH_LABELS, RULE_SCOPE_LABELS, scopeSummary, triggerSummary } from '../../lib/summary.js';
+import { RULE_MATCH_LABELS, RULE_SCOPE_LABELS, scopeSummary } from '../../lib/summary.js';
 import { loadScheduledTasks } from './schedules.js';
 import { createPickerSection } from '../integrations/pickers.js';
 import { createHeaderModeField } from '../integrations/header-mode.js';
@@ -102,8 +102,7 @@ function buildAppRuleRow(rule) {
       'td',
       {},
       el('div', { class: 'cell-strong', text: rule.name || '（未命名规则）' }),
-      el('div', { class: 'cell-muted cell-mono', text: `优先级 ${formatNumber(rule.priority)} · ${rule.id}` }),
-      el('div', { class: 'cell-muted', text: triggerSummary(rule.trigger) }),
+      el('div', { class: 'cell-muted cell-mono', text: `优先级 ${formatNumber(rule.priority)}` }),
     ),
     el('td', { class: 'cell-rule-scope', text: scopeSummary(rule.scope) }),
     el(
