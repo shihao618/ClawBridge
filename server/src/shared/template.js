@@ -339,6 +339,22 @@ function resolveDefaultVariable(raw, contextStack, responseRoot) {
 }
 
 /**
+ * 把模板变量值转义为「不会被当成 Markdown 语法」的纯文本：
+ * - 换行/回车折叠为空格，避免变量自带多行破坏列表/引用；
+ * - 转义反斜杠与常见行内 Markdown 触发字符；
+ * - 行首列表/标题/引用标记额外转义。
+ * 用法：`{{escape 路径}}`；URL/response/raw 等不要用，避免破坏链接与原始展示。
+ */
+function escapeMarkdownValue(value) {
+  if (value === undefined || value === null) return '';
+  let text = String(value).replace(/\r\n?/g, '\n').replace(/\n+/g, ' ');
+  text = text.replace(/([\\`*_[\]<>|~])/g, '\\$1');
+  text = text.replace(/^(\s*)([#+\->])/, '$1\\$2');
+  text = text.replace(/^(\s*)(\d{1,9})([.)])/, '$1$2\\$3');
+  return text;
+}
+
+/**
  * 「不回复」哨兵：模板渲染结果包含该标记时，表示本次不发送任何消息，且**不使用兜底文案**。
  * 用法：在通知/回复模板中写 `{{noreply}}`（通常放在 {{#if}} 的空数据分支）。
  */
@@ -356,6 +372,10 @@ function resolveTemplateVariable(expr, contextStack, metaStack, options) {
   if (text === 'raw') return options.rawText ?? '';
   if (/^default\s+/i.test(text)) {
     return resolveDefaultVariable(text, contextStack, options.responseRoot);
+  }
+  if (/^escape\s+/i.test(text)) {
+    const path = text.slice('escape'.length).trim();
+    return escapeMarkdownValue(resolveTemplatePath(path, contextStack, options.responseRoot));
   }
 
   const parentIndexMatch = text.match(/^((?:\.\.\/)+)@(index|number)$/);

@@ -244,6 +244,9 @@ typingIndicator, typingRefreshMs }`。
   「模板预览」会返回 `noreply: true` 并提示不回复。
   示例：`{{#if count data.data>0}}共 {{count data.data}} 人{{else}}暂无数据{{/if}}`。
 - **默认值**：`{{default 路径 "兜底文案"}}`；路径为空/null/空串/空数组时使用兜底文案。
+- **Markdown 转义**：`{{escape 路径}}` 把变量值转成不会被解析成 Markdown 的纯文本：
+  换行折叠为空格，并转义 `\`、`` ` ``、`*`、`_`、`[`、`]`、`<`、`>`、`|`、`~` 及行首标题/列表/引用标记。
+  适合姓名、房间号、备注等用户可控字段；**URL / `{{response}}` / `{{raw}}` 不要转义**，否则会破坏链接和原始展示。
 - **离线预览**：`POST /api/admin/template-preview`，Body
   `{responseType,responsePath,template,fallbackText,sample}`；只解析示例响应并渲染，不访问外部接口。
 - **多层嵌套循环**：块嵌套深度上限 32 层；内层用 `{{../字段}}` 取父级字段、

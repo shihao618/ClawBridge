@@ -279,6 +279,18 @@ test('模板渲染：请求 {var} + URL 编码；回复 {{path}}/{{response}}/{{
     '\u0000clawbridge-noreply\u0000\n',
   );
 
+  // escape：显式转义用户可控字段；未使用 escape 的变量保持原样
+  assert.equal(
+    appRules.renderReplyTemplate('{{escape name}}', { root: { name: '*张三*_x_[a]<b>|c~d' } }),
+    '\\*张三\\*\\_x\\_\\[a\\]\\<b\\>\\|c\\~d',
+  );
+  assert.equal(appRules.renderReplyTemplate('{{escape name}}', { root: { name: '# 标题' } }), '\\# 标题');
+  assert.equal(
+    appRules.renderReplyTemplate('{{escape note}}', { root: { note: '第一行\n第二行' } }),
+    '第一行 第二行',
+  );
+  assert.equal(appRules.renderReplyTemplate('{{name}}', { root: { name: '*张三*' } }), '*张三*');
+
   // where 过滤：按字段值拆分名单
   const statusRoot = {
     data: {

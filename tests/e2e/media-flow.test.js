@@ -415,8 +415,8 @@ test('出站：getuploadurl 只返回 upload_param 时按官方回退 URL 上传
     assert.equal(send.status, 202, `发送应 202：${send.status} ${send.text}`);
     const queued = send.json.queued[0];
     const record = await e2e.waitMockUpload(
-      (entry) => entry.mediaType === 1 && entry.uploadUrlMode === 'param',
-      { label: 'param 模式 getuploadurl 记录' },
+      (entry) => entry.mediaType === 1 && entry.uploadUrlMode === 'param' && /^mock_cdn_/.test(String(entry.token)),
+      { label: 'param 模式 getuploadurl 记录（含上传 token）' },
     );
     assert.equal(record.uploadFullUrl, '', 'param 模式不应返回 upload_full_url');
     assert.match(String(record.token), /^mock_cdn_/, '客户端应使用拼接 URL 上传成功（x-encrypted-param token）');
