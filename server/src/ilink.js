@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { config } from './config.js';
 import { ILinkError } from './errors.js';
 import { logger } from './logger.js';
-import { filterWechatMarkdown } from './shared/wechat-markdown.js';
+import { filterWechatMarkdown, layoutWechatText } from './shared/wechat-markdown.js';
 
 const log = logger.child({ mod: 'ilink' });
 
@@ -403,9 +403,10 @@ export function createClientId() {
 
 /** 构造单条文本消息（SendMessageReq.msg）。 */
 export function formatWeixinText(text) {
-  // 按微信渲染规则过滤：中文斜体去标记、H5/H6 去 #、图片整段移除（与官方插件一致）。
-  // 换行原样保留（与官方一致，不再自动插入段落空行；模板排版换行不会变成消息空行）。
-  return filterWechatMarkdown(text);
+  // 1) 按微信渲染规则过滤：中文斜体去标记、H5/H6 去 #、图片整段移除（与官方插件一致）。
+  // 2) 微信 Markdown 会把相邻普通文本行的单换行合并成一行；为保证每行可见，
+  //    普通文本行之间插入空行（最小必要），列表项/表格/代码块保持单换行。
+  return layoutWechatText(filterWechatMarkdown(text));
 }
 
 /** 构造单条文本消息（SendMessageReq.msg）。 */

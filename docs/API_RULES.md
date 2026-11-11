@@ -228,8 +228,8 @@ typingIndicator, typingRefreshMs }`。
   代码块、表格、水平线、引用、有序/无序列表）；发送前会按腾讯官方微信插件规则过滤（中文斜体去标记、
   H5/H6 去 `#`、图片整段移除），后台「Markdown 预览」使用同一规则，所见即所发。
   完整兼容矩阵见 [`MARKDOWN_WECHAT.md`](MARKDOWN_WECHAT.md)。
-  不请求模式的默认文本同样按 Markdown 发送；换行与官方一致原样保留（不再自动插入空行），
-  需要明确分段时在模板中写空行（详见 [`MARKDOWN_WECHAT.md`](MARKDOWN_WECHAT.md) §3.1）。
+  不请求模式的默认文本同样按 Markdown 发送；普通文本行之间会补最小必要空行，列表项之间不补
+  （详见 [`MARKDOWN_WECHAT.md`](MARKDOWN_WECHAT.md) §3.1）。
 - **列表渲染**（数组数据一次性拼接）：`{{count 路径}}` 输出数组/对象长度；`{{#each 路径}}...{{/each}}`
   对内层逐项渲染，内层可用当前项字段 `{{字段}}`（当前项没有该字段时依次回退父级/根响应）、`{{@index}}`（从 0）、
   `{{@number}}`（从 1）。支持 `where 字段=值` / `where 字段!=值` 过滤（值可加引号）。

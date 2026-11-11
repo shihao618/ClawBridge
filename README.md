@@ -7,7 +7,7 @@
 > `@tencent-weixin/openclaw-weixin@2.4.10` 的协议实现扫码绑定、长轮询收消息、文本消息发送，
 > 不依赖任何第三方微信协议服务或个人号 Hook。
 >
-> **当前版本 1.1.14**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
+> **当前版本 1.1.15**：数据库 schema **v1**（全新基线），**不兼容任何旧数据卷**，也不提供迁移；
 > 请使用全新空数据卷部署（旧部署请先备份，回滚需同时使用旧镜像与旧数据卷）。见
 > [`docs/UPGRADE.md`](docs/UPGRADE.md)。
 
@@ -597,7 +597,7 @@ Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editor
 | 端到端黑盒（真实 app 进程 + mock 微信 API/CDN + mock 外部接口，覆盖绑定/配对码/刷新/推送/入站/鉴权/解绑/错误注入/图片视频文件收发/分组/入站消息 API/24h 保活/分组保活继承/接口应用/凭据注入/定时通知（含按用户模式）/运行配置设置/密码与 API Token；子进程 env 白名单、稳定等待断言、mock 违规统一断言） | `npm run test:e2e` | **待发布前实测刷新** |
 | 全量测试（unit + e2e） | `npm test` | **632 项（630 通过 + 2 项 POSIX-only 跳过）** |
 | e2e 连跑稳定性（串行 3 次，CI 门禁） | `npm run e2e:stability` | 3/3 次通过（每次约 2 分钟） |
-| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line **94.07%** / branch **77.79%** / funcs **94.46%**（CI 阈值门禁通过） |
+| 覆盖率（in-process，排除 `web/**` 与 `tests/**`，CI 强制阈值 line 90 / branch 70 / funcs 85） | `npm run coverage` | line **94.05%** / branch **77.76%** / funcs **94.46%**（CI 阈值门禁通过） |
 | 静态检查（ESLint flat config，CI `--max-warnings=0`） | `npm run lint` | 0 error / 0 warning |
 | 文档值级一致性（版本/环境变量/设置字段/API 端点/相对链接/质量表命令） | `npm run doc:lint` | 6 项全部通过（CI 门禁） |
 | 可观测性指标（`GET /api/admin/metrics`、overview.metrics） | `npm run test:unit`（backend-metrics） | 契约与鉴权全覆盖 |
@@ -619,8 +619,8 @@ Dockerfile · docker-compose*.yml · .env.example · eslint.config.js · .editor
 `failed` 且错误含 `-14` 说明 bot token 失效，需要用户重新扫码；`-2` 会自动退避重试。
 
 **Q：消息里的换行在微信里变成空格/空行？**
-后台模板/API 中写真实换行（JSON 用 `\n`）即可；ClawBridge 与官方插件一致，**原样保留换行，不再自动插入空行**，
-模板里的代码排版换行不会变成消息里的空行。如果希望消息中明确分段，请在模板里直接写空行；列表/表格/代码块按 Markdown 原样渲染。
+微信 Markdown 会把相邻普通文本行的单换行合并成一行；ClawBridge 只在**普通文本行之间补最小必要空行**，
+列表项之间、文本紧邻列表时不补。因此标题会各自独立显示，列表保持紧凑；模板里为代码排版写的换行不会变成列表项之间的空行。
 详见 [`docs/MARKDOWN_WECHAT.md`](docs/MARKDOWN_WECHAT.md) §3.1。
 
 **Q：绑定成功但用户微信里找不到 ClawBot 会话？**
@@ -673,9 +673,9 @@ v1.1.0 起协议层按官方插件 `@tencent-weixin/openclaw-weixin@2.4.10` 逐�
 `Content-Type`/`AuthorizationType`/`X-WECHAT-UIN`，GET 仅公共头）、`client_id` 官方格式、`bot_agent` 官方清洗、
 版本常量自动派生、绑定轮询网络容错、`-14` 暂停 1h 后**自动恢复轮询**、退避节奏、`longpolling_timeout_ms`
 原样使用、游标有消息立即落库/空闲按 6 小时节流落库、入站 `message_id` item 级回退与正文顺序、引用消息（quote/partial_quote）最小解析、
-媒体引用下载 / voice 带文本跳过 / 缺媒体跳过 / MIME 路由对齐、Markdown 过滤（删除线只保留文字，换行与官方一致原样保留）、
+媒体引用下载 / voice 带文本跳过 / 缺媒体跳过 / MIME 路由对齐、Markdown 过滤（删除线只保留文字，普通文本行补最小必要空行、列表项不补）、
 typing 参数（5s keepalive / 10s 超时 / 24h ticket 随机缓存 + 退避）。
-**有意保留的差异**（多 media、客户端限流/队列、AI 通道功能、`run_id` 等）见
+**有意保留的差异**（多 media、最小换行布局、客户端限流/队列、AI 通道功能、`run_id` 等）见
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md) §8「官方对齐与有意差异」。
 
 ---
