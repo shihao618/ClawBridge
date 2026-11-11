@@ -375,10 +375,9 @@ function isIndentedCodeLine(line) {
 }
 
 /**
- * 微信文本换行布局：微信客户端把 Markdown 单换行渲染为 soft break（显示成空格），
- * 且不识别「行尾两个空格」的 hard break（实测会被折叠）。因此对**普通文本行**
- * 之间插入空行（形成段落，微信按块渲染 → 保留换行）；列表项/表格行/缩进代码块
- * 属于块结构，保持单换行，避免破坏列表与表格。
+ * 微信文本换行布局（兼容保留，不再用于出站发送/预览）。
+ *
+ * 官方插件不修改换行，ClawBridge 现已对齐：发送与预览只做 Markdown 过滤，原样保留换行。
  */
 export function layoutWechatText(text) {
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');

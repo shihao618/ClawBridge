@@ -486,7 +486,7 @@ test('出站过滤：回复模板按微信渲染规则过滤（与应用内预�
   const sent = await e2e.waitMockSentMessageContaining('小标题', { toUserId: userA.wechatUserId });
   assert.ok(sent, '应收到过滤后的回复消息');
   const text = sent.text;
-  assert.equal(text, '小标题\n\n中文斜体\n\n**粗体**与 *english*', '发送文本应为过滤+换行布局后的微信可渲染文本');
+  assert.equal(text, '小标题\n中文斜体\n\n**粗体**与 *english*', '发送文本应为过滤后的微信可渲染文本（换行原样保留）');
   assert.ok(!text.includes('#####'), 'H5/H6 标题标记应被过滤');
   assert.ok(!text.includes('*中文斜体*'), '中文斜体星号应被过滤');
   assert.ok(text.includes('中文斜体'), '中文斜体文字应保留');

@@ -306,7 +306,7 @@ test('POST /api/admin/template-preview：返回微信可渲染文本（过滤中
   });
   assert.equal(preview.status, 200, preview.text);
   const text = preview.json.replyText;
-  assert.equal(text, '小标题\n\n中文斜体\n\n**粗体**与 *english*', '模板预览应返回过滤+换行布局后的文本');
+  assert.equal(text, '小标题\n中文斜体\n\n**粗体**与 *english*', '模板预览应返回过滤后的文本（换行原样保留）');
   assert.ok(!text.includes('#####'), 'H5 标记应被过滤');
   assert.ok(text.includes('小标题'));
   assert.ok(!text.includes('*中文斜体*'), '中文斜体星号应被过滤');
@@ -340,7 +340,7 @@ test('POST /api/admin/template-preview：离线示例渲染条件/default，非�
     fallbackText: '兜底',
   });
   assert.equal(preview.status, 200, preview.text);
-  assert.equal(preview.json.replyText, '共 2 人\n\n张三已归寝\n\n李四未归寝\n\n缺省');
+  assert.equal(preview.json.replyText, '共 2 人\n张三已归寝\n李四未归寝\n缺省');
   assert.equal(preview.json.usedFallback, false);
   assert.ok(!preview.text.includes('"sample"'), '预览响应不应回显 sample');
 

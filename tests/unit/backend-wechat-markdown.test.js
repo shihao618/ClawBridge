@@ -123,9 +123,9 @@ test('换行布局：列表前后普通文本补空行，列表项缩进续行�
   assert.equal(layoutWechatText('- 列表\n  续行'), '- 列表\n  续行');
 });
 
-test('发送文本 = 过滤 + 换行布局', () => {
+test('发送文本 = 过滤（换行原样保留，不自动补空行）', () => {
   const md = '##### 小标题\n第一行\n第二行';
-  assert.equal(layoutWechatText(filterWechatMarkdown(md)), '小标题\n\n第一行\n\n第二行');
+  assert.equal(filterWechatMarkdown(md), '小标题\n第一行\n第二行');
 });
 
 // ---------------------------------------------------------------------------
