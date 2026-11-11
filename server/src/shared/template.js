@@ -447,19 +447,43 @@ function compileTemplateAst(tokens) {
 }
 
 /** 模板 AST 缓存（按模板文本 LRU），同一模板在规则/定时反复执行时不再重复编译。 */
+/** 独占一行的块标签（#each/#if/#unless、/闭合、else/else if）：模板书写换行不应产生空行。 */
+const STANDALONE_BLOCK_TAG_RE = /^[ \t]*(\{\{\s*(?:#(?:each|if|unless)\b[^{}]*|\/(?:each|if|unless)\b|else(?:\s+if\b[^{}]*)?)\s*\}\})[ \t]*$/;
+
+function stripStandaloneBlockLines(template) {
+  // 独占一行的块标签：把标签附到下一行内容前、并去掉标签行后的换行，
+  // 保留标签前已有的换行。这样 #each/#if 的分行写法不会在输出里制造空行，
+  // 同时不删除标签本身。
+  const lines = String(template ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let pendingTags = '';
+  for (const line of lines) {
+    const match = STANDALONE_BLOCK_TAG_RE.exec(line);
+    if (match) {
+      pendingTags += match[1].trim();
+      continue;
+    }
+    out.push(pendingTags ? pendingTags + line : line);
+    pendingTags = '';
+  }
+  if (pendingTags) out.push(pendingTags);
+  return out.join('\n');
+}
+
 function getCompiledTemplate(template) {
-  const cached = templateAstCache.get(template);
+  const normalized = stripStandaloneBlockLines(template);
+  const cached = templateAstCache.get(normalized);
   if (cached) {
-    templateAstCache.delete(template);
-    templateAstCache.set(template, cached);
+    templateAstCache.delete(normalized);
+    templateAstCache.set(normalized, cached);
     return cached;
   }
-  const ast = compileTemplateAst(tokenizeTemplate(template));
+  const ast = compileTemplateAst(tokenizeTemplate(normalized));
   if (templateAstCache.size >= TEMPLATE_CACHE_MAX) {
     const oldest = templateAstCache.keys().next().value;
     if (oldest !== undefined) templateAstCache.delete(oldest);
   }
-  templateAstCache.set(template, ast);
+  templateAstCache.set(normalized, ast);
   return ast;
 }
 

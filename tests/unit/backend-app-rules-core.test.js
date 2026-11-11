@@ -267,6 +267,18 @@ test('模板渲染：请求 {var} + URL 编码；回复 {{path}}/{{response}}/{{
     '共 0 人；',
   );
 
+  // 独占一行的块标签不应把模板换行带进消息（否则列表项之间会多出空行）
+  const blockLineTemplate =
+    '{{#if items}}\n【未归寝】共 {{count items}} 人\n{{#each items}}\n{{@number}}. {{name}}\n{{/each}}\n{{else}}\n{{noreply}}\n{{/if}}';
+  assert.equal(
+    appRules.renderReplyTemplate(blockLineTemplate, { root: { items: [{ name: '甲' }, { name: '乙' }] } }),
+    '【未归寝】共 2 人\n1. 甲\n2. 乙\n',
+  );
+  assert.equal(
+    appRules.renderReplyTemplate(blockLineTemplate, { root: { items: [] } }),
+    '\u0000clawbridge-noreply\u0000\n',
+  );
+
   // where 过滤：按字段值拆分名单
   const statusRoot = {
     data: {
