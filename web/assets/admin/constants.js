@@ -88,7 +88,7 @@ export const MENU_VIEWS = [
   { id: 'groups', hash: '#/groups', title: '用户分组', sectionId: 'groups-section', live: false },
   { id: 'messages', hash: '#/messages', title: '消息记录', sectionId: 'messages-section', live: true },
   { id: 'broadcast', hash: '#/broadcast', title: '广播消息', sectionId: 'broadcast-section', live: false },
-  { id: 'app-rules', hash: '#/app-rules', title: '接口应用', sectionId: 'app-rules-section', live: true },
+  { id: 'app-rules', hash: '#/app-rules', title: '规则与定时通知', sectionId: 'app-rules-section', live: true },
   { id: 'config', hash: '#/config', title: '运行配置', sectionId: 'config-section', live: false },
 ];
 

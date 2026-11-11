@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_task_logs_created ON scheduled_task_log
 | `SCHEDULER_TIMEOUT_MS` | `8000` | 单次外部请求超时上限 |
 | `SCHEDULER_MAX_RESPONSE_BYTES` | `0`（继承接口应用） | 定时任务独立的响应体大小上限；`0` = 继承 `appRules.maxResponseBytes` |
 | `SCHEDULER_ALLOWED_HOSTS` | 空（继承接口应用） | 定时任务独立的私网白名单（逗号分隔）；空 = 继承 `appRules.allowedHosts` |
-| `SCHEDULER_PER_USER_CONCURRENCY` | `2`（范围 1-10） | 按用户模式并发请求数 |
+| `SCHEDULER_PER_USER_CONCURRENCY` | `2`（范围 1-16） | 按用户模式并发请求数 |
 | `SCHEDULER_PER_USER_MAX_RECIPIENTS` | `50`（范围 1-200） | 按用户模式单任务最多目标用户数 |
 
 `config.scheduler = { enabled, tickMs, timezone, maxRecipients, timeoutMs, maxResponseBytes, allowedHosts,
@@ -165,7 +165,7 @@ perUserConcurrency, perUserMaxRecipients }`。
    （模板根附加 `userName`/`userId`；**数组根保持数组语义**，空数组时 `{{#if .}}` 为假，可正常配合
    `{{noreply}}` 静默，不会被按用户字段污染成对象后误发）。
    （模板可额外使用 `{{userName}}`/`{{userId}}`；`{{noreply}}` 对该用户不发送）。
-4. 并发池 `perUserConcurrency`（默认 2，范围 1-10）执行请求组；单任务总超时 30s；
+4. 并发池 `perUserConcurrency`（默认 2，范围 1-16）执行请求组；单任务总超时 30s；
    单用户失败只影响该用户（按配置使用兜底文案，为空则不发送）。
 5. 状态汇总：全部成功 `success`；部分成功/部分失败或部分跳过 `partial`；全部失败 `failed`。
    逐用户明细写 `events`（type 如 `scheduled_recipient_failed`，只含 userId/httpStatus/凭据名/错误，不含值）；

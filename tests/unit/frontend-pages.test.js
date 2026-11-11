@@ -882,7 +882,7 @@ test('接口应用：后台页面包含规则区块', async () => {
     'id="btn-create-rule"',
     'id="app-rule-table-body"',
     'id="rule-status-filter"',
-    '接口应用',
+    '规则与定时通知',
     '新建规则',
   ]) {
     assert.ok(html.includes(token), `admin.html 应包含接口应用结构：${token}`);
@@ -897,7 +897,7 @@ test('菜单模式：侧栏固定 7 项菜单与视图区块一一对应', async
     ['groups', '用户分组', '#/groups', 'groups-section'],
     ['messages', '消息记录', '#/messages', 'messages-section'],
     ['broadcast', '广播消息', '#/broadcast', 'broadcast-section'],
-    ['app-rules', '接口应用', '#/app-rules', 'app-rules-section'],
+    ['app-rules', '规则与定时通知', '#/app-rules', 'app-rules-section'],
     ['config', '运行配置', '#/config', 'config-section'],
   ];
   for (const [view, label, hash, sectionId] of menu) {

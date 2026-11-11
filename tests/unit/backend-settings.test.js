@@ -45,13 +45,16 @@ test('SETTINGS_SCHEMA / getSettings：10 分组、字段元数据、envOnly 仅�
   assert.equal(keepalive.fields.find((field) => field.key === 'enabled').type, 'boolean');
 
   const appRules = view.groups.find((group) => group.key === 'appRules');
+  assert.equal(appRules.label, '规则执行');
   assert.equal(appRules.fields.find((field) => field.key === 'allowedHosts').type, 'stringArray');
   assert.equal(appRules.fields.find((field) => field.key === 'timeoutMs').min, 1000);
+  assert.equal(appRules.fields.find((field) => field.key === 'workerConcurrency').max, 16);
 
-  // 定时通知拥有独立的网络防护配置（缺省继承接口应用）
+  // 定时通知拥有独立的网络防护配置（缺省继承规则执行）
   const schedulerFields = view.groups.find((group) => group.key === 'scheduler').fields;
   assert.equal(schedulerFields.find((field) => field.key === 'maxResponseBytes').type, 'number');
   assert.equal(schedulerFields.find((field) => field.key === 'allowedHosts').type, 'stringArray');
+  assert.equal(schedulerFields.find((field) => field.key === 'perUserConcurrency').max, 16);
 
   const restartFields = view.groups
     .flatMap((group) => group.fields.filter((field) => field.restartRequired).map((field) => `${group.key}.${field.key}`))

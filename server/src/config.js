@@ -261,7 +261,7 @@ export function loadConfig(env = process.env) {
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean),
     // 按用户模式（per_user_mode）：并发池大小与单任务目标上限（后台运行配置可改，执行时实时读取）。
-    perUserConcurrency: Math.min(10, Math.max(1, envInt(env, 'SCHEDULER_PER_USER_CONCURRENCY', 2))),
+    perUserConcurrency: Math.min(16, Math.max(1, envInt(env, 'SCHEDULER_PER_USER_CONCURRENCY', 2))),
     perUserMaxRecipients: Math.min(200, Math.max(1, envInt(env, 'SCHEDULER_PER_USER_MAX_RECIPIENTS', 50))),
   };
 

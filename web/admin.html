@@ -46,7 +46,7 @@
           <span class="menu-icon" aria-hidden="true">📢</span><span class="menu-label">广播消息</span>
         </a>
         <a class="menu-item" data-view="app-rules" href="#/app-rules">
-          <span class="menu-icon" aria-hidden="true">🔌</span><span class="menu-label">接口应用</span>
+          <span class="menu-icon" aria-hidden="true">🔌</span><span class="menu-label">规则与定时通知</span>
         </a>
         <a class="menu-item" data-view="config" href="#/config">
           <span class="menu-icon" aria-hidden="true">⚙️</span><span class="menu-label">运行配置</span>
@@ -279,7 +279,7 @@
           <!-- 接口应用 -->
           <section id="app-rules-section" class="view-section" data-view="app-rules" aria-labelledby="app-rules-title">
             <div class="view-head">
-              <h2 id="app-rules-title" class="view-title">接口应用</h2>
+              <h2 id="app-rules-title" class="view-title">规则与定时通知</h2>
               <div id="app-rules-head-actions" class="section-head-actions">
                 <span id="app-rules-total" class="section-meta">共 0 条规则</span>
                 <button id="btn-create-rule" class="btn btn-primary btn-sm" type="button">＋ 新建规则</button>
@@ -294,7 +294,7 @@
               「定时通知」无需用户先发消息，按时间计划主动调用接口并推送结果。
               规则默认不启用；同一消息最多命中一条规则，受冷却与每小时限额约束。
             </p>
-            <div id="rule-tabs" class="tab-bar" role="tablist" aria-label="接口应用视图">
+            <div id="rule-tabs" class="tab-bar" role="tablist" aria-label="规则与定时通知视图">
               <button id="rule-tab-rules" class="tab-btn is-active" type="button" role="tab" aria-selected="true" aria-controls="rule-rules-panel" tabindex="0" data-rule-tab="rules">规则列表</button>
               <button id="rule-tab-schedule" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="rule-schedule-panel" tabindex="-1" data-rule-tab="schedule">定时通知</button>
             </div>

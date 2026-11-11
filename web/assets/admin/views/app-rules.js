@@ -483,7 +483,7 @@ export function openAppRuleEditor(rule = null) {
   );
   const requestSection = formSection(
     '请求',
-    'URL / Header / Body 支持 {变量} 占位；可用 {credential:凭据名.字段} 引用当前触发用户在「用户管理 → 密钥」配置的凭据（缺失时规则失败且不调用接口，日志已脱敏）；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。规则命中处理期间（含不请求模式直接回复）会向触发用户显示「正在输入」状态（可在「运行配置 → 接口应用」关闭）。',
+    'URL / Header / Body 支持 {变量} 占位；可用 {credential:凭据名.字段} 引用当前触发用户在「用户管理 → 密钥」配置的凭据（缺失时规则失败且不调用接口，日志已脱敏）；URL 中的变量会做 URL 编码。默认拒绝访问内网/本机（SSRF 防护）。规则命中处理期间（含不请求模式直接回复）会向触发用户显示「正在输入」状态（可在「运行配置 → 规则执行」关闭）。',
     requestDetailsBox,
   );
   const responseGrid = buildResponseRow({
@@ -587,7 +587,7 @@ export function openAppRuleEditor(rule = null) {
   ];
 
   openEditorModal({
-    title: isEdit ? '编辑接口应用规则' : '新建接口应用规则',
+    title: isEdit ? '编辑规则' : '新建规则',
     content,
     saveLabel: isEdit ? '保存' : '创建',
     onSave: createSaveAction({
@@ -728,7 +728,7 @@ async function duplicateAppRule(rule, button) {
 
 async function deleteAppRule(rule) {
   const confirmed = await confirmDialog({
-    title: '删除接口应用规则',
+    title: '删除规则',
     message: `确定删除规则「${rule.name || rule.id}」吗？删除后不再触发，运行日志保留。`,
     confirmText: '删除规则',
     cancelText: '取消',

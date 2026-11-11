@@ -214,7 +214,7 @@ PRAGMA auto_vacuum = INCREMENTAL;   -- 仅全新库设置
   - **按用户模式**（`per_user_mode=1`）：展开目标用户（上限 `perUserMaxRecipients` 默认 50）→
     逐用户解析其凭据（缺凭据跳过并写事件，不兜底）→ 相同凭据字段值指纹合并为一次外部请求 →
     按用户渲染通知模板（`{{userName}}`/`{{userId}}` 等）→ 只给该用户入队；并发池
-    `perUserConcurrency`（默认 2，范围 1–10）；单用户失败只影响该用户；整体状态
+    `perUserConcurrency`（默认 2，范围 1–16）；单用户失败只影响该用户；整体状态
     `success | partial | failed`（`partial` = 部分成功），每用户明细写 `events`（不含凭据值）。
   - 失败时按配置的兜底文案发送（为空则不发送）；`{{noreply}}` 生效；写 `scheduled_task_logs`
     （含 `recipients_count`）。

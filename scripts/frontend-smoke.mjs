@@ -5,7 +5,7 @@
  * 目标：弥补 tests/unit/frontend-pages.test.js 只能做"源码文本静态校验"的不足，
  * 用本机安装的 Edge/Chrome 以 headless 模式真实加载页面，验证：
  *   1. /admin 登录页可渲染，管理密码登录成功 → 概览视图渲染；
- *   2. 逐个 hash 路由切换到全部菜单视图（概览/用户/分组/消息/广播/接口应用/运行配置），
+ *   2. 逐个 hash 路由切换到全部菜单视图（概览/用户/分组/消息/广播/规则与定时通知/运行配置），
  *      每个视图都能激活且无未捕获异常；
  *   3. / 绑定页与 /docs 文档页可加载、无脚本错误；
  *   4. 全程收集 Console error / Runtime exception / Log error，作为失败依据。
@@ -507,7 +507,7 @@ async function run() {
 
     await activateView(cdp, 'app-rules');
     await cdp.evaluate("document.querySelector('#btn-create-rule').click()");
-    await waitModalTitle(cdp, '新建接口应用规则');
+    await waitModalTitle(cdp, '新建规则');
     const ruleFormFields = await cdp.evaluate("document.querySelectorAll('.modal .form-label').length");
     assert(ruleFormFields >= 5, `规则表单字段过少（${ruleFormFields}）`);
 
@@ -555,7 +555,7 @@ async function run() {
     assert(previewStats.hints.some((hint) => hint.includes('已按微信渲染规则处理')), '预览应提示微信兼容规则调整');
     log('通过：Markdown 预览微信规则过滤 + 有序编号连续 + 缩进嵌套 + 尖括号/裸 URL');
     await cdp.evaluate("Array.from(document.querySelectorAll('.modal')).at(-1)?.querySelector('.modal-close')?.click()");
-    await waitFor(async () => (await cdp.evaluate("document.querySelector('.modal .modal-title')?.textContent || ''")).includes('新建接口应用规则'), {
+    await waitFor(async () => (await cdp.evaluate("document.querySelector('.modal .modal-title')?.textContent || ''")).includes('新建规则'), {
       timeoutMs: NAV_TIMEOUT_MS,
       intervalMs: 100,
       label: 'Markdown 预览关闭回到规则编辑器',

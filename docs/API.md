@@ -140,7 +140,7 @@ GET /api/admin/overview
     "inboundLast24h": 8
   },
   "server": {
-    "version": "1.1.17",
+    "version": "1.1.18",
     "uptimeMs": 123456,
     "now": 1760000000000,
     "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
@@ -261,7 +261,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
 ```
 GET /api/admin/config
 → 200 {
-  "version": "1.1.17",
+  "version": "1.1.18",
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
@@ -284,7 +284,7 @@ GET /api/admin/config
 GET /api/admin/metrics          # 需要管理后台 Cookie 会话（401 未登录）
 → 200 {
   "serverTime": 1760000000000,
-  "version": "1.1.17",
+  "version": "1.1.18",
   "pid": 12345,
   "node": "v24.20.0",
   "uptimeMs": 123456,             // 进程运行时长
@@ -884,7 +884,7 @@ TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEn
 | `SCHEDULER_TIMEOUT_MS` | `8000` | 外部请求超时上限 |
 | `SCHEDULER_MAX_RESPONSE_BYTES` | `0`（继承接口应用） | 定时任务独立响应体上限；`0`=继承 `APP_RULE_MAX_RESPONSE_BYTES` |
 | `SCHEDULER_ALLOWED_HOSTS` | 空（继承接口应用） | 定时任务独立私网白名单（逗号分隔）；空=继承 `APP_RULES_ALLOWED_HOSTS` |
-| `SCHEDULER_PER_USER_CONCURRENCY` | `2`（范围 1-10） | 按用户模式并发请求数 |
+| `SCHEDULER_PER_USER_CONCURRENCY` | `2`（范围 1-16） | 按用户模式并发请求数 |
 | `SCHEDULER_PER_USER_MAX_RECIPIENTS` | `50`（范围 1-200） | 按用户模式单任务最多目标用户数 |
 
 > 以上均为 `.env` **首次启动默认值**；运行期以后台「运行配置 → 定时通知」为准（即时生效）。
