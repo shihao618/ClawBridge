@@ -14,7 +14,7 @@
  */
 
 import { el } from '../common.js';
-import { filterWechatMarkdown, layoutWechatText } from '../lib/wechat-markdown.js';
+import { filterWechatMarkdown } from '../lib/wechat-markdown.js';
 
 const TAB_WIDTH = 4;
 const MAX_NESTING = 12;
@@ -492,7 +492,7 @@ function renderBlocks(container, lines, options = {}) {
 /** 安全渲染 Markdown（先按微信规则过滤），返回一个 DOM 容器节点。 */
 export function renderMarkdownPreview(markdown) {
   const root = el('div', { class: 'markdown-preview' });
-  const filtered = layoutWechatText(filterWechatMarkdown(markdown));
+  const filtered = filterWechatMarkdown(markdown);
   const lines = String(filtered ?? '')
     .replace(/\r\n?/g, '\n')
     .split('\n')

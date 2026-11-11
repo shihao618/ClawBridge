@@ -131,13 +131,12 @@ test('分隔线：--- / *** / ___', () => {
   assert.equal(findAll(root, 'HR').length, 3);
 });
 
-test('段落：普通两行按微信换行规则渲染为两个段落（纯文本单换行需空行分段）', () => {
+test('段落：普通两行原样保留单换行（预览用 br 表示，不再自动补空行）', () => {
   const root = renderMarkdownPreview('第一行\n第二行');
   const paragraphs = findAll(root, 'P');
-  assert.equal(paragraphs.length, 2);
-  assert.equal(paragraphs[0].textContent, '第一行');
-  assert.equal(paragraphs[1].textContent, '第二行');
-  assert.equal(findAll(root, 'BR').length, 0);
+  assert.equal(paragraphs.length, 1);
+  assert.equal(paragraphs[0].textContent, '第一行第二行');
+  assert.equal(findAll(root, 'BR').length, 1);
 });
 
 test('空模板显示占位文案', () => {

@@ -1,7 +1,7 @@
 # 发布流程（Release Process）
 
 > 适用：ClawBridge 单仓库自托管发布（Docker 镜像发布到 GHCR + 源码标签）。
-> 当前版本：**1.1.15**；数据库 schema：**v1**。
+> 当前版本：**1.1.16**；数据库 schema：**v1**。
 > 升级/回滚的数据操作见 [`docs/UPGRADE.md`](UPGRADE.md)；版本变更见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0. 版本与发布物

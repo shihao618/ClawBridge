@@ -375,8 +375,9 @@ function isIndentedCodeLine(line) {
 }
 
 /**
- * 微信文本最小换行布局：微信客户端会把相邻普通文本行的单换行合并成一行。
- * 因此只在普通文本行之间插入空行；列表项/表格/代码块、文本紧邻列表时不插空行。
+ * 微信文本换行布局（兼容保留，不再用于出站发送/预览）。
+ *
+ * 官方插件不修改换行，ClawBridge 现已对齐：发送与预览只做 Markdown 过滤，原样保留换行。
  */
 export function layoutWechatText(text) {
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
@@ -400,10 +401,8 @@ export function layoutWechatText(text) {
     if (index === lines.length - 1) continue;
     const next = lines[index + 1];
     if (trimmed === '' || next.trim() === '') continue;
-    // 保持块结构：列表项之间、表格行之间、缩进代码块之间、列表项缩进续行之间不插空行；
-    // 普通文本后紧跟列表时也不插空行（标题贴着自己的列表，避免多余空行）。
+    // 保持块结构：列表项之间、表格行之间、缩进代码块之间、列表项缩进续行之间不插空行
     if (isListItemLine(line) && isListItemLine(next)) continue;
-    if (!isListItemLine(line) && isListItemLine(next)) continue;
     if (isTableLine(line) && isTableLine(next)) continue;
     if (isIndentedCodeLine(line) && isIndentedCodeLine(next)) continue;
     if (isListItemLine(line) && /^\s+\S/.test(next)) continue;

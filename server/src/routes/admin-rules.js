@@ -8,7 +8,7 @@ import { badRequest, notFound } from '../errors.js';
 import { logger } from '../logger.js';
 import { requireJsonBody, parseLimit, parseOffset } from '../http/helpers.js';
 import { APP_RULE_LOG_STATUSES, buildAppRulePatch } from '../http/app-rule-validators.js';
-import { filterWechatMarkdown, layoutWechatText } from '../shared/wechat-markdown.js';
+import { filterWechatMarkdown } from '../shared/wechat-markdown.js';
 import * as store from '../store.js';
 
 const log = logger.child({ mod: 'api' });
@@ -111,7 +111,7 @@ export function registerAdminRulesRoutes(app) {
     } catch (err) {
       throw badRequest(err?.message || '示例响应解析失败');
     }
-    // 与真实发送保持一致：模板预览返回过滤 + 最小必要换行布局后的可发送文本
-    res.json({ ...preview, replyText: layoutWechatText(filterWechatMarkdown(preview?.replyText ?? '')) });
+    // 与真实发送保持一致：模板预览返回仅按微信规则过滤后的可发送文本（换行原样保留）
+    res.json({ ...preview, replyText: filterWechatMarkdown(preview?.replyText ?? '') });
   });
 }

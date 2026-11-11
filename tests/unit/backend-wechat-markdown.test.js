@@ -118,8 +118,8 @@ test('换行布局：围栏代码块原样，代码块外文本补空行', () =>
   assert.equal(layoutWechatText(md), '第一行\n\n```\ncode1\ncode2\n```\n第二行');
 });
 
-test('换行布局：列表前后普通文本补空行（列表紧跟文本不插），列表项缩进续行保持', () => {
-  assert.equal(layoutWechatText('第一段\n- 列表'), '第一段\n- 列表');
+test('换行布局：列表前后普通文本补空行，列表项缩进续行保持', () => {
+  assert.equal(layoutWechatText('第一段\n- 列表'), '第一段\n\n- 列表');
   assert.equal(layoutWechatText('- 列表\n  续行'), '- 列表\n  续行');
 });
 

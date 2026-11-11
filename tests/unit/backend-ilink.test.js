@@ -89,10 +89,10 @@ test('ilink.buildTextMessage: 文本消息结构与官方一致', () => {
   assert.equal('context_token' in withoutContext, false, '无 context_token 时不应携带该字段');
 });
 
-test('ilink.formatWeixinText: 普通文本行之间最小必要空行，列表/代码块保持', () => {
-  assert.equal(ilink.formatWeixinText('第一行\n第二行'), '第一行\n\n第二行');
+test('ilink.formatWeixinText: 换行原样保留（与官方一致，不自动插空行）', () => {
+  assert.equal(ilink.formatWeixinText('第一行\n第二行'), '第一行\n第二行');
   assert.equal(ilink.formatWeixinText('第一段\n\n第二段'), '第一段\n\n第二段', '已有空行保持');
-  assert.equal(ilink.formatWeixinText('已含两空格  \n下一行'), '已含两空格  \n\n下一行');
+  assert.equal(ilink.formatWeixinText('已含两空格  \n下一行'), '已含两空格  \n下一行');
   assert.equal(ilink.formatWeixinText('- 第一项\n- 第二项'), '- 第一项\n- 第二项', '列表原样');
   assert.equal(
     ilink.formatWeixinText('```\ncode1\ncode2\n```'),
@@ -100,7 +100,7 @@ test('ilink.formatWeixinText: 普通文本行之间最小必要空行，列表/�
     '代码块原样',
   );
   const message = ilink.buildTextMessage({ toUserId: 'wx_user', text: 'A\nB' });
-  assert.equal(message.item_list[0].text_item.text, 'A\n\nB');
+  assert.equal(message.item_list[0].text_item.text, 'A\nB');
 });
 
 test('ilink.sanitizeBotAgent: 官方算法（多 product/跨空格注释/空白归一/256B 逐 token 截断）', () => {
