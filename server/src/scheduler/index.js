@@ -155,7 +155,7 @@ function createEmptyResult(task) {
 const PER_USER_TOTAL_TIMEOUT_MS = 30_000;
 
 function perUserConcurrency() {
-  return Math.min(10, Math.max(1, Number(config.scheduler.perUserConcurrency) || 2));
+  return Math.min(16, Math.max(1, Number(config.scheduler.perUserConcurrency) || 2));
 }
 
 function perUserMaxRecipients() {
