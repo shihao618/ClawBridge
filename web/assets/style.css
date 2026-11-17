@@ -3180,60 +3180,6 @@ body.admin-authed .admin-main {
   min-width: 1200px;
 }
 
-/* 移动端定时任务列表：只保留 启用/任务/操作，隐藏计划、目标、最近/下次执行，避免横向截断 */
-@media (max-width: 639px) {
-  .data-table-schedules {
-    min-width: 0;
-    width: 100%;
-    table-layout: fixed;
-  }
-
-  .data-table-schedules th:nth-child(3),
-  .data-table-schedules th:nth-child(4),
-  .data-table-schedules th:nth-child(5),
-  .data-table-schedules th:nth-child(6),
-  .data-table-schedules td:nth-child(3),
-  .data-table-schedules td:nth-child(4),
-  .data-table-schedules td:nth-child(5),
-  .data-table-schedules td:nth-child(6) {
-    display: none;
-  }
-
-  .data-table-schedules th:nth-child(1) {
-    width: 62px;
-  }
-
-  .data-table-schedules th:nth-child(2) {
-    width: auto;
-  }
-
-  .data-table-schedules th:nth-child(7) {
-    width: 44%;
-  }
-
-  .data-table-schedules th,
-  .data-table-schedules td {
-    padding: 10px 7px;
-  }
-
-  .data-table-schedules .col-actions {
-    min-width: 0;
-  }
-
-  .data-table-schedules .row-actions {
-    gap: 4px;
-  }
-
-  .data-table-schedules .row-actions .btn {
-    padding: 4px 6px;
-    font-size: 11px;
-  }
-
-  .data-table-schedules .cell-rule-enabled .switch-label {
-    display: none;
-  }
-}
-
 /* ==========================================================================
    14. 运行配置（后台可改设置表单）
    ========================================================================== */
