@@ -152,8 +152,6 @@ function createEmptyResult(task) {
  * 按用户模式（per_user_mode）：单任务总超时（毫秒）与并发池大小的防御性上限。
  * 并发/目标上限来自运行配置 scheduler.perUserConcurrency / perUserMaxRecipients（实时读取）。
  */
-const PER_USER_TOTAL_TIMEOUT_MS = 30_000;
-
 function perUserConcurrency() {
   return Math.min(16, Math.max(1, Number(config.scheduler.perUserConcurrency) || 2));
 }
@@ -229,7 +227,8 @@ async function executePerUserScheduledTask(taskRow, task, { dryRun = false, now 
 
   const baseVars = buildScheduleVars(task, startedAt);
   const credentialRefs = collectCredentialRefs(task.request ?? {});
-  const deadline = startedAt + PER_USER_TOTAL_TIMEOUT_MS;
+  // 每个请求都使用自己的 timeoutMs；不再设置整任务 30s 硬总时限，
+  // 避免并发批次较多时后面的用户被无辜截断。
 
   // 1) 逐用户解析凭据 + 渲染请求；按渲染后的请求指纹分组（相同凭据字段值 + 相同模板 → 合并一次请求）
   const groups = new Map();
@@ -278,10 +277,6 @@ async function executePerUserScheduledTask(taskRow, task, { dryRun = false, now 
   const groupList = [...groups.values()];
 
   await runWithConcurrency(groupList, perUserConcurrency(), async (group) => {
-    if (getDependencies().now() > deadline) {
-      for (const user of group.users) skipped.push({ userId: user.userId, missing: [], error: 'timeout' });
-      return;
-    }
     let fetched;
     try {
       fetched = await runExternalRequest({

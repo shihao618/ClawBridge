@@ -165,7 +165,7 @@ perUserConcurrency, perUserMaxRecipients }`。
    （模板根附加 `userName`/`userId`；**数组根保持数组语义**，空数组时 `{{#if .}}` 为假，可正常配合
    `{{noreply}}` 静默，不会被按用户字段污染成对象后误发）。
    （模板可额外使用 `{{userName}}`/`{{userId}}`；`{{noreply}}` 对该用户不发送）。
-4. 并发池 `perUserConcurrency`（默认 2，范围 1-16）执行请求组；单任务总超时 30s；
+4. 并发池 `perUserConcurrency`（默认 2，范围 1-16）执行请求组；每个请求使用自己的超时，不再设置整任务 30s 总时限；
    单用户失败只影响该用户（按配置使用兜底文案，为空则不发送）。
 5. 状态汇总：全部成功 `success`；部分成功/部分失败或部分跳过 `partial`；全部失败 `failed`。
    逐用户明细写 `events`（type 如 `scheduled_recipient_failed`，只含 userId/httpStatus/凭据名/错误，不含值）；

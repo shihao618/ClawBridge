@@ -140,7 +140,7 @@ GET /api/admin/overview
     "inboundLast24h": 8
   },
   "server": {
-    "version": "1.1.19",
+    "version": "1.1.20",
     "uptimeMs": 123456,
     "now": 1760000000000,
     "ilink": { "loginBaseUrl": "...", "defaultBaseUrl": "...", "botType": "3" },
@@ -261,7 +261,7 @@ GET /api/admin/messages?direction=inbound|outbound|all&status=&limit=50&offset=0
 ```
 GET /api/admin/config
 → 200 {
-  "version": "1.1.19",
+  "version": "1.1.20",
   "rateLimit": { "max": 7, "windowMs": 300000 },
   "binding": { "ttlMs": 600000, "maxRefreshes": 3, "maxActiveSessions": 50 },
   "pushApiEnabled": true,
@@ -284,7 +284,7 @@ GET /api/admin/config
 GET /api/admin/metrics          # 需要管理后台 Cookie 会话（401 未登录）
 → 200 {
   "serverTime": 1760000000000,
-  "version": "1.1.19",
+  "version": "1.1.20",
   "pid": 12345,
   "node": "v24.20.0",
   "uptimeMs": 123456,             // 进程运行时长
@@ -870,7 +870,7 @@ TaskView 关键字段：`schedule{type,intervalMs,dailyTime,windowStart,windowEn
   一次外部请求**（结果按用户分别渲染）。
 - 缺凭据的用户**跳过**（写事件，不使用兜底文案）；单用户失败只影响该用户（按配置兜底）；
   任务整体状态可为 `partial`（部分成功）；受 `perUserMaxRecipients`（目标上限，默认 50）与
-  `perUserConcurrency`（并发，默认 2）限制，单任务总超时 30s。
+  `perUserConcurrency`（并发，默认 2）限制；每个请求使用任务/全局请求超时，不再设置整任务 30s 总时限。
 - 凭据值在日志/预览/错误/事件中统一脱敏为 `***`；事件明细只含 userId/httpStatus/凭据名/错误，不含值。
 
 **配置（环境变量）**
